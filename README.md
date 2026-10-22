@@ -1,6 +1,52 @@
-# UniXNU-cheeseburger — P1
+# UniXNU-cheeseburger
 
-OnePlus 5 / cheeseburger / MSM8998 的独立设备移植骨架。当前真实通过的是 **macOS 上的 BaseTools 与通用 AArch64 EFI package 编译**，尚未通过 cheeseburger 固件、XNU 或 iPadOS 启动验证。
+面向 **OnePlus 5（一加 5，cheeseburger / Qualcomm MSM8998）** 的独立 UniXNU 设备移植仓库，最终系统目标为 **iPhone iOS**。
+
+截至 **2026-10-22**，已完成原生 UEFI 与集成固件构建、实机 EFI Shell / UniXNU 菜单验证、XNU ARM64 内核编译及临时启动实验。最深实机证据是 P5 中用户观察到真实 XNU `__start` 的入口色条；**尚未证实 MMU 启用、C 初始化、根卷挂载或 iOS 启动**。P6-v1 已试启动，但该轮屏幕证据尚待补充。
+
+## 原仓库与来源
+
+本项目基于 [UniXNU/UniXNU](https://github.com/UniXNU/UniXNU) 的构建框架和设备仓库约定，为 cheeseburger 增加设备配置、集成补丁、诊断代码、构建脚本和实验记录。感谢上游项目及各依赖的贡献者。
+
+这是独立设备仓库；Git 历史从本地移植文件的首次导入开始。通用上游源码在构建时从固定版本获取，并未作为完整源码树提交到本仓库。主要来源如下：
+
+| 原仓库 | 用途 | 固定提交 |
+| --- | --- | --- |
+| [UniXNU/UniXNU](https://github.com/UniXNU/UniXNU) | 上游构建框架、通用 UEFI package、补丁及模块入口 | [`b6ae99c17194`](https://github.com/UniXNU/UniXNU/commit/b6ae99c17194e6a18fd819d3148e69fe405e91fc) |
+| [edk2-porting/edk2-msm8998](https://github.com/edk2-porting/edk2-msm8998) | OnePlus 5 原生 UEFI 平台，作为本设备固件集成基础 | [`ace27110b9b9`](https://github.com/edk2-porting/edk2-msm8998/commit/ace27110b9b9b6c591387d50cf748ec646402b4a) |
+| [UniXNU/DarwinBoot](https://github.com/UniXNU/DarwinBoot) | Mach-O / ADT 加载、BootArgs 构造及内核交接 | [`85332b317ee8`](https://github.com/UniXNU/DarwinBoot/commit/85332b317ee80898fc78939ea64e6ca52d3837a3) |
+| [microsoft/mu_basecore](https://github.com/microsoft/mu_basecore) | P1 通用 EFI package 的 EDK II / Mu Basecore 基础 | [`cfb93724a06f`](https://github.com/microsoft/mu_basecore/commit/cfb93724a06ff86ff5ba971413368a7809ee42a5) |
+| [UniXNU/UniXNU-sheng](https://github.com/UniXNU/UniXNU-sheng) | 设备仓库布局与移植流程参考 | [`0c2046b84dbe`](https://github.com/UniXNU/UniXNU-sheng/commit/0c2046b84dbee545e7e3923eb74d7bb1ce020978) |
+| [UniXNU/uefi-sheng](https://github.com/UniXNU/uefi-sheng) | UEFI 集成方式参考 | [`0eb4514db074`](https://github.com/UniXNU/uefi-sheng/commit/0eb4514db0744b8136a3897ab1af93b713c2c27b) |
+| [apple-oss-distributions/xnu](https://github.com/apple-oss-distributions/xnu) | XNU 10063.141.1 / Darwin 23.6.0 内核源码 | [`d8b80295118e`](https://github.com/apple-oss-distributions/xnu/commit/d8b80295118ef25ac3a784134bcf95cd8e88109f) |
+
+前六项完整 SHA 见 [sources.lock.json](sources.lock.json)，初始来源审计见 [source-provenance.json](evidence/source-provenance.json)，XNU 与后续组件构建来源见 [P4 构建报告](docs/P4_XNU_BUILD.md)及对应脚本。P4 使用的 corecrypto 为固定第三方快照，尚未对 Apple 原始归档认证，不能称为认证加密实现。
+
+`UniXNU-sheng` 与 `uefi-sheng` 用作流程参考；其硬件地址、设备身份、根 UUID、Trust Cache 及驱动可用性不能直接用于一加 5。上游及依赖的许可证以各自仓库和文件声明为准，已保留的上游许可证副本见 [UPSTREAM_LICENSE](evidence/UPSTREAM_LICENSE)。
+
+## 各模块工作情况
+
+下表按截至上述日期的已有记录区分构建、主机测试与实机证据；编译通过不等于硬件功能可用。
+
+| 模块 | 已完成与验证结果 | 当前限制 / 下一步 | 记录 |
+| --- | --- | --- | --- |
+| 板级配置与构建入口 | OnePlus 5 身份、defconfig、源码锁定、审计脚本已建立 | `board.toml` 保留 `example = true`；通用完整设备 build/bootimg 流程仍受门禁限制 | [P1 审计](docs/P1_BUILD_AUDIT.md) |
+| 原生 UEFI / boot image | 原版及 UniXNU 集成版真实构建；镜像回读、FV 内容校验通过；原版实机进入 EFI Shell | 后续诊断镜像按阶段独立构建，尚无完整系统启动镜像 | [P2 集成](docs/P2_UNIXNU_INTEGRATION.md)、[P3 实测](docs/P3_UEFI_BOOT_TEST.md) |
+| UniXNU UEFI 应用 / UniXNUDxe | 通用 EFI package、源编译 UniXNUDxe 已构建；实机确认 UniXNU 0.1.0 图形菜单执行 | UEFI 界面可见不代表 iOS 图形栈运行 | [P3 UniXNU](docs/P3_UNIXNU_BOOT_TEST.md) |
+| DarwinBoot 加载器 | P5 人工屏幕证据确认文件哈希、Mach-O 装载、ADT / BootArgs / 内存图准备与 EBS 后交接；主机解析器含损坏输入负例 | 尚未完成内核初始化；EBS 后加载器绿条与 XNU 入口标记分开判读 | [P5 启动报告](docs/P5_BOOT_REPORT.md) |
+| RAM payload / 只读文件系统 | RAM bundle、文件表 / CRC / 边界检查、镜像回读及主机文件回调测试通过；P5 屏幕证据确认读取内核 / ADT | 只用于 RAM 中的启动文件，不提供持久化存储或 iOS 根卷 | [P4 测试](docs/P4_BOOT_TESTS.md)、[P5 报告](docs/P5_BOOT_REPORT.md) |
+| XNU 内核 | 独立 MSM8998 ARM64 目标完成编译 / 链接；P5 入口色条获人工实机观察证据；P6 诊断内核已增量链接并打包 | 未确认 MMU、`arm_init` 或更深初始化；P6 需补屏幕证据定位 | [P4 构建](docs/P4_XNU_BUILD.md)、[P6 记录](docs/P6_EARLY_BOOT_REPORT.md) |
+| ADT / BootArgs / NVRAM proxy | 基于实际 FDT 与寄存器观察建立独立 ADT；真实 DarwinBoot 解析器宿主测试通过；P5 补充 8192 字节易失 CHRP proxy | proxy 为软件易失状态；尚未证明 XNU 平台初始化正确消费全部参数 | [P4 ADT](docs/P4_ADT_BRINGUP.md)、[P5 报告](docs/P5_BOOT_REPORT.md) |
+| ArmCpu / ArmDTPlatform / GIC / timer | 静态库已编译、链接，P5 补齐匹配项；定时器配置沿用实测 19.2 MHz / PPI19 | CPU 注册、中断、调度及多核均未实机验证 | [P6 平台状态](docs/P6_PLATFORM_PROGRESS.md) |
+| Crypto bootstrap / POST | corecrypto 及真实 STARTUP 回调已编译；内核保留 POST，并完成构建期 HMAC sealing | 尚无运行时 POST 执行或通过证据 | [P4 构建](docs/P4_XNU_BUILD.md)、[P6 平台状态](docs/P6_PLATFORM_PROGRESS.md) |
+| 早期异常与日志 | P6 加入 MMU 前检查点、无栈异常记录器；最终 ARM64 指令及页表构造的主机合成输入测试通过 | 未证明实机 MMU 开启；无真实 ESR / ELR / FAR 回传，异常覆盖不贯穿整个启动期，电子日志自动回收未实现 | [P6 MMU 诊断](docs/P6_MMU_DIAGNOSIS.md) |
+| 显示 / 输入 / GPU | UEFI GOP 与输入相关协议已有探针记录，屏幕菜单 / 色条可见 | XNU 显示驱动、GPU / Metal、触控和系统输入未验证 | [P3 实测](docs/P3_UNIXNU_BOOT_TEST.md) |
+| UFS / IOKit / APFS / 根卷 | UEFI Block I/O 协议已观察；设备备份与 GPT 核验已有本地记录 | XNU 根设备枚举、UFS 驱动、APFS 挂载及根卷均未验证 | [P6 根卷准备](docs/P6_IOS_ROOT_PREP.md) |
+| iPhone iOS / dyld / launchd | 目标类型已明确，保留输入身份与兼容性门禁 | 尚未选择 / 下载 IPSW；ABI、Trust Cache、根 UUID 未确定，未进入用户态 | [P6 根卷准备](docs/P6_IOS_ROOT_PREP.md) |
+| 设备测试自动化 | 主机命令、USB / ADB / Fastboot 状态与镜像门禁可记录；P4 有自动返回 Android 记录 | EBS 后失联无法自动恢复；P6-v1 观察超时后已停止，不能据此判定具体停机指令 | [P4 自动化](docs/P4_AUTOMATION.md)、[P6 续接](docs/P6_HANDOFF.md) |
+| GitHub Actions | 已提交 P1 macOS / P2 Linux 工作流，已有一次 P1 远程运行 | P1 在 Python 安装步骤失败；P2 尚无远程运行记录 | 见下方 CI 状态 |
+
+当前优先顺序：补充 P6 屏幕 / 异常证据 → 定位 MMU 切换与 C 入口 → 验证 CPU / VM / Platform Expert → 验证存储及根卷 → 推进 iOS 用户态。`drivers/`、`kits/`、`package/`、`firmware/` 中的早期 TODO 是 P1 骨架记录；后续阶段实现主要位于 `config/`、`patches/`、`scripts/` 和 `tools/`，以本表及对应阶段报告为准。
 
 ## 文件位置
 
@@ -41,7 +87,9 @@ bash scripts/build-package.sh --upstream ../upstream/UniXNU --edk2 ../upstream/M
 
 公开仓库不需要自定义 Secret；私有设备仓库可用 `UNIXNU_DEVICE_TOKEN`。本阶段没有读取平台种子或固件下载 Secret。
 
-这是本地新设备仓库，尚未创建远程 GitHub 仓库、推送或运行远程 Actions。YAML 已在本地用 actionlint 检查，不能据此宣称远程运行通过。
+设备仓库已发布至 [DinnerABC/UniXNU-cheeseburger](https://github.com/DinnerABC/UniXNU-cheeseburger)。截至 2026-10-22 核对，P1 已有一次[远程运行](https://github.com/DinnerABC/UniXNU-cheeseburger/actions/runs/39721491702)，对应初始提交 `6b8ff92`，结果为失败：`actions/setup-python` 无法为 macOS 15.7.9 / arm64 提供指定的 Python 3.12.14，审计及 package 构建未执行，随后因没有 `device/out/` 而上传产物失败。P2 尚无远程运行记录。
+
+工作流曾通过本地 actionlint 检查；当前没有远程构建通过结论。本次 README 更新仅记录该问题，未修改工作流。P1 配置为 push 自动触发，后续运行结果以 Actions 页面为准。
 
 ## 审计与后续
 
@@ -53,7 +101,7 @@ bash scripts/build-package.sh --upstream ../upstream/UniXNU --edk2 ../upstream/M
 
 ## P2 已完成（2026-10-22）
 
-原版 cheeseburger UEFI 与原生 boot image 已真实构建；独立集成版包含 UniXNU 应用、源编译 UniXNUDxe 和 DarwinBoot，且通过 FV 内容与镜像回读校验。产物在 `out/p2/`；没有硬件启动证明。
+原版 cheeseburger UEFI 与原生 boot image 已真实构建；独立集成版包含 UniXNU 应用、源编译 UniXNUDxe 和 DarwinBoot，且通过 FV 内容与镜像回读校验。产物在 `out/p2/`；P2 阶段本身没有硬件启动证明，后续 P3 已补充 UEFI 与菜单实机验证。
 
 - [P2 构建报告](docs/P2_BUILD_REPORT.md)
 - [P2 集成结果](docs/P2_UNIXNU_INTEGRATION.md)
@@ -62,7 +110,7 @@ bash scripts/build-package.sh --upstream ../upstream/UniXNU --edk2 ../upstream/M
 
 ## P3 实机进展（2026-10-22）
 
-已识别真实 OnePlus 5，利用现有 root Recovery 校验备份58个分区及6个UFS LUN的双GPT。原版临时启动已进入EFI Shell；集成版照片确认 UniXNU 0.1.0 图形应用执行。新增只读诊断驱动已编译并实机运行，确认EL1、DarwinBoot Loader安装成功及GOP/文件系统/块设备协议存在。没有内核启动项，默认返回 firmware 后进入Shell；尚未启动XNU。手机已恢复Android。
+已识别真实 OnePlus 5，利用现有 root Recovery 校验备份58个分区及6个UFS LUN的双GPT。原版临时启动已进入EFI Shell；集成版照片确认 UniXNU 0.1.0 图形应用执行。新增只读诊断驱动已编译并实机运行，确认EL1、DarwinBoot Loader安装成功及GOP/文件系统/块设备协议存在。P3 镜像没有内核启动项，默认返回 firmware 后进入 Shell；该阶段尚未启动 XNU，阶段结束时已恢复 Android。后续内核入口进展见上方模块表及 P5/P6 报告。
 
 - [设备清单](docs/P3_DEVICE_INVENTORY.md)
 - [私有备份清单](docs/P3_BACKUP_MANIFEST.md)
