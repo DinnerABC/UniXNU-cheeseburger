@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+    "/Volumes/NAS-MacData/Project/IOS/upstream/UniXNU/unixnu",
+    "build",
+    "kernel",
+    "-D",
+    "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger",
+    "--out",
+    "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/out/upstream"
+  ],
+  "cwd": "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger",
+  "exit_code": 1,
+  "expected_exit_code": 1,
+  "started_epoch": 1792595995.460327,
+  "duration_seconds": 0.039736032485961914
+}

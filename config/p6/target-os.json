@@ -1,0 +1,11 @@
+{
+  "target_family": "iOS",
+  "target_form_factor": "iPhone",
+  "target_product": null,
+  "target_build": null,
+  "ipsw_url": null,
+  "kernel_current": "XNU 10063.141.1 / Darwin 23.6.0, ordinary ARM64 development kernel",
+  "policy": "Do not use the sheng iPad identity or rename iPadOS images; pin an iPhone BuildManifest and inspect real Mach-O architecture/ABI before downloading full OS images",
+  "hardware_identity": "OnePlus5 / cheeseburger / MSM8998, unchanged",
+  "readiness": "NOT_READY: early initialization, storage and OS ABI compatibility remain unverified"
+}

@@ -1,0 +1,4 @@
+# Parseable P1 research config, not a qualified MSM8998 XNU configuration.
+# TODO: qualify platform/CPU archives against MSM8998 evidence.
+# TODO: qualify interrupt, power, UFS and display drivers independently.
+# No sheng driver flags, archive paths, UUIDs or hardware addresses.

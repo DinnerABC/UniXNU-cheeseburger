@@ -1,0 +1,180 @@
+name: cheeseburger P1 build research
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      device_repository:
+        description: 'Independent device repository owner/name (blank = this repository)'
+        required: false
+        default: ''
+      device_ref:
+        description: 'Full device commit SHA (blank = event SHA for same repository)'
+        required: false
+        default: ''
+      stage:
+        description: 'Requested target; unqualified device stages fail with dependency report'
+        type: choice
+        options: [package, kernel, firmware, payload, bootimg, userdata]
+        default: package
+permissions:
+  contents: read
+concurrency:
+  group: p1-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  audit:
+    runs-on: macos-15
+    timeout-minutes: 15
+    outputs:
+      device_sha: ${{ steps.device.outputs.sha }}
+    steps:
+      - name: Resolve independent device source
+        id: device
+        env:
+          REPOSITORY: ${{ inputs.device_repository || github.repository }}
+          REQUESTED_REF: ${{ inputs.device_ref }}
+          EVENT_SHA: ${{ github.sha }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          sha="$REQUESTED_REF"
+          if [[ -z "$sha" && "$REPOSITORY" == "$EVENT_REPOSITORY" ]]; then sha="$EVENT_SHA"; fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Full device commit SHA required'; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ inputs.device_repository || github.repository }}
+          ref: ${{ steps.device.outputs.sha }}
+          path: device
+          persist-credentials: false
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: b6ae99c17194e6a18fd819d3148e69fe405e91fc
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.14'
+      - name: Parse device config and verify upstream incomplete-board refusal
+        run: |
+          set -euo pipefail
+          mkdir -p device/out/tmp
+          export TMPDIR="$GITHUB_WORKSPACE/device/out/tmp"
+          export PYTHONDONTWRITEBYTECODE=1
+          python3 device/scripts/p1.py audit --upstream "$GITHUB_WORKSPACE/upstream" 2>&1 | tee device/out/audit-console.log
+      - name: Upload audit evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p1-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: device/out/
+          if-no-files-found: error
+          retention-days: 14
+  package:
+    needs: audit
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ inputs.device_repository || github.repository }}
+          ref: ${{ needs.audit.outputs.device_sha }}
+          path: device
+          persist-credentials: false
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: b6ae99c17194e6a18fd819d3148e69fe405e91fc
+          path: upstream
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: microsoft/mu_basecore
+          ref: cfb93724a06ff86ff5ba971413368a7809ee42a5
+          path: edk2
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.14'
+      - name: Prepare project output directories
+        run: mkdir -p device/out/tmp
+      - name: Install build tools with complete log
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: |
+          set -euo pipefail
+          export TMPDIR="$GITHUB_WORKSPACE/device/out/tmp"
+          brew install llvm lld make cmake ninja unifdef mtools dtc 2>&1 | tee device/out/install.log
+          for formula in llvm lld unifdef; do echo "$(brew --prefix "$formula")/bin" >> "$GITHUB_PATH"; done
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - name: Initialize exact EDK2 gitlink dependencies
+        run: |
+          set -euo pipefail
+          export TMPDIR="$GITHUB_WORKSPACE/device/out/tmp"
+          git -C edk2 submodule update --init --depth 1 -- \
+            MdePkg/Library/BaseFdtLib/libfdt \
+            MdePkg/Library/MipiSysTLib/mipisyst \
+            BaseTools/Source/C/BrotliCompress/brotli \
+            MdeModulePkg/Library/BrotliCustomDecompressLib/brotli \
+            SecurityPkg/DeviceSecurity/SpdmLib/libspdm 2>&1 | tee device/out/submodules.log
+      - name: Record tools, SDK availability and source commits
+        run: |
+          set -euo pipefail
+          python3 device/scripts/capture-environment.py
+          {
+            git -C device rev-parse HEAD
+            git -C upstream rev-parse HEAD
+            git -C edk2 rev-parse HEAD
+            git -C edk2 submodule status
+          } 2>&1 | tee device/out/commits.log
+      - name: Compile BaseTools and generic AArch64 EFI package
+        run: |
+          bash device/scripts/build-package.sh --upstream "$GITHUB_WORKSPACE/upstream" --edk2 "$GITHUB_WORKSPACE/edk2"
+      - name: State validation boundary
+        if: always()
+        run: |
+          echo 'Generic EFI compilation only. No phone boot, XNU or iPadOS runtime validation.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload real outputs and full logs on success or failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p1-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            device/out/*.log
+            device/out/*.json
+            device/out/*.txt
+            device/out/package/Build/Out/**
+          if-no-files-found: error
+          retention-days: 14
+  requested-device-stage:
+    if: github.event_name == 'workflow_dispatch' && inputs.stage != 'package'
+    needs: [audit, package]
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ inputs.device_repository || github.repository }}
+          ref: ${{ needs.audit.outputs.device_sha }}
+          path: device
+          persist-credentials: false
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.14'
+      - name: Report missing dependencies and fail requested device stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: python3 device/scripts/p1.py "$STAGE"
+      - name: Upload explicit blocked-stage result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: p1-blocked-${{ inputs.stage }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: device/out/*-result.json
+          if-no-files-found: error

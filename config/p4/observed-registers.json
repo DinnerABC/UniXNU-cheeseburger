@@ -1,0 +1,8 @@
+{
+  "source": "User OCR of P4 real-device screen on register-probe boot",
+  "mpidr": "0x80000000",
+  "boot_affinity": "0x0",
+  "midr": "0x51AF8014",
+  "cntfrq": 19200000,
+  "current_el": 1
+}

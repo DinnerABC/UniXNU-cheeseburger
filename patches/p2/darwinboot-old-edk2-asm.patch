@@ -1,0 +1,19 @@
+--- a/DarwinBootPkg/Driver/Entry.S
++++ b/DarwinBootPkg/Driver/Entry.S
+@@ -1,5 +1,5 @@
+ // SPDX-License-Identifier: BSD-2-Clause-Patent
+-#include <AsmMacroLib.h>
++#include <AsmMacroIoLibV8.h>
+ 
+ ASM_FUNC(DarwinCurrentEl)
+   mrs x0, CurrentEL
+--- a/DarwinBootPkg/Driver/DarwinBoot.inf
++++ b/DarwinBootPkg/Driver/DarwinBoot.inf
+@@ -17,6 +17,7 @@
+ 
+ [Packages]
+   MdePkg/MdePkg.dec
++  ArmPkg/ArmPkg.dec
+   UniXNUPkg/UniXNUPkg.dec
+ 
+ [LibraryClasses]

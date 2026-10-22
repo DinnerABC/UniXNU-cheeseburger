@@ -1,0 +1,47 @@
+--- a/DarwinBootPkg/Driver/DarwinBoot.c
++++ b/DarwinBootPkg/Driver/DarwinBoot.c
+@@ -8,7 +8,7 @@
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/PrintLib.h>
+ #include <Library/BaseCryptLib.h>
+-#include "P5Expected.h"
++#include "P6Expected.h"
+ #include <Library/UefiLib.h>
+ #include <Protocol/UniXNULoader.h>
+ #include <Protocol/LoadedImage.h>
+@@ -522,12 +522,12 @@
+   if (EFI_ERROR (Status)) { goto Fail; }
+   {
+     UINT8 Hash[32];
+-    if (ImageSize != P5KernelBytes || !Sha256HashAll(Image,ImageSize,Hash) || CompareMem(Hash,P5KernelHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
+-    Print(L"P5 Stage1: kernel read SHA256 PASS bytes=%lu\r\n",(UINT64)ImageSize);
++    if (ImageSize != P6KernelBytes || !Sha256HashAll(Image,ImageSize,Hash) || CompareMem(Hash,P6KernelHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
++    Print(L"P6 Stage1: kernel read SHA256 PASS bytes=%lu\r\n",(UINT64)ImageSize);
+   }
+   Status = ParseKernel (Image, ImageSize, &Kernel);
+   if (EFI_ERROR (Status)) { goto Fail; }
+-  Print(L"P5 Stage2: Mach-O parsed; entry=0x%lx\r\n",Kernel.Entry);
++  Print(L"P6 Stage2: Mach-O parsed; entry=0x%lx\r\n",Kernel.Entry);
+   Length = StrSize (Request->KernelPath);
+   TreePath = AllocatePool (Length + 11 * sizeof (CHAR16));
+   if (TreePath == NULL) { Status = EFI_OUT_OF_RESOURCES; goto Fail; }
+@@ -537,8 +537,8 @@
+   if (EFI_ERROR (Status)) { goto Fail; }
+   {
+     UINT8 Hash[32];
+-    if (TreeSize != P5AdtBytes || !Sha256HashAll(Tree,TreeSize,Hash) || CompareMem(Hash,P5AdtHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
+-    Print(L"P5 ADT read SHA256 PASS bytes=%lu\r\n",(UINT64)TreeSize);
++    if (TreeSize != P6AdtBytes || !Sha256HashAll(Tree,TreeSize,Hash) || CompareMem(Hash,P6AdtHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
++    Print(L"P6 ADT read SHA256 PASS bytes=%lu\r\n",(UINT64)TreeSize);
+   }
+   Offset = 0;
+   RamdiskOffset = MAX_UINTN;
+@@ -623,7 +623,7 @@
+          Video[0], Video[1], Video[2], Video[3], Video[4], Video[5]);
+   Print (L"DARWINBOOT: inputs validated; exiting boot services\n");
+ 
+-  Print(L"P5 Stage3: ADT/BootArgs/memory-map ready. Green=loader after EBS; magenta=XNU __start.\r\n");
++  Print(L"P6 Stage3: ADT/BootArgs/memory-map ready. Green=loader after EBS; magenta=XNU __start.\r\n");
+   gBS->Stall(20000000);
+ 
+   //

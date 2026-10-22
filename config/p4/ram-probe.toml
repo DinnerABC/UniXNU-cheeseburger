@@ -1,0 +1,14 @@
+version = 1
+[boot]
+timeout = 10
+default = "exit"
+[ui]
+title = "P4 RAM payload (read-only)"
+[kits]
+autoload = false
+[[entry]]
+id = "exit"
+title = "RAM payload probe: return to firmware"
+type = "action"
+action = "exit"
+# Actual kernel and ADT are carried in RAM but not auto-entered by this probe.

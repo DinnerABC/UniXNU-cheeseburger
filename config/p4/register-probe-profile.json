@@ -1,0 +1,7 @@
+{
+  "image": "out/p4/register-probe/boot-cheeseburger.img",
+  "sha256": "e4493ed5b6eb330bbd2e11e5f07248162980874f23be85340eff8e0dda78c753",
+  "observe_seconds": 300,
+  "max_attempts": 1,
+  "purpose": "Read-only register screen plus UEFI automatic Android return; not an XNU boot test"
+}

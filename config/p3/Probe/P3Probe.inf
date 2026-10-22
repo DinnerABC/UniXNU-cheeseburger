@@ -1,0 +1,31 @@
+[Defines]
+  INF_VERSION = 0x00010019
+  BASE_NAME = P3Probe
+  FILE_GUID = A4DE90C5-F222-4F1B-B347-3F29A2F4AE3D
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = P3ProbeEntry
+[Sources]
+  P3Probe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  UniXNUPkg/UniXNUPkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  UefiLib
+  MemoryAllocationLib
+[Guids]
+  gEfiEventReadyToBootGuid
+  gEfiGlobalVariableGuid
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid
+  gEfiSimpleTextInProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiBlockIoProtocolGuid
+  gEfiSerialIoProtocolGuid
+  gEfiFirmwareVolume2ProtocolGuid
+  gUniXNULoaderProtocolGuid
+[Depex]
+  TRUE

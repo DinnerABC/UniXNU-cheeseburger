@@ -1,0 +1,340 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -44,6 +44,43 @@
+ 
+ 
+ 
++
++// P6 EARLY DIAGNOSTICS V1: x20=BootArgs PA; clobbers x9-x12 only.
++// No stack/calls. Never access the physical framebuffer with MMU enabled.
++.macro P6_BAR
++	mrs x9, SCTLR_EL1
++	tbnz x9, #0, 99f
++	cbz x20, 99f
++	adrp x12, EXT(p6_diag_record)@page
++	add x12, x12, EXT(p6_diag_record)@pageoff
++	mov x9, #$3
++	str x9, [x12, #8]
++	ldr x9, [x20, #0x50]
++	cmp x9, #32
++	b.ne 99f
++	ldr x9, [x20, #0x48]
++	cmp x9, #($0+8)
++	b.lo 99f
++	ldr x9, [x20, #0x28]
++	cbz x9, 99f
++	ldr x10, [x20, #0x38]
++	cbz x10, 99f
++	cmp x10, #16, lsl #12
++	b.hi 99f
++	mov x11, #$0
++	madd x9, x10, x11, x9
++	lsl x10, x10, #3
++	bic x10, x10, #7
++	mov w11, #$1
++	movk w11, #$2, lsl #16
++98:
++	stp w11, w11, [x9], #8
++	subs x10, x10, #8
++	b.hi 98b
++	dsb sy
++99:
++.endmacro
++
+ .macro MSR_VBAR_EL1_X0
+ #if defined(KERNEL_INTEGRITY_KTRR)
+ 	mov	x1, lr
+@@ -263,40 +300,40 @@
+ 	.global	EXT(LowExceptionVectorBase)
+ LEXT(LowExceptionVectorBase)
+ 	/* EL1 SP 0 */
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
+ 	/* EL1 SP1 */
+ 	.align	7
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
+ 	/* EL0 64 */
+ 	.align	7
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
+ 	/* EL0 32 */
+ 	.align	7
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
+-	.align	7
+-	b		.
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
++	.align	7
++	b		EXT(p6_early_fault)
+ 	.align 12, 0
+ 
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+@@ -490,6 +527,14 @@
+ 	.globl EXT(start_first_cpu)
+ LEXT(start_first_cpu)
+ 
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	mov x20, x0
++	adrp x12, EXT(LowExceptionVectorBase)@page
++	add x12, x12, EXT(LowExceptionVectorBase)@pageoff
++	msr VBAR_EL1, x12
++	isb
++#endif
++
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+@@ -509,6 +554,18 @@
+ 	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
+ 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
+ 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	tst x20, #15
++	b.ne EXT(p6_bad_bootargs)
++	ldr w9, [x20]
++	mov w10, #2
++	movk w10, #2, lsl #16
++	cmp w9, w10
++	b.ne EXT(p6_bad_bootargs)
++	cbz x24, EXT(p6_bad_bootargs)
++	P6_BAR 24,0xff00,0xffff,1 // S01 yellow: actual BootArgs loaded/checked
++#endif
++
+ 
+ 	// Clear the registers that will be used to store the userspace thread pointer and CPU number.
+ 	// We may not actually be booting from ordinal CPU 0, so this register will be updated
+@@ -649,6 +706,9 @@
+ 	// the early debugger rather than corrupting memory or forging a map.
+ 	b Lbootstrap_tables_exhausted
+ Lbootstrap_tables_ready:
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	P6_BAR 48,0xffff,0xff00,3 // S03 cyan: tables built
++#endif
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
+@@ -788,6 +848,9 @@
+ #endif /* HAS_APPLE_PAC */
+ 
+ 	// Enable caches, MMU, ROP and JOP
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	P6_BAR 72,0xffff,0xffff,5 // S05 white: before SCTLR enables MMU
++#endif
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
+@@ -919,3 +982,170 @@
+ //#include	"globals_asm.h"
+ 
+ /* vim: set ts=4: */
++
++
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	.align 3
++	.globl EXT(p6_bad_bootargs)
++LEXT(p6_bad_bootargs)
++	mov x9, #0xbad
++	b EXT(p6_record_fault)
++	.globl EXT(p6_early_fault)
++LEXT(p6_early_fault)
++	mov x9, #0x6001
++LEXT(p6_record_fault)
++	// Own kernel data only; no stack/calls, no cross-reboot retention claim.
++	adrp x16, EXT(p6_diag_record)@page
++	add x16, x16, EXT(p6_diag_record)@pageoff
++	str x9, [x16]
++	mrs x9, ESR_EL1
++	mrs x10, FAR_EL1
++	mrs x11, ELR_EL1
++	stp x9, x10, [x16, #16]
++	str x11, [x16, #32]
++	mrs x9, SPSR_EL1
++	mrs x12, SPSel
++	msr SPSel, #0
++	mov x10, sp
++	msr SPSel, #1
++	mov x11, sp
++	tbnz x12, #0, 97f
++	msr SPSel, #0
++97:
++	stp x9, x10, [x16, #40]
++	str x11, [x16, #56]
++	str lr, [x16, #64]
++	mrs x9, SCTLR_EL1
++	mrs x10, TCR_EL1
++	mrs x11, TTBR0_EL1
++	stp x9, x10, [x16, #72]
++	str x11, [x16, #88]
++	mrs x10, TTBR1_EL1
++	mrs x11, MAIR_EL1
++	stp x10, x11, [x16, #96]
++	str x20, [x16, #112]
++	ldr x10, [x16, #8]
++	str x10, [x16, #120]
++	dsb sy
++	// MMU-on framebuffer isn't guaranteed mapped: retain record and stop.
++	tbnz x9, #0, Lp6_fault_stop
++	cbz x20, Lp6_fault_stop
++	P6_BAR 96,0x0000,0xffff,0xff // Red fault stripe
++	ldr x19, [x20, #0x28]
++	cbz x19, Lp6_fault_stop
++	tst x19, #3
++	b.ne Lp6_fault_stop
++	ldr x21, [x20, #0x38]
++	cbz x21, Lp6_fault_stop
++	cmp x21, #16, lsl #12
++	b.hi Lp6_fault_stop
++	ldr x9, [x20, #0x40]
++	cmp x9, #640
++	b.lo Lp6_fault_stop
++	ldr x9, [x20, #0x48]
++	cmp x9, #300
++	b.lo Lp6_fault_stop
++	ldr x9, [x20, #0x50]
++	cmp x9, #32
++	b.ne Lp6_fault_stop
++	// Display ESR, ELR, FAR as three 16-hex-digit rows. Only when MMU off.
++	mov x22, #0
++Lp6_hex_line:
++	adrp x16, EXT(p6_diag_record)@page
++	add x16, x16, EXT(p6_diag_record)@pageoff
++	cmp x22, #0
++	b.eq Lp6_esr
++	cmp x22, #1
++	b.eq Lp6_elr
++	ldr x24, [x16, #24]
++	b Lp6_hex_value
++Lp6_esr:
++	ldr x24, [x16, #16]
++	b Lp6_hex_value
++Lp6_elr:
++	ldr x24, [x16, #32]
++Lp6_hex_value:
++	mov x23, #0
++Lp6_digit:
++	mov x9, #60
++	lsl x10, x23, #2
++	sub x9, x9, x10
++	lsrv x9, x24, x9
++	and x9, x9, #15
++	adr x10, Lp6_hex_font
++	ldr x25, [x10, x9, lsl #3]
++	mov x26, #0
++Lp6_glyph_row:
++	mov x27, #0
++Lp6_glyph_col:
++	mov x9, #5
++	madd x9, x26, x9, x27
++	lsrv x9, x25, x9
++	and x9, x9, #1
++	mov w15, #-1
++	cmp x9, #0
++	csel w15, w15, wzr, ne
++	mov x28, #0
++Lp6_pixel_row:
++	mov x9, #48
++	madd x9, x22, x9, xzr
++	add x9, x9, #128
++	mov x10, #6
++	madd x9, x26, x10, x9
++	add x9, x9, x28
++	madd x14, x9, x21, x19
++	mov x9, #36
++	mul x9, x23, x9
++	mov x10, #6
++	madd x9, x27, x10, x9
++	add x9, x9, #24
++	add x14, x14, x9, lsl #2
++	mov x29, #6
++Lp6_pixel_col:
++	str w15, [x14], #4
++	subs x29, x29, #1
++	b.ne Lp6_pixel_col
++	add x28, x28, #1
++	cmp x28, #6
++	b.lo Lp6_pixel_row
++	add x27, x27, #1
++	cmp x27, #5
++	b.lo Lp6_glyph_col
++	add x26, x26, #1
++	cmp x26, #7
++	b.lo Lp6_glyph_row
++	add x23, x23, #1
++	cmp x23, #16
++	b.lo Lp6_digit
++	add x22, x22, #1
++	cmp x22, #3
++	b.lo Lp6_hex_line
++	dsb sy
++Lp6_fault_stop:
++	b Lp6_fault_stop
++	.align 3
++Lp6_hex_font:
++	.quad 0x7e318c63f
++	.quad 0x3884210c4
++	.quad 0x7c21fc21f
++	.quad 0x7e10fc21f
++	.quad 0x4210fc631
++	.quad 0x7e10f843f
++	.quad 0x7e31f843f
++	.quad 0x8422221f
++	.quad 0x7e31fc63f
++	.quad 0x7e10fc63f
++	.quad 0x4631fc62e
++	.quad 0x3e317c62f
++	.quad 0x7c210843f
++	.quad 0x3e318c62f
++	.quad 0x7c21f843f
++	.quad 0x421f843f
++
++	.section __BOOTDATA,__data
++	.align 3
++	.globl EXT(p6_diag_record)
++LEXT(p6_diag_record)
++	.space 128,0
++	.text
++#endif

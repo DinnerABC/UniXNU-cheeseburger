@@ -1,0 +1,33 @@
+[Defines]
+  INF_VERSION = 0x00010019
+  BASE_NAME = P5Probe
+  FILE_GUID = 2E2DE31D-B845-4A39-91E3-1255D4212CDD
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = P5ProbeEntry
+[Sources]
+  P5Probe.c
+  Range.h
+  P5Expected.h
+[Packages]
+  MdePkg/MdePkg.dec
+  CryptoPkg/CryptoPkg.dec
+  Platforms/Msm8998FamilyPkg/Msm8998FamilyPkg.dec
+  SimpleInit.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  MemoryAllocationLib
+  BaseMemoryLib
+  BaseCryptLib
+  SimpleInitLib
+[Guids]
+  gEfiFileInfoGuid
+  gEfiEventReadyToBootGuid
+[Protocols]
+  gEfiSimpleFileSystemProtocolGuid
+[FixedPcd]
+  gSimpleInitTokenSpaceGuid.PcdDeviceTreeStore
+[Depex]
+  TRUE

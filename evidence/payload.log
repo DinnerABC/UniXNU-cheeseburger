@@ -1,0 +1,13 @@
+{
+  "stage": "payload",
+  "hardware_validated": false,
+  "host": "macOS-27.0.1-arm64-arm-64bit",
+  "python": "3.12.14 (main, Aug 25 2026, 13:50:33) [Clang 22.1.3 ]",
+  "result": "BLOCKED",
+  "dependencies": [
+    "Qualified kernel.macho",
+    "MSM8998 ADT generator and verified RAM/CPU/GIC/PSCI map",
+    "Reviewed Trust Cache policy and any owner-only seed"
+  ],
+  "exit_code": 78
+}

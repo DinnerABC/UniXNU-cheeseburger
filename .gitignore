@@ -1,0 +1,9 @@
+out/
+.cache/
+.work/
+local.toml
+__pycache__/
+*.pyc
+.DS_Store
+.l/
+backups/

@@ -1,0 +1,15 @@
+{
+  "command": [
+    "bash",
+    "/Volumes/NAS-MacData/Project/IOS/upstream/UniXNU/package/build.sh",
+    "-b",
+    "DEBUG",
+    "-t",
+    "CLANGPDB"
+  ],
+  "cwd": "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger",
+  "exit_code": 0,
+  "expected_exit_code": 0,
+  "started_epoch": 1792596008.2612631,
+  "duration_seconds": 6.151795864105225
+}

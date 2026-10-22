@@ -1,0 +1,31 @@
+[Defines]
+  INF_VERSION = 0x00010019
+  BASE_NAME = P4Probe
+  FILE_GUID = 2E2DE31D-B845-4A39-91E3-1255D4212CDD
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = P4ProbeEntry
+[Sources]
+  P4Probe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  UniXNUPkg/UniXNUPkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  UefiLib
+  MemoryAllocationLib
+[Guids]
+  gEfiEventReadyToBootGuid
+  gEfiGlobalVariableGuid
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid
+  gEfiSimpleTextInProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiBlockIoProtocolGuid
+  gEfiSerialIoProtocolGuid
+  gEfiFirmwareVolume2ProtocolGuid
+  gUniXNULoaderProtocolGuid
+[Depex]
+  TRUE

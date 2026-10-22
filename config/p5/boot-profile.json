@@ -1,0 +1,6 @@
+{
+  "image": "out/p5/uefi/boot-p5-xnu.img",
+  "sha256": "06af9d6c08e8e7308d81a6a07095553aa6692e816919faa5ac24090e7c9f51b7",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

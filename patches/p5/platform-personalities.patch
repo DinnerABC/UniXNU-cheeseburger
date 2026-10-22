@@ -1,0 +1,20 @@
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -35,6 +35,17 @@
+ const char * gIOKernelConfigTables =
+     "("
+     "   {"
++    "     'IOClass' = 'ArmCpu';"
++    "     'IOProviderClass' = 'IOPlatformDevice';"
++    "     'IOProbeScore' = 2000:32;"
++    "   },"
++    "   {"
++    "     'IOClass' = 'ArmDTPlatform';"
++    "     'IOProviderClass' = 'IOPlatformExpertDevice';"
++    "     'IONameMatch' = 'device-tree';"
++    "     'IOProbeScore' = 5000:32;"
++    "   },"
++    "   {"
+     "     'IOClass'         = IOPanicPlatform;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+     "     'IOProbeScore'    = 0:32;"

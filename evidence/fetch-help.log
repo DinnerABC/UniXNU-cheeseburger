@@ -1,0 +1,8 @@
+usage: fetch-sources.py [-h] [--references]
+
+Fetch exact public source commits into .work/sources; keep logs inside the
+project.
+
+options:
+  -h, --help    show this help message and exit
+  --references  also fetch the four read-only reference repositories

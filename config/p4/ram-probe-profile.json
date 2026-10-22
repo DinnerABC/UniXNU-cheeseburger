@@ -1,0 +1,6 @@
+{
+  "image": "out/p4/ram-payload-uefi/boot-ram-probe.img",
+  "sha256": "f6a94dc955196b2698696f24028b874d7a1912785e34d4ff09ce6b030319a581",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

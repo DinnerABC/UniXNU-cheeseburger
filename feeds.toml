@@ -1,0 +1,2 @@
+# No device-specific feeds are qualified in P1.
+# Generic upstream sources are pinned by the selected UniXNU feeds.toml.

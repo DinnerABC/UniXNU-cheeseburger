@@ -1,0 +1,909 @@
+make: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C'
+/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 ./Makefiles/GnuMakeUtils.py md .
+/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 ./Makefiles/GnuMakeUtils.py md ./libs
+/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 ./Makefiles/GnuMakeUtils.py md ./bin
+Directory . already exists.
+make -C Common
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/Common'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  BasePeCoff.c -o BasePeCoff.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  BinderFuncs.c -o BinderFuncs.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  CommonLib.c -o CommonLib.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  Crc32.c -o Crc32.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  Decompress.c -o Decompress.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  EfiCompress.c -o EfiCompress.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  EfiUtilityMsgs.c -o EfiUtilityMsgs.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  FirmwareVolumeBuffer.c -o FirmwareVolumeBuffer.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  FvLib.c -o FvLib.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  MemoryFile.c -o MemoryFile.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  MyAlloc.c -o MyAlloc.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  OsPath.c -o OsPath.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  ParseGuidedSectionTools.c -o ParseGuidedSectionTools.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  ParseInf.c -o ParseInf.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  PeCoffLoaderEx.c -o PeCoffLoaderEx.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  SimpleFileParsing.c -o SimpleFileParsing.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  StringFuncs.c -o StringFuncs.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  TianoCompress.c -o TianoCompress.o
+ar crs ../libs/libCommon.a BasePeCoff.o BinderFuncs.o CommonLib.o Crc32.o Decompress.o EfiCompress.o EfiUtilityMsgs.o FirmwareVolumeBuffer.o FvLib.o MemoryFile.o MyAlloc.o OsPath.o ParseGuidedSectionTools.o ParseInf.o PeCoffLoaderEx.o SimpleFileParsing.o StringFuncs.o TianoCompress.o
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/Common'
+make -C BrotliCompress
+make -C VfrCompile
+make -C EfiRom
+make -C GenFfs
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VfrCompile'
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/EfiRom'
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenFfs'
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/BrotliCompress'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  EfiRom.c -o EfiRom.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  GenFfs.c -o GenFfs.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  BrotliCompress.c -o BrotliCompress.o
+clang++ -c -Wno-deprecated-register -std=c++14 -DPCCTS_USE_NAMESPACE_STD -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include  -O2  Pccts/h/AParser.cpp -o AParser.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/common/platform.c -o brotli/c/common/platform.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/common/shared_dictionary.c -o brotli/c/common/shared_dictionary.o
+cc -o ../bin/GenFfs  GenFfs.o -L../libs -lCommon
+cc -o ../bin/EfiRom  EfiRom.o -L../libs -lCommon
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/common/constants.c -o brotli/c/common/constants.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/common/context.c -o brotli/c/common/context.o
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenFfs'
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/EfiRom'
+make -C GenFv
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/command.c -o brotli/c/enc/command.o
+Pccts/h/AParser.cpp:653:2: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+  653 |         sprintf(eMsgBuffer, err, d);    // dangerous, but I don't care
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+Pccts/h/AParser.cpp:660:2: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+  660 |         sprintf(eMsgBuffer, err, s);
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+Pccts/h/AParser.cpp:667:2: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+  667 |         sprintf(eMsgBuffer, err, s, t);
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenFv'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  GenFv.c -o GenFv.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/compound_dictionary.c -o brotli/c/enc/compound_dictionary.o
+3 warnings generated.
+clang++ -c -Wno-deprecated-register -std=c++14 -DPCCTS_USE_NAMESPACE_STD -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include  -O2  Pccts/h/DLexerBase.cpp -o DLexerBase.o
+clang++ -c -Wno-deprecated-register -std=c++14 -DPCCTS_USE_NAMESPACE_STD -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include  -O2  Pccts/h/ATokenBuffer.cpp -o ATokenBuffer.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/fast_log.c -o brotli/c/enc/fast_log.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  GenFvInternalLib.c -o GenFvInternalLib.o
+make -C GenFw
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenFw'
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/common/dictionary.c -o brotli/c/common/dictionary.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  GenFw.c -o GenFw.o
+make -C Pccts/antlr
+make[2]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VfrCompile/Pccts/antlr'
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  antlr.c -o antlr.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/common/transform.c -o brotli/c/common/transform.o
+cc -o ../bin/GenFv  GenFv.o GenFvInternalLib.o -L../libs -lCommon
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenFv'
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/dec/bit_reader.c -o brotli/c/dec/bit_reader.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/dec/decode.c -o brotli/c/dec/decode.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/dec/huffman.c -o brotli/c/dec/huffman.o
+make -C Pccts/dlg
+make[2]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VfrCompile/Pccts/dlg'
+cc -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11 -c dlg_p.c
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  scan.c -o scan.o
+cc -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11 -c dlg_a.c
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  ElfConvert.c -o ElfConvert.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  Elf32Convert.c -o Elf32Convert.o
+cc -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11 -c main.c
+main.c:163:19: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  163 |                                         (*p->process)( *argv, *(argv+1) );
+      |                                                      ^
+main.c:168:19: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  168 |                                         (*p->process)( *argv );
+      |                                                      ^
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  err.c -o err.o
+2 warnings generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11  err.c -o err.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  Elf64Convert.c -o Elf64Convert.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  bits.c -o bits.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11 ../support/set/set.c
+bits.c:224:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  224 |         REACH(r, 1, &rk, a);
+      |         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/dec/prefix.c -o brotli/c/dec/prefix.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11  support.c -o support.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/dec/state.c -o brotli/c/dec/state.o
+1 warning generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  build.c -o build.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11  output.c -o output.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/dec/static_init.c -o brotli/c/dec/static_init.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/backward_references.c -o brotli/c/enc/backward_references.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  fset2.c -o fset2.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11  relabel.c -o relabel.o
+cc -o ../bin/GenFw  GenFw.o ElfConvert.o Elf32Convert.o Elf64Convert.o -L../libs -lCommon
+fset2.c:573:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  573 |                 TRAV(p->p1, k, rk, tail);
+      |                 ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:586:23: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  586 |                         if ( tail==NULL ) {TRAV(alt->p1, k, rk, tail); r->down = tail;}
+      |                                            ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:593:5: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  593 |                                 TRAV(alt->p1, k, rk, tail->right);
+      |                                 ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:643:16: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  643 | /* M14 */                  TRAV(p->guess_analysis_point, k, rk,t);
+      |                            ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:645:14: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  645 |                            TRAV(p->p1, k, rk,t);
+      |                            ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:661:16: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  661 | /* M14 */                  TRAV(p->guess_analysis_point, k, rk,t);
+      |                            ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:663:14: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  663 |                            TRAV(p->p1, k, rk,t);
+      |                            ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:670:50: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  670 |         if ( p->jtype!=RuleBlk && /* MR14 */ !p->guess) TRAV(p->p2, k, rk, u);
+      |                                                         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:700:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  700 |                 TRAV(p->next, k, rk_out, t);/* ignore undefined rules */
+      |                 ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:714:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  714 |         TRAV(r, k, &rk, t);
+      |         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:733:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  733 |                 TRAV(p->next, k2, &rk2, u);
+      |                 ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:833:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  833 |         TRAV(p->next, k-1, rk, t);
+      |         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:951:9: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  951 |         TRAV(p->guardNodes,k,rk,t);
+      |         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:986:7: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  986 |       TRAV(p->next,k,rk,t);
+      |       ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:1006:5: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1006 |     TRAV(p->next,k,rk,t);
+      |     ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:1259:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1259 |         TRAV(p, LL_k, &rk, *t);
+      |         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:1276:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1276 |         TRAV(p, LL_k, &rk, *u);
+      |         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:1625:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1625 |                 TRAV(p, hmax, &rk, t);  /* MR10 was LL_k */
+      |                 ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:1640:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1640 |                 REACH(p, 1, &rk, scontext);
+      |                 ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset2.c:1685:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1685 |                 TRAV(p, pred->k, &rk, t);
+      |                 ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:1696:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1696 |                 REACH(p, 1, &rk, scontext);
+      |                 ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset2.c:1772:5: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1772 |     TRAV(MR_AmbSourceSearchJ[i],maxk,&incomplete,t);
+      |     ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+fset2.c:2020:13: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2020 |             REACH(p[i],depth,&incomplete,tokensUsed);
+      |             ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11  automata.c -o automata.o
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenFw'
+clang++ -c -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -Wno-deprecated-register -Wno-unused-result -std=c++14 -O2  VfrFormPkg.cpp -o VfrFormPkg.o
+cc -O -I. -I../support/set -I../h -DUSER_ZZSYN -DZZLEXBUFSIZE=65536 -std=gnu11 -o ./dlg dlg_p.o dlg_a.o main.o err.o set.o support.o output.o relabel.o automata.o
+23 warnings generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  fset.c -o fset.o
+make[2]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VfrCompile/Pccts/dlg'
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  gen.c -o gen.o
+VfrFormPkg.cpp:1494:9: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 1494 |         sprintf (ErrorMsg, "Inconsistent OpCode Record list invalid QuestionId is 0x%X", QuestionId);
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+VfrFormPkg.cpp:1546:9: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 1546 |         sprintf (ErrorMsg, "QuestionId required by Inconsistent OpCode is not found. QuestionId is 0x%X", QuestionId);
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+VfrFormPkg.cpp:2204:11: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 2204 |           sprintf (Msg, "The question misses %d default, the question's opcode is %d", MissingDefaultCount, pOpHead->OpCode);
+      |           ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+fset.c:230:19: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  230 | /* MR14 */        REACH(p->guess_analysis_point, k, rk, a);
+      |                   ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:232:19: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  232 |                   REACH(p->p1, k, rk, a);
+      |                   ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:278:8: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  278 |        REACH(p->p2, k, rk, b);
+      |        ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:319:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  319 |                 REACH(p->next, k, rk_out, a);
+      |                 ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:347:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  347 |         REACH(r, k, &rk, a);
+      |         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:352:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  352 |                 REACH(p->next, k2, &rk2, b);    /* MR11 by changing the value of k                  */
+      |                 ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:423:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  423 |         REACH(p->next, k-1, rk, a);
+      |         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:448:19: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  448 | /* MR11 */        REACH(p->guardNodes,k,rk,a);
+      |                   ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:458:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  458 |         REACH(p->next, k, rk, a);       /* ignore actions */
+      |         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:1498:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1498 |                 REACH(p, k, &rk, alt1->fset[k]);
+      |                 ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:1540:6: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1540 |                                         REACH(p, k, &rk, alt1->fset[k]);
+      |                                         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+fset.c:1542:6: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1542 |                                         REACH(q, k, &rk, alt2->fset[k]);
+      |                                         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+gen.c:1570:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1570 |                 TRANS(q->p1);
+      |                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:1570:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:1655:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1655 |                 TRANS(alt->p1);
+      |                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:1655:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:1989:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1989 |         TRANS(p->next)
+      |         ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:1989:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:2236:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2236 |         TRANS(p->next)
+      |         ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:2236:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:2674:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2674 |                         TRANS( a->next );   /* MR30 */
+      |                         ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:2674:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:2677:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2677 |                         TRANS( p->next );       /* MR30 */
+      |                         ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:2677:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:2697:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2697 |                 TRANS(p->next);
+      |                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:2697:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:2775:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2775 |         if (q->end->p1 != NULL) TRANS(q->end->p1);
+      |                                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:2775:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:2844:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2844 |                 TRANS(q->p1);
+      |                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:2844:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:3014:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3014 |         if (q->end->p1 != NULL) TRANS(q->end->p1);
+      |                                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:3014:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:3109:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3109 |                 TRANS(q->p1);
+      |                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:3109:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:3150:27: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3150 |                 if (q->end->p1 != NULL) TRANS(q->end->p1);
+      |                                         ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:3150:27: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:3223:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3223 |         if (q->end->p1 != NULL) TRANS(q->end->p1);
+      |                                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:3223:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:3319:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3319 |         if (q->end->p1 != NULL) TRANS(q->end->p1);
+      |                                 ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:3319:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:3563:17: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3563 |                 REACH(q->end, 1, &rk, follow);
+      |                 ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+gen.c:3824:23: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3824 |         if ( q->p1 != NULL ) TRANS(q->p1);
+      |                              ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:3824:23: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:3825:23: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 3825 |         if ( q->p2 != NULL ) TRANS(q->p2);
+      |                              ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+gen.c:3825:23: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+gen.c:4340:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 4340 |                 REACH(alt1->p1, k, &rk, a);
+      |                 ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+gen.c:4362:5: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 4362 |     REACH(p->next, 1, &rk, a);
+      |     ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+12 warnings generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  globals.c -o globals.o
+3 warnings generated.
+clang++ -c -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -Wno-deprecated-register -Wno-unused-result -std=c++14 -O2  VfrError.cpp -o VfrError.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  hash.c -o hash.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/backward_references_hq.c -o brotli/c/enc/backward_references_hq.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/bit_cost.c -o brotli/c/enc/bit_cost.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/block_splitter.c -o brotli/c/enc/block_splitter.o
+35 warnings generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  lex.c -o lex.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/brotli_bit_stream.c -o brotli/c/enc/brotli_bit_stream.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  main.c -o main.o
+main.c:821:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  821 |                         TRANS(SynDiag);                 /* Translate to the target language */
+      |                         ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+main.c:821:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+main.c:855:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  855 |                         TRANS(SynDiag);                 /* Translate to the target language */
+      |                         ^
+./syn.h:166:76: note: expanded from macro 'TRANS'
+  166 |                                         if ( (p)->ntype == nJunction ) (*(fpJTrans[((Junction *)(p))->jtype]))( p );\
+      |                                                                                                               ^
+main.c:855:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+./syn.h:167:35: note: expanded from macro 'TRANS'
+  167 |                                         else (*(fpTrans[(p)->ntype]))( p );}
+      |                                                                      ^
+main.c:886:8: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  886 |                 else PRINT(SynDiag);
+      |                      ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+main.c:1408:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1408 |                                         (*p->process)( *argv, *(argv+1) );
+      |                                                      ^
+main.c:1416:19: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1416 |                                         (*p->process)( *argv );
+      |                                                      ^
+7 warnings generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  misc.c -o misc.o
+misc.c:966:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  966 |                 PRINT(q->p1);
+      |                 ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:968:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  968 |                 PRINT(alt->p1);
+      |                 ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:985:26: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  985 |                 if ( alt->p1 != NULL ) PRINT(alt->p1);
+      |                                        ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1087:30: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1087 |                         if ( q->end->p1 != NULL ) PRINT(q->end->p1);
+      |                                                   ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1106:30: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1106 |                         if ( q->end->p1 != NULL ) PRINT(q->end->p1);
+      |                                                   ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1125:30: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1125 |                         if ( q->end->p1 != NULL ) PRINT(q->end->p1);
+      |                                                   ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1148:30: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1148 |                         if ( q->end->p1 != NULL ) PRINT(q->end->p1);
+      |                                                   ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1154:4: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1154 |                         PRINT(q->p1);
+      |                         ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1155:25: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1155 |                         if ( q->p2 != NULL ) PRINT(q->p2);
+      |                                              ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1158:25: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1158 |                         if ( q->p1 != NULL ) PRINT(q->p1);
+      |                                              ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1160:25: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1160 |                         if ( q->p2 != NULL ) PRINT(q->p2);
+      |                                              ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1182:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1182 |         PRINT(p->next);
+      |         ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1199:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1199 |         PRINT(p->next);
+      |         ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+misc.c:1214:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1214 |         PRINT(p->next);
+      |         ^
+./syn.h:170:30: note: expanded from macro 'PRINT'
+  170 |                                         (*(fpPrint[(p)->ntype]))( p );}
+      |                                                                 ^
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/cluster.c -o brotli/c/enc/cluster.o
+14 warnings generated.
+cc -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11 -c -o set.o ../support/set/set.c
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/compress_fragment.c -o brotli/c/enc/compress_fragment.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  pred.c -o pred.o
+pred.c:416:18: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  416 | /* MR11 */                                      TRAV(p,
+      |                                                 ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+pred.c:420:12: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  420 |                                                         TRAV(p->next,
+      |                                                         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+pred.c:446:8: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  446 |                                                         REACH((Junction *)p->next,
+      |                                                         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+pred.c:629:13: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  629 |             REACH(p->next, k2, &rk2, b);
+      |             ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+pred.c:680:13: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  680 |             TRAV(p->next, k2, &rk2, u);
+      |             ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+5 warnings generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  egman.c -o egman.o
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  mrhoist.c -o mrhoist.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/compress_fragment_two_pass.c -o brotli/c/enc/compress_fragment_two_pass.o
+mrhoist.c:865:2: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  865 |         REACH(p,ck,incomplete,tokensUsed);
+      |         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+mrhoist.c:965:9: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  965 |         REACH(ruleRef->next,k2,&rk2,b);
+      |         ^
+./syn.h:173:36: note: expanded from macro 'REACH'
+  173 |                                         (a) = (*(fpReach[(p)->ntype]))( p, k, rk );}
+      |                                                                       ^
+mrhoist.c:1035:9: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1035 |         TRAV(ruleRef->next,k2,&rk2,u);
+      |         ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+mrhoist.c:2733:3: warning: passing arguments to a function without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 2733 |   TRAV(suppressNode,maxk,&incomplete,t);
+      |   ^
+./syn.h:179:44: note: expanded from macro 'TRAV'
+  179 |                                         else (a) = (*(fpTraverse[(p)->ntype]))( p, k, rk );}
+      |                                                                               ^
+4 warnings generated.
+cc -c -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11  fcache.c -o fcache.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/dictionary_hash.c -o brotli/c/enc/dictionary_hash.o
+cc -O -I. -I../support/set -I../h -DUSER_ZZSYN  -DZZLEXBUFSIZE=65536 -std=gnu11 -o ./antlr antlr.o scan.o err.o bits.o build.o fset2.o fset.o gen.o globals.o hash.o lex.o main.o misc.o set.o pred.o egman.o mrhoist.o fcache.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/encode.c -o brotli/c/enc/encode.o
+make[2]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VfrCompile/Pccts/antlr'
+clang++ -c -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -Wno-deprecated-register -Wno-unused-result -std=c++14 -O2  VfrUtilityLib.cpp -o VfrUtilityLib.o
+VfrUtilityLib.cpp:997:5: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+  997 |     sprintf (Msg, "value of pragma pack(show) == %d", mPackAlign);
+      |     ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+VfrUtilityLib.cpp:2473:3: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 2473 |   sprintf (NewAltCfg, "%04x", pNode->mDefaultId);
+      |   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/encoder_dict.c -o brotli/c/enc/encoder_dict.o
+2 warnings generated.
+clang++ -c -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -Wno-deprecated-register -Wno-unused-result -std=c++14 -O2  VfrCompiler.cpp -o VfrCompiler.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/entropy_encode.c -o brotli/c/enc/entropy_encode.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/histogram.c -o brotli/c/enc/histogram.o
+Pccts/antlr/antlr -CC -e3 -ck 3 -k 2 -fl VfrParser.dlg -ft VfrTokens.h -o . VfrSyntax.g
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/literal_cost.c -o brotli/c/enc/literal_cost.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/memory.c -o brotli/c/enc/memory.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/metablock.c -o brotli/c/enc/metablock.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/static_dict.c -o brotli/c/enc/static_dict.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/static_dict_lut.c -o brotli/c/enc/static_dict_lut.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/static_init.c -o brotli/c/enc/static_init.o
+cc  -c -I ./brotli/c/include -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  brotli/c/enc/utf8_util.c -o brotli/c/enc/utf8_util.o
+make -C GenSec
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenSec'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  GenSec.c -o GenSec.o
+make -C GenCrc32
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenCrc32'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  GenCrc32.c -o GenCrc32.o
+Antlr parser generator   Version 1.33MR33   1989-2001
+VfrSyntax.g, line 3535: warning: alts 1 and 2 of {..} ambiguous upon ( ";" RefreshGuid GuidOp Locked Image EndIf InconsistentIf DisableIf SuppressIf Default GrayOutIf )
+VfrSyntax.g, line 3544: warning: alts 1 and 2 of {..} ambiguous upon ( ";" RefreshGuid GuidOp Locked Image EndIf InconsistentIf DisableIf SuppressIf Default GrayOutIf )
+VfrSyntax.g, line 3553: warning: alts 1 and 2 of {..} ambiguous upon ( ";" RefreshGuid GuidOp Locked Image EndIf InconsistentIf DisableIf SuppressIf Default GrayOutIf )
+VfrSyntax.g, line 3563: warning: alts 1 and 2 of {..} ambiguous upon ( ";" RefreshGuid GuidOp Locked Image EndIf InconsistentIf DisableIf SuppressIf Default GrayOutIf )
+VfrSyntax.g, line 3593: warning: alts 1 and 2 of {..} ambiguous upon ( ";" RefreshGuid GuidOp Locked Image EndIf InconsistentIf DisableIf SuppressIf Default GrayOutIf )
+VfrSyntax.g, line 3602: warning: alts 1 and 2 of {..} ambiguous upon ( ";" RefreshGuid GuidOp Locked Image EndIf InconsistentIf DisableIf SuppressIf Default GrayOutIf )
+Pccts/dlg/dlg -C2 -i -CC -cl VfrLexer -o . VfrParser.dlg
+cc -o ../bin/GenCrc32  GenCrc32.o -L../libs -lCommon
+cc -o ../bin/GenSec  GenSec.o -L../libs -lCommon
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenCrc32'
+make -C LzmaCompress
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenSec'
+make -C TianoCompress
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/LzmaCompress'
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/TianoCompress'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  TianoCompress.c -o TianoCompress.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST LzmaCompress.c -o LzmaCompress.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST Sdk/C/Alloc.c -o Sdk/C/Alloc.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST Sdk/C/LzFind.c -o Sdk/C/LzFind.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST Sdk/C/LzmaDec.c -o Sdk/C/LzmaDec.o
+cc -o ../bin/BrotliCompress  BrotliCompress.o brotli/c/common/platform.o brotli/c/common/shared_dictionary.o brotli/c/common/constants.o brotli/c/common/context.o brotli/c/enc/command.o brotli/c/enc/compound_dictionary.o brotli/c/enc/fast_log.o brotli/c/common/dictionary.o brotli/c/common/transform.o brotli/c/dec/bit_reader.o brotli/c/dec/decode.o brotli/c/dec/huffman.o brotli/c/dec/prefix.o brotli/c/dec/state.o brotli/c/dec/static_init.o brotli/c/enc/backward_references.o brotli/c/enc/backward_references_hq.o brotli/c/enc/bit_cost.o brotli/c/enc/block_splitter.o brotli/c/enc/brotli_bit_stream.o brotli/c/enc/cluster.o brotli/c/enc/compress_fragment.o brotli/c/enc/compress_fragment_two_pass.o brotli/c/enc/dictionary_hash.o brotli/c/enc/encode.o brotli/c/enc/encoder_dict.o brotli/c/enc/entropy_encode.o brotli/c/enc/histogram.o brotli/c/enc/literal_cost.o brotli/c/enc/memory.o brotli/c/enc/metablock.o brotli/c/enc/static_dict.o brotli/c/enc/static_dict_lut.o brotli/c/enc/static_init.o brotli/c/enc/utf8_util.o -L../libs -lm
+cc -o ../bin/TianoCompress  TianoCompress.o -L../libs -lCommon
+dlg  Version 1.33MR33   1989-2001
+
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/BrotliCompress'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST Sdk/C/LzmaEnc.c -o Sdk/C/LzmaEnc.o
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/TianoCompress'
+make -C VolInfo
+clang++ -c -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -Wno-deprecated-register -Wno-unused-result -std=c++14 -O2  EfiVfrParser.cpp -o EfiVfrParser.o
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VolInfo'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  VolInfo.c -o VolInfo.o
+clang++ -c -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -Wno-deprecated-register -Wno-unused-result -std=c++14 -O2  VfrLexer.cpp -o VfrLexer.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST Sdk/C/7zFile.c -o Sdk/C/7zFile.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST Sdk/C/7zStream.c -o Sdk/C/7zStream.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  -D_7ZIP_ST Sdk/C/Bra86.c -o Sdk/C/Bra86.o
+make -C DevicePath
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/DevicePath'
+cc -o ../bin/VolInfo  VolInfo.o -L../libs -lCommon
+In file included from VfrLexer.cpp:22321:
+Pccts/h/DLexer.h:60:3: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+   60 |                 sprintf((char *)ebuf,"Invalid automaton mode = %d ",m);
+      |                 ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VolInfo'
+make -C GenStm
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  DevicePath.c -o DevicePath.o
+make[1]: Entering directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenStm'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  GenStm.c -o GenStm.o
+1 warning generated.
+clang++ -c -Wno-deprecated-register -std=c++14 -DPCCTS_USE_NAMESPACE_STD -I Pccts/h -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include  -O2  VfrSyntax.cpp -o VfrSyntax.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  UefiDevicePathLib.c -o UefiDevicePathLib.o
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  DevicePathFromText.c -o DevicePathFromText.o
+cc -o ../bin/GenStm  GenStm.o -L../libs -lCommon
+cc -o ../bin/LzmaCompress  LzmaCompress.o Sdk/C/Alloc.o Sdk/C/LzFind.o Sdk/C/LzmaDec.o Sdk/C/LzmaEnc.o Sdk/C/7zFile.o Sdk/C/7zStream.o Sdk/C/Bra86.o -L../libs -lCommon
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/GenStm'
+cc  -c  -I .. -I ../Include/Common -I ../Include/ -I ../Include/IndustryStandard -I ../Common/ -I .. -I . -I ../../../../MdePkg/Include/AArch64/ -I ../../../../MdePkg/Include -MD -fshort-wchar -fno-strict-aliasing -Wall -Werror -Wno-deprecated-declarations -Wno-self-assign -Wno-unused-result -nostdlib -g -O2  DevicePathUtilities.c -o DevicePathUtilities.o
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/LzmaCompress'
+cc -o ../bin/DevicePath  DevicePath.o UefiDevicePathLib.o DevicePathFromText.o  DevicePathUtilities.o -L../libs -lCommon
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/DevicePath'
+VfrSyntax.cpp:11253:3: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 11253 |   sprintf (Str, "%d", Value);
+       |   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+VfrSyntax.cpp:11286:7: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 11286 |       sprintf(ErrorMsg, "Overflow: Value %s is too large to store in a UINT8", OrigString);
+       |       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+VfrSyntax.cpp:11323:7: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 11323 |       sprintf(ErrorMsg, "Overflow: Value %s is too large to store in a UINT16", OrigString);
+       |       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+VfrSyntax.cpp:11360:7: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 11360 |       sprintf(ErrorMsg, "Overflow: Value %s is too large to store in a UINT32", OrigString);
+       |       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+VfrSyntax.cpp:11396:7: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 11396 |       sprintf(ErrorMsg, "Overflow: Value %s is too large to store in a UINT64", OrigString);
+       |       ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+5 warnings generated.
+clang++ -o ../bin/VfrCompile  AParser.o DLexerBase.o ATokenBuffer.o EfiVfrParser.o VfrLexer.o VfrSyntax.o VfrFormPkg.o VfrError.o VfrUtilityLib.o VfrCompiler.o -L../libs -lCommon
+make[1]: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C/VfrCompile'
+Finished building BaseTools C Tools with HOST_ARCH=AARCH64
+make: Leaving directory '/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C'

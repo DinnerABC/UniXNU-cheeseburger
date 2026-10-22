@@ -1,0 +1,22 @@
+{
+  "out/package/Build/Out/AARCH64-DEBUG/UniXNU.efi": {
+    "size": 93696,
+    "sha256": "beb1c315dbb6ff39804b9e674a5adcf8d8a02aa47ec374822add6933f2629538"
+  },
+  "out/package/Build/Out/AARCH64-DEBUG/UniXNUDxe.efi": {
+    "size": 14336,
+    "sha256": "fa1adcb916cc7d0d93e24b894385032ee934fe13fb95e3a1dc7088f7bba6884a"
+  },
+  "out/package/Build/Out/AARCH64-DEBUG/HelloPayload.efi": {
+    "size": 19456,
+    "sha256": "5a7345f5fad4e223f573bdf5a24822a53f8a130c134b814856df409a05a42830"
+  },
+  "out/package/Build/Out/AARCH64-DEBUG/SampleDriver.efi": {
+    "size": 9216,
+    "sha256": "f7110a4657b851e4fe541411269367dacbcad75d71c3efe4bb4e5188c8cb274a"
+  },
+  "out/package/Build/Out/AARCH64-DEBUG/XnuTest.efi": {
+    "size": 13824,
+    "sha256": "00c2cd95a46f340b943539549c5a1c98deb10b8701d2a05fe313dd05a278004b"
+  }
+}

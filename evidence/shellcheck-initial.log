@@ -1,0 +1,12 @@
+
+In /Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/build-package.sh line 10:
+    export PATH="$(brew --prefix "$formula")/bin:$PATH"
+           ^--^ SC2155 (warning): Declare and assign separately to avoid masking return values.
+
+
+In /Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/build-package.sh line 12:
+  export PATH="$(brew --prefix make)/libexec/gnubin:$PATH"
+         ^--^ SC2155 (warning): Declare and assign separately to avoid masking return values.
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2155 -- Declare and assign separately to ...

@@ -1,0 +1,80 @@
+[
+  {
+    "label": "actionlint",
+    "command": [
+      "/opt/homebrew/bin/actionlint",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/.github/workflows/macos.yml"
+    ],
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "label": "shellcheck",
+    "command": [
+      "/opt/homebrew/bin/shellcheck",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/build-package.sh"
+    ],
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "label": "fetch-help",
+    "command": [
+      "/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/fetch-sources.py",
+      "--help"
+    ],
+    "exit_code": 0,
+    "expected_exit_code": 0
+  },
+  {
+    "label": "kernel",
+    "command": [
+      "/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/p1.py",
+      "kernel"
+    ],
+    "exit_code": 78,
+    "expected_exit_code": 78
+  },
+  {
+    "label": "firmware",
+    "command": [
+      "/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/p1.py",
+      "firmware"
+    ],
+    "exit_code": 78,
+    "expected_exit_code": 78
+  },
+  {
+    "label": "payload",
+    "command": [
+      "/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/p1.py",
+      "payload"
+    ],
+    "exit_code": 78,
+    "expected_exit_code": 78
+  },
+  {
+    "label": "bootimg",
+    "command": [
+      "/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/p1.py",
+      "bootimg"
+    ],
+    "exit_code": 78,
+    "expected_exit_code": 78
+  },
+  {
+    "label": "userdata",
+    "command": [
+      "/Users/dinnerabc/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/scripts/p1.py",
+      "userdata"
+    ],
+    "exit_code": 78,
+    "expected_exit_code": 78
+  }
+]

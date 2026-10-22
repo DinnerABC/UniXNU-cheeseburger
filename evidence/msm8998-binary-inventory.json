@@ -1,0 +1,169 @@
+{
+  "source": {
+    "repository": "edk2-porting/edk2-msm8998",
+    "commit": "ace27110b9b9b6c591387d50cf748ec646402b4a"
+  },
+  "note": "Presence/hash only; no hardware or redistribution qualification",
+  "binaries": [
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/AdcDxe/AdcDxe.efi",
+      "bytes": 40960,
+      "sha256": "f93a576bcda09596720c8e3599f2c1ee4115f5eb513ceeea0c47142101fd6ffc"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/ButtonsDxe/ButtonsDxe.efi",
+      "bytes": 36864,
+      "sha256": "c728ac501436b8bab414ae54b853343115c42b15571d8ddee79129af02a8d03f"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/ChipInfo/ChipInfo.efi",
+      "bytes": 36864,
+      "sha256": "145618950aa7f72ea824eea60cecadcc826d067989a2fea012d707f800a7b18c"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/ClockDxe/ClockDxe.efi",
+      "bytes": 131072,
+      "sha256": "b4020fc78a80d9335bfaf74ad7831a096c4e2a2a978a0f2b2178e132f73a0ac6"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/DALSys/DALSys.efi",
+      "bytes": 188416,
+      "sha256": "af43ce1190b8c4520e7f2a6a16f2119d837d1eaefeada1dbbd1c0b066e9c3673"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/DALTLMM/DALTLMM.efi",
+      "bytes": 36864,
+      "sha256": "af5159f23e9cedcddafc709f89d010ea3a8f64894ee5c1fb1122d14c3dc6e5fb"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/GlinkDxe/GlinkDxe.efi",
+      "bytes": 49152,
+      "sha256": "7937a8bba87276ff7a14ef2faa4f0ac9486552c708ac4639ff54e1cffe8c24ba"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/HWIODxeDriver/HWIODxeDriver.efi",
+      "bytes": 32768,
+      "sha256": "69f33d8758708439c7c37e45bdcc38252ebb0e8d2eb6d2bccc1bbe4e6ed45833"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/I2C/I2C.efi",
+      "bytes": 53248,
+      "sha256": "1b1df5b767b488d8049455c70c3b3d92e45aca8a2d33a5c075c6201a4e836ff6"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/MpPowerDxe/MpPowerDxe.efi",
+      "bytes": 28672,
+      "sha256": "af88a9d41b927b6a8c3ce1d15a425243ef16cf1181a18deff65f9a9e20e92278"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/NpaDxe/NpaDxe.efi",
+      "bytes": 110592,
+      "sha256": "c5b1549fc0430671bece73c5d4f0f2e061aa605f7c8b6b51dbdfe47e94c73ea5"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/PlatformInfoDxeDriver/PlatformInfoDxeDriver.efi",
+      "bytes": 28672,
+      "sha256": "bf52725c138535302415f9ea7372d45bface2adbe20eed64f98921098728f2fc"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/PmicDxe/PmicDxe.efi",
+      "bytes": 212992,
+      "sha256": "16c722765b9862ca28557ef4510c7d8d1a16830e22d8b02f32eb53ad7f3e236c"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/SPI/SPI.efi",
+      "bytes": 49152,
+      "sha256": "1abe9111e0a517e947e8c8d39c29295638c618f43701c64f8db1670d1356a985"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/SPMI/SPMI.efi",
+      "bytes": 36864,
+      "sha256": "910bb5fc610ba2a56b640827527e8ce51d5b47a6501cad371eba3b3585e2a868"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/SdccDxe/SdccDxe.efi",
+      "bytes": 118784,
+      "sha256": "2c9bfdd5b143da6636c3f62d8e55a294435c0a20619ae99332a459c32ececb64"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/SmemDxe/SmemDxe.efi",
+      "bytes": 28672,
+      "sha256": "d887c7389e1ebb870e665d87c93a6ff860f1b56712825e625ebe25f2ba22e30f"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UFSDxe/UFSDxe.efi",
+      "bytes": 94208,
+      "sha256": "400e08d32f78cb9ebf4f5184ccf2e874ba75363b0d21b5c3e1b12d5f91a2a941"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/ULogDxe/ULogDxe.efi",
+      "bytes": 81920,
+      "sha256": "c548f48aa275cdf2868b983c910ad4d36d691a504777dd355941c08bc16653fc"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbConfigDxe/UsbConfigDxe.efi",
+      "bytes": 77824,
+      "sha256": "c81450d139adbb7bc1744a2dc21388e35dac7876913224d04b1c298c4f386d6f"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbDeviceDxe/UsbDeviceDxe.efi",
+      "bytes": 65536,
+      "sha256": "2e6050adb56cae921f133e772bb495077d8529781005a76de1b8a0b7aa967480"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbInitDxe/UsbInitDxe.efi",
+      "bytes": 28672,
+      "sha256": "26999a5d7200c4572fa39e8d2da9f5ccb2c76855b258faaec1d0ae9c745d87d8"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbKbDxe/UsbKbDxe.efi",
+      "bytes": 49152,
+      "sha256": "eabbd75f569fd6deab809c120e03d00c30d512ece78a024271f79472b57e23c3"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbMouseDxe/UsbMouseDxe.efi",
+      "bytes": 36864,
+      "sha256": "f01a7f5ec253136d697d814c1c388071b1258642664b161fbc20760bb6e07078"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbMsdDxe/UsbMsdDxe.efi",
+      "bytes": 69632,
+      "sha256": "d18760e7d651eaaca390db10c6c1ff334f43d9f40f48bbc793736ae66edc74b9"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbTypeCDxe/UsbTypeCDxe.efi",
+      "bytes": 28672,
+      "sha256": "583b269bc0744ba7d765b2faeba2922cc92da29b1bd9924405cc0a9e5fadf59c"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbfnChgDxe/UsbfnChgDxe.efi",
+      "bytes": 36864,
+      "sha256": "943c0946ba97a9321fd572c868f2de20c7d312c57251d2b99b923a608927e839"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/UsbfnDwc3Dxe/UsbfnDwc3Dxe.efi",
+      "bytes": 122880,
+      "sha256": "c54d0ea4b67bccfe2508549bd54e3197f1d2918b0376f0ea059fbb9ce3929f3e"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/XhciDxe/XhciDxe.efi",
+      "bytes": 98304,
+      "sha256": "ada48df9ff0b84abec988a66e3c301278ff6f5915c53856c11d9d88dbd6c9334"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/common/Binaries/XhciPciEmulation/XhciPciEmulation.efi",
+      "bytes": 40960,
+      "sha256": "698ade6ec7f6955b6195b905bd0d4dee9a17fde3c1dc36bc7a141fc7d2a40d2a"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/cheeseburger/Binaries/TzDxe/TzDxeLA.efi",
+      "bytes": 65536,
+      "sha256": "e985aa5a3694afa7612a03b4770b677ebf58986f212e001f7171ac2a7e33eea4"
+    },
+    {
+      "path": "Platforms/Msm8998Binaries/cheeseburger/PatchedBinaries/ButtonsDxe/ButtonsDxe.efi",
+      "bytes": 36864,
+      "sha256": "693e5628b4f04aae19dca12a24d65020114d8dd970fafd10c2c2945ef3d715f5"
+    }
+  ]
+}

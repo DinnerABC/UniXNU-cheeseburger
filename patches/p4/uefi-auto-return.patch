@@ -1,0 +1,22 @@
+--- a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.dsc
++++ b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.dsc
+@@ -25,7 +25,7 @@
+ !include P2Integration/Integration.dsc.inc
+ 
+ [Components]
+-  P3Integration/Probe/P3Probe.inf
++  P4Integration/Probe/P4Probe.inf
+ 
+ [Components]
+   P4Integration/AutoReturn/P4AutoReturn.inf
+--- a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf
++++ b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf
+@@ -227,7 +227,7 @@
+     INF DarwinBootPkg/Driver/DarwinBoot.inf
+ 
+     INF P4Integration/AutoReturn/P4AutoReturn.inf
+-    INF P3Integration/Probe/P3Probe.inf
++    INF P4Integration/Probe/P4Probe.inf
+     INF ShellPkg/Application/Shell/Shell.inf
+ !ifdef $(INCLUDE_TFTP_COMMAND)
+     INF ShellPkg/DynamicCommand/TftpDynamicCommand/TftpDynamicCommand.inf

@@ -1,0 +1,116 @@
+{
+  "stages": {
+    "kernel": {
+      "inputs": [
+        "scripts/p4-build-xnu.sh",
+        "patches/p4/xnu-build-and-msm8998.patch",
+        "out/p4/sources.json"
+      ],
+      "command": [
+        "bash",
+        "scripts/p4-build-and-export.sh"
+      ],
+      "outputs": [
+        "out/cheeseburger/kernel/kernel.macho",
+        "out/cheeseburger/kernel/validation.json"
+      ]
+    },
+    "adt": {
+      "inputs": [
+        "scripts/p4-make-adt.py",
+        "out/p3/private/recovery-device.dtb",
+        "config/p4/observed-registers.json",
+        "tools/adt/adt.py",
+        "scripts/p4-check-adt.py",
+        "scripts/p4-build-adt.py"
+      ],
+      "command": [
+        "python3",
+        "scripts/p4-build-adt.py"
+      ],
+      "outputs": [
+        "out/cheeseburger/adt/kernel.macho.adt",
+        "out/p4/adt-parser/validation.json"
+      ]
+    },
+    "package": {
+      "inputs": [
+        "out/p2/unixnu-package/result.json",
+        "scripts/p4-verify-package.py"
+      ],
+      "command": [
+        "python3",
+        "scripts/p4-verify-package.py"
+      ],
+      "outputs": [
+        "out/p4/package-verification.json"
+      ]
+    },
+    "payload": {
+      "depends": [
+        "kernel",
+        "adt",
+        "package"
+      ],
+      "inputs": [
+        "scripts/p4-build-payload.py",
+        "tools/ram_payload/bundle.py",
+        "config/p4/ram-probe.toml",
+        "out/cheeseburger/kernel/kernel.macho",
+        "out/cheeseburger/kernel/validation.json",
+        "out/cheeseburger/adt/kernel.macho.adt",
+        "out/p4/adt-parser/validation.json"
+      ],
+      "command": [
+        "python3",
+        "scripts/p4-build-payload.py"
+      ],
+      "outputs": [
+        "out/cheeseburger/payload/ram-probe.bundle",
+        "out/cheeseburger/payload/manifest.json"
+      ]
+    },
+    "uefi": {
+      "inputs": [
+        "scripts/p4-build-uefi.sh",
+        "scripts/p4-prepare-rampayload.py",
+        "scripts/p4-prepare-auto-return.py",
+        "config/p4/AutoReturn/P4AutoReturn.c",
+        "config/p4/AutoReturn/P4AutoReturn.inf",
+        "config/p4/Probe/P4Probe.c",
+        "config/p4/Probe/P4Probe.inf",
+        "config/p4/RamPayload/P4RamPayload.c",
+        "config/p4/RamPayload/P4RamPayload.inf",
+        "config/p4/RamPayload/Range.h"
+      ],
+      "command": [
+        "bash",
+        "scripts/p4-build-uefi.sh"
+      ],
+      "outputs": [
+        "out/p4/ram-payload-uefi/MSM8998PKG_UEFI.fd",
+        "out/p4/ram-payload-uefi/compiled-efi-manifest.json",
+        "out/p4/ram-payload-uefi/image-verification.json"
+      ]
+    },
+    "bootimg": {
+      "depends": [
+        "payload",
+        "uefi"
+      ],
+      "inputs": [
+        "scripts/p4-pack-rampayload.py",
+        "out/p4/ram-payload-uefi/MSM8998PKG_UEFI.fd",
+        "out/cheeseburger/payload/ram-probe.bundle"
+      ],
+      "command": [
+        "python3",
+        "scripts/p4-pack-rampayload.py"
+      ],
+      "outputs": [
+        "out/p4/ram-payload-uefi/boot-ram-probe.img",
+        "out/p4/ram-payload-uefi/ram-probe-packaging.json"
+      ]
+    }
+  }
+}

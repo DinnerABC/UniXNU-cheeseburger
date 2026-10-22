@@ -1,0 +1,236 @@
+name: cheeseburger P2 native UEFI and UniXNU
+on:
+  workflow_dispatch:
+    inputs:
+      kernel:
+        description: 'Run XNU readiness gate (currently BLOCKED, no false success)'
+        type: boolean
+        default: false
+      payload:
+        description: 'Request payload (requires qualified kernel/ADT, currently BLOCKED)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build-uefi:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device/upstream/msm8998
+          persist-credentials: false
+          repository: edk2-porting/edk2-msm8998
+          ref: ace27110b9b9b6c591387d50cf748ec646402b4a
+          submodules: recursive
+      - name: Install GNU Linux dependencies directly
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py linux-setup -- bash scripts/p2-linux-setup.sh
+      - name: Build and validate the original native UEFI
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py uefi-original -- bash scripts/p2-linux-build.sh upstream/msm8998 out/p2/baseline
+          python3 scripts/p2run.py verify-original -- python3 scripts/p2-verify-images.py upstream/msm8998 out/p2/baseline
+          python3 scripts/p2run.py export-original -- python3 scripts/p2-export.py upstream/msm8998 out/p2/baseline
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: p2-original
+          path: device/out/p2/
+          if-no-files-found: error
+          retention-days: 14
+  build-unixnu-package:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device/upstream/unixnu
+          persist-credentials: false
+          repository: UniXNU/UniXNU
+          ref: b6ae99c17194e6a18fd819d3148e69fe405e91fc
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device/upstream/mu
+          persist-credentials: false
+          repository: microsoft/mu_basecore
+          ref: cfb93724a06ff86ff5ba971413368a7809ee42a5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.14'
+      - name: Install the verified compiler family and EDK2 gitlinks
+        run: |
+          set -euo pipefail
+          cd device
+          mkdir -p out/p2/logs .work/tmp
+          export TMPDIR="$PWD/.work/tmp"
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm lld make 2>&1 | tee out/p2/logs/brew.log
+          for f in llvm lld; do echo "$(brew --prefix "$f")/bin" >> "$GITHUB_PATH"; done
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          git -C upstream/mu submodule update --init --depth 1 -- MdePkg/Library/BaseFdtLib/libfdt MdePkg/Library/MipiSysTLib/mipisyst BaseTools/Source/C/BrotliCompress/brotli MdeModulePkg/Library/BrotliCustomDecompressLib/brotli SecurityPkg/DeviceSecurity/SpdmLib/libspdm 2>&1 | tee out/p2/logs/mu-submodules.log
+      - name: Build the actual AArch64 package without touching P1
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py unixnu-package -- python3 scripts/p2-package.py --upstream upstream/unixnu --edk2 upstream/mu
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: p2-unixnu-package
+          path: device/out/p2/unixnu-package/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: p2-package-logs
+          path: device/out/p2/logs/
+          if-no-files-found: error
+          retention-days: 14
+  integrate-uefi:
+    needs: [build-uefi, build-unixnu-package]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device/upstream/msm8998
+          persist-credentials: false
+          repository: edk2-porting/edk2-msm8998
+          ref: ace27110b9b9b6c591387d50cf748ec646402b4a
+          submodules: recursive
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device/upstream/unixnu
+          persist-credentials: false
+          repository: UniXNU/UniXNU
+          ref: b6ae99c17194e6a18fd819d3148e69fe405e91fc
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device/upstream/darwinboot
+          persist-credentials: false
+          repository: UniXNU/DarwinBoot
+          ref: 85332b317ee80898fc78939ea64e6ca52d3837a3
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: p2-unixnu-package
+          path: device/out/p2/unixnu-package
+      - name: Install GNU Linux dependencies directly
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py linux-setup -- bash scripts/p2-linux-setup.sh
+      - name: Apply the verified FV and old EDK2 compatibility adapters
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py integrate -- python3 scripts/p2-integrate.py upstream/msm8998 --unixnu upstream/unixnu --darwinboot upstream/darwinboot --efi out/p2/unixnu-package/package/Build/Out/AARCH64-DEBUG/UniXNU.efi
+          python3 scripts/p2run.py uefi-integrated -- bash scripts/p2-linux-build.sh upstream/msm8998 out/p2/integrated
+          python3 scripts/p2run.py verify-integrated -- python3 scripts/p2-verify-images.py upstream/msm8998 out/p2/integrated
+          python3 scripts/p2run.py export-integrated -- python3 scripts/p2-export.py upstream/msm8998 out/p2/integrated
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: p2-integrated
+          path: device/out/p2/
+          if-no-files-found: error
+          retention-days: 14
+  build-bootimg:
+    needs: build-uefi
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device/upstream/msm8998
+          persist-credentials: false
+          repository: edk2-porting/edk2-msm8998
+          ref: ace27110b9b9b6c591387d50cf748ec646402b4a
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: p2-original
+          path: device/out/p2
+      - name: Package native UEFI only; no XNU payload or flash claim
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py native-bootimg -- python3 scripts/p2-pack-bootimg.py --fd out/p2/baseline/MSM8998PKG_UEFI.fd --source upstream/msm8998 --output out/p2/repacked
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: p2-native-bootimg
+          path: device/out/p2/
+          if-no-files-found: error
+          retention-days: 14
+  build-xnu-kernel:
+    if: inputs.kernel
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.14'
+      - name: Check actual Xcode and board readiness before any XNU claim
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py xnu-readiness -- python3 scripts/p2-xnu-preflight.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: p2-xnu-readiness
+          path: device/out/p2/
+          if-no-files-found: error
+          retention-days: 14
+  build-payload:
+    if: inputs.payload
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.14'
+      - name: Refuse missing qualified kernel and ADT inputs
+        run: |
+          set -euo pipefail
+          cd device
+          python3 scripts/p2run.py payload-readiness -- python3 scripts/p1.py payload
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: p2-payload-readiness
+          path: device/out/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Validation boundary summary
+        run: |
+          set -euo pipefail
+          echo 'Compilation and image-format validation only; no hardware boot validation.' >> "$GITHUB_STEP_SUMMARY"

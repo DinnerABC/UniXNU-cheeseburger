@@ -1,0 +1,57 @@
+--- a/DarwinBootPkg/Driver/DarwinBoot.c
++++ b/DarwinBootPkg/Driver/DarwinBoot.c
+@@ -7,6 +7,8 @@
+ #include <Library/MemoryAllocationLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/PrintLib.h>
++#include <Library/BaseCryptLib.h>
++#include "P5Expected.h"
+ #include <Library/UefiLib.h>
+ #include <Protocol/UniXNULoader.h>
+ #include <Protocol/LoadedImage.h>
+@@ -518,8 +520,14 @@
+   if (EFI_ERROR (Status)) { return Status; }
+   Status = ReadFile (Root, Request->KernelPath, SIZE_128MB, &Image, &ImageSize);
+   if (EFI_ERROR (Status)) { goto Fail; }
++  {
++    UINT8 Hash[32];
++    if (ImageSize != P5KernelBytes || !Sha256HashAll(Image,ImageSize,Hash) || CompareMem(Hash,P5KernelHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
++    Print(L"P5 Stage1: kernel read SHA256 PASS bytes=%lu\r\n",(UINT64)ImageSize);
++  }
+   Status = ParseKernel (Image, ImageSize, &Kernel);
+   if (EFI_ERROR (Status)) { goto Fail; }
++  Print(L"P5 Stage2: Mach-O parsed; entry=0x%lx\r\n",Kernel.Entry);
+   Length = StrSize (Request->KernelPath);
+   TreePath = AllocatePool (Length + 11 * sizeof (CHAR16));
+   if (TreePath == NULL) { Status = EFI_OUT_OF_RESOURCES; goto Fail; }
+@@ -527,6 +535,11 @@
+   StrCatS (TreePath, Length / sizeof (CHAR16) + 11, L".adt");
+   Status = ReadFile (Root, TreePath, SIZE_16MB, &Tree, &TreeSize);
+   if (EFI_ERROR (Status)) { goto Fail; }
++  {
++    UINT8 Hash[32];
++    if (TreeSize != P5AdtBytes || !Sha256HashAll(Tree,TreeSize,Hash) || CompareMem(Hash,P5AdtHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
++    Print(L"P5 ADT read SHA256 PASS bytes=%lu\r\n",(UINT64)TreeSize);
++  }
+   Offset = 0;
+   RamdiskOffset = MAX_UINTN;
+   TrustCacheOffset = MAX_UINTN;
+@@ -609,6 +622,9 @@
+   Print (L"DARWINBOOT: video base=0x%lx display=%lu row=%lu width=%lu height=%lu depth=%lu\n",
+          Video[0], Video[1], Video[2], Video[3], Video[4], Video[5]);
+   Print (L"DARWINBOOT: inputs validated; exiting boot services\n");
++
++  Print(L"P5 Stage3: ADT/BootArgs/memory-map ready. Green=loader after EBS; magenta=XNU __start.\r\n");
++  gBS->Stall(20000000);
+ 
+   //
+   // The same facts in large type over the whole screen. The firmware's log
+@@ -629,7 +645,7 @@
+   DEBUG ((DEBUG_ERROR, "ID_AA64MMFR0_EL1 0x%lx  (PARange %lu, 4 KiB granule %a)\n", READ_SYSREG (id_aa64mmfr0_el1),
+           READ_SYSREG (id_aa64mmfr0_el1) & 0xF, (((READ_SYSREG (id_aa64mmfr0_el1) >> 28) & 0xF) == 0xF) ? "NOT supported" : "supported"));
+   DEBUG ((DEBUG_ERROR, "ID_AA64PFR0_EL1  0x%lx\n", READ_SYSREG (id_aa64pfr0_el1)));
+-  DEBUG ((DEBUG_ERROR, "\nExiting boot services. A green bar across the top\nmeans the kernel entry code ran.\n"));
++  DEBUG ((DEBUG_ERROR, "\nExiting boot services. A green bar across the top\nmeans DarwinEnter ran AFTER EBS; NOT XNU.\nMagenta top stripe is emitted ONLY by XNU __start.\n"));
+   for (Attempt = 0; Attempt < 3; Attempt++) {
+     MapSize = Capacity;
+     Status = gBS->GetMemoryMap (&MapSize, Map, &Key, &Stride, &Version);

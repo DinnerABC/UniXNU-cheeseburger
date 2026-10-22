@@ -1,0 +1,19 @@
+--- a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.dsc
++++ b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.dsc
+@@ -23,3 +23,6 @@
+   gMSM8998PkgTokenSpaceGuid.PcdDeviceCodeName|"cheeseburger"
+ 
+ !include P2Integration/Integration.dsc.inc
++
++[Components]
++  P3Integration/Probe/P3Probe.inf
+--- a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf
++++ b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf
+@@ -226,6 +226,7 @@
+     INF UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf
+     INF DarwinBootPkg/Driver/DarwinBoot.inf
+ 
++    INF P3Integration/Probe/P3Probe.inf
+     INF ShellPkg/Application/Shell/Shell.inf
+ !ifdef $(INCLUDE_TFTP_COMMAND)
+     INF ShellPkg/DynamicCommand/TftpDynamicCommand/TftpDynamicCommand.inf

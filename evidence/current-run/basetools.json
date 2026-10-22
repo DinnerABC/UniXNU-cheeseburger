@@ -1,0 +1,13 @@
+{
+  "command": [
+    "make",
+    "-C",
+    "/Volumes/NAS-MacData/Project/IOS/upstream/Mu_Basecore/BaseTools/Source/C",
+    "-j4"
+  ],
+  "cwd": "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger",
+  "exit_code": 0,
+  "expected_exit_code": 0,
+  "started_epoch": 1792596003.921304,
+  "duration_seconds": 4.339734077453613
+}

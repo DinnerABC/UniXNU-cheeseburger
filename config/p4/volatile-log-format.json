@@ -1,0 +1,18 @@
+{
+  "magic": "0x474c3450",
+  "version": 1,
+  "capacity": 32,
+  "record_bytes": 24,
+  "crc_bytes": 20,
+  "clock": "CNTPCT_EL0; frequency must be captured separately",
+  "stages": {
+    "1": "driver_entry",
+    "2": "ready_to_boot",
+    "3": "cold_reset_requested",
+    "4": "exit_boot_services"
+  },
+  "cross_reboot_retention_verified": false,
+  "exception_register_capture": false,
+  "header_bytes": 24,
+  "frequency_field": "CNTFRQ_EL0 recorded as UINT64 in header"
+}

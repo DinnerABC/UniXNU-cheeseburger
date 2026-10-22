@@ -1,0 +1,27 @@
+vmType: vz
+arch: aarch64
+cpus: 4
+memory: 4GiB
+disk: 24GiB
+images:
+- location: "/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/.work/downloads/ubuntu-22.04-server-cloudimg-arm64.img"
+  arch: aarch64
+  digest: sha256:e720ae083f93baae47ac9b76a096243fe1027f60998cf1127a47a74c880f64ed
+mountType: virtiofs
+mounts:
+- location: "/Volumes/NAS-MacData/Project/IOS"
+  mountPoint: /project
+  writable: true
+containerd:
+  system: false
+  user: false
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+
+propagateProxyEnv: false
+env:
+  http_proxy: ""
+  https_proxy: ""
+  ftp_proxy: ""
+  all_proxy: ""

@@ -1,0 +1,35 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -224,6 +224,32 @@
+ 	.align	3
+ 	.globl EXT(_start)
+ LEXT(_start)
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	// P5: actual XNU __start breadcrumb, independent of DarwinEnter green bar.
++	// Only framebuffer supplied by verified DarwinBoot BootArgs; preserve x0.
++	ldr x9, [x0, #0x50]  // Video depth, Darwin23 boot_args ABI
++	cmp x9, #32
++	b.ne 95f
++	ldr x9, [x0, #0x28]  // Video physical base
++	cbz x9, 95f
++	ldr x10, [x0, #0x48] // Video height
++	cmp x10, #16
++	b.lo 95f
++	ldr x10, [x0, #0x38] // rowbytes
++	cbz x10, 95f
++	cmp x10, #16, lsl #12
++	b.hi 95f
++	lsl x10, x10, #4
++	bic x10, x10, #7
++	mov w11, #0x00ff
++	movk w11, #0xffff, lsl #16 // BGRA magenta: actual kernel entry only
++94:
++	stp w11, w11, [x9], #8
++	subs x10, x10, #8
++	b.hi 94b
++	dsb sy
++95:
++#endif
+ 	b	EXT(start_first_cpu)
+ 
+ 

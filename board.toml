@@ -1,0 +1,17 @@
+# P1 research skeleton. Incomplete-board guard is intentional.
+[board]
+name = "cheeseburger"
+soc = "MSM8998"
+description = "OnePlus 5 — P1 build research"
+kit = "cheeseburger"
+example = true
+
+[kernel]
+defconfig = "cheeseburger_defconfig"
+# TODO: qualify archives, prelink policy and original kernelcache hash.
+# TODO: select IPSW identity independently; do not inherit sheng identifiers.
+# TODO: implement an adapter for the existing edk2-msm8998 firmware.
+# TODO: validate RAM, reserved regions, CPU/GIC/PSCI, ADT and Trust Cache policy.
+# TODO: validate Android header/DTB against owner-provided stock boot evidence.
+# TODO: obtain exact userdata GPT geometry and volume UUIDs read-only.
+# Unknown sections are absent. Do not add zero addresses or fabricated hashes.
