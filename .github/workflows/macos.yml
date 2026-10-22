@@ -1,7 +1,5 @@
 name: cheeseburger P1 build research
 on:
-  push:
-  pull_request:
   workflow_dispatch:
     inputs:
       device_repository:

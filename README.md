@@ -89,7 +89,7 @@ bash scripts/build-package.sh --upstream ../upstream/UniXNU --edk2 ../upstream/M
 
 设备仓库已发布至 [DinnerABC/UniXNU-cheeseburger](https://github.com/DinnerABC/UniXNU-cheeseburger)。截至 2026-10-22 核对，P1 已有一次[远程运行](https://github.com/DinnerABC/UniXNU-cheeseburger/actions/runs/39721491702)，对应初始提交 `6b8ff92`，结果为失败：`actions/setup-python` 无法为 macOS 15.7.9 / arm64 提供指定的 Python 3.12.14，审计及 package 构建未执行，随后因没有 `device/out/` 而上传产物失败。P2 尚无远程运行记录。
 
-工作流曾通过本地 actionlint 检查；当前没有远程构建通过结论。本次 README 更新仅记录该问题，未修改工作流。P1 配置为 push 自动触发，后续运行结果以 Actions 页面为准。
+工作流曾通过本地 actionlint 检查；当前没有远程构建通过结论。P1 与 P2 均仅保留 `workflow_dispatch` 手动入口，push 和 pull request 不自动运行 Actions；需要运行时再明确手动触发。
 
 ## 审计与后续
 
