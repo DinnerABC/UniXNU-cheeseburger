@@ -1,0 +1,46 @@
+--- a/build-original-system-trust.py
++++ b/cached-range-inputs.py
+@@ -7,7 +7,7 @@
+ import struct
+ import zipfile
+ 
+-ROOT = Path(__file__).resolve().parents[1]
++ROOT = Path('/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger')
+ 
+ 
+ def der(data, at):
+@@ -26,15 +26,7 @@
+     return tag, data[at:at + size], at + size
+ 
+ 
+-with zipfile.ZipFile(ROOT / 'refer/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw') as archive:
+-    manifest = plistlib.loads(archive.read('BuildManifest.plist'))
+-    identities = [i for i in manifest['BuildIdentities'] if i['Info']['DeviceClass'] == 'j120ap']
+-    if manifest['ProductBuildVersion'] != '21H461' or len(identities) != 2:
+-        raise SystemExit('Require supplied ordinary-ARM64 iPad7,1 target')
+-    entry = identities[0]['Manifest']['Cryptex1,SystemTrustCache']
+-    original = archive.read(entry['Info']['Path'])
+-    if any(i['Manifest']['Cryptex1,SystemTrustCache']['Digest'] != hashlib.sha384(original).digest() for i in identities):
+-        raise SystemExit('Both original manifest digests must match')
++original = (ROOT / 'out/p10/inputs/A/044-76034-038.dmg.trustcache').read_bytes()
+ tag, sequence, end = der(original, 0)
+ fields, cursor = [], 0
+ while cursor < len(sequence):
+@@ -43,7 +35,7 @@
+ if tag != 0x30 or end != len(original) or [kind for kind, _ in fields] != [0x16, 0x16, 0x16, 4] or fields[0][1] != b'IM4P':
+     raise SystemExit('Require the original System trust-cache IM4P')
+ system = fields[3][1]
+-static = (ROOT / '.cache/firmware/target-volumes/static-trustcache.bin').read_bytes()
++static = (ROOT / 'out/p10/trust/static-trustcache.bin').read_bytes()
+ expected = ('da88460e6e513438d5307e5c526f76497a74754476a24da29f239f0c90120fc2',
+             'd121ba89167e03aafd00fa687c30cd8ebc4ccafd10c1408adb2ba3de12403651')
+ for module, digest in zip((static, system), expected):
+@@ -51,7 +43,7 @@
+             len(module) != 24 + struct.unpack_from('<I', module, 20)[0] * 24):
+         raise SystemExit('Require complete exact original version-2 trust module')
+ bundle = struct.pack('<3I', 2, 12, 12 + len(static)) + static + system
+-out = ROOT / 'build/original-static-system-trust'
++out = ROOT / 'out/p10/trust'
+ out.mkdir(parents=True, exist_ok=True)
+ (out / 'original-static-system.bundle').write_bytes(bundle)
+ (out / 'inputs.json').write_text(json.dumps(dict(original_static_sha256=expected[0], original_system_sha256=expected[1],

@@ -1,0 +1,261 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -81,6 +81,28 @@
+ 99:
+ .endmacro
+ 
++// P7 draw: mapping was bounded/validated before SCTLR; x9-x12 scratch only.
++.macro P7_BAR
++	adrp x12, EXT(p6_diag_record)@page
++	add x12, x12, EXT(p6_diag_record)@pageoff
++	ldr x9, [x12, #128]
++	cbz x9, 89f
++	mov x10, #$3
++	str x10, [x12, #8]
++	ldr x10, [x12, #208]
++	mov x11, #$0
++	madd x9, x10, x11, x9
++	lsl x10, x10, #3
++	mov w11, #$1
++	movk w11, #$2, lsl #16
++88:
++	stp w11, w11, [x9], #8
++	subs x10, x10, #8
++	b.hi 88b
++	dsb sy
++89:
++.endmacro
++
+ .macro MSR_VBAR_EL1_X0
+ #if defined(KERNEL_INTEGRITY_KTRR)
+ 	mov	x1, lr
+@@ -597,8 +619,8 @@
+ 	mov		sp, x0
+ 
+ 	// Load address to the C init routine into link register
+-	adrp	lr, EXT(arm_init)@page
+-	add		lr, lr, EXT(arm_init)@pageoff
++	adrp	lr, EXT(p7_c_entry)@page
++	add		lr, lr, EXT(p7_c_entry)@pageoff
+ 	add		lr, lr, x22							// Convert to KVA
+ 	sub		lr, lr, x23
+ 
+@@ -706,6 +728,89 @@
+ 	// the early debugger rather than corrupting memory or forging a map.
+ 	b Lbootstrap_tables_exhausted
+ Lbootstrap_tables_ready:
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++// P7: map only page-rounded BootArgs framebuffer; no stack or calls.
++// x2 is last allocated bootstrap page. All pool pages were zeroed above.
++	adrp x8, EXT(p6_diag_record)@page
++	add x8, x8, EXT(p6_diag_record)@pageoff
++	ldr x9, [x20, #0x28]
++	cbz x9, EXT(p6_bad_bootargs)
++	tst x9, #4095
++	b.ne EXT(p6_bad_bootargs)
++	ldr x10, [x20, #0x50]
++	cmp x10, #32
++	b.ne EXT(p6_bad_bootargs)
++	ldr x10, [x20, #0x38]
++	cbz x10, EXT(p6_bad_bootargs)
++	cmp x10, #16, lsl #12
++	b.hi EXT(p6_bad_bootargs)
++	str x10, [x8, #208]
++	ldr x11, [x20, #0x48]
++	cmp x11, #300
++	b.lo EXT(p6_bad_bootargs)
++	cmp x11, #4096
++	b.hi EXT(p6_bad_bootargs)
++	mul x10, x10, x11
++	add x10, x10, #4095
++	and x10, x10, #0xfffffffffffff000
++	MOV64 x12, 0x1000000
++	cmp x10, x12
++	b.hi EXT(p6_bad_bootargs)
++	add x11, x9, x10
++	cmp x11, x9
++	b.ls EXT(p6_bad_bootargs)
++	lsr x12, x11, #38
++	cbnz x12, EXT(p6_bad_bootargs)
++	sub x12, x11, #1
++	eor x12, x12, x9
++	lsr x12, x12, #30
++	cbnz x12, EXT(p6_bad_bootargs) // one L1 slot only
++	add x12, x23, x24
++	cmp x9, x12
++	b.hs 81f
++	cmp x11, x23
++	b.hi EXT(p6_bad_bootargs) // refuse overlap with owned RAM window
++81:
++	lsr x12, x9, #30
++	and x12, x12, #255
++	add x12, x25, x12, lsl #3
++	ldr x13, [x12]
++	cbnz x13, EXT(p6_bad_bootargs) // do not overwrite an existing RAM mapping
++	add x17, x25, #(BOOTSTRAP_TABLE_BYTES >> 12), lsl #12
++	add x16, x2, #4096
++	cmp x16, x17
++	b.hs EXT(p6_bad_bootargs)
++	mov x13, x16
++	orr x14, x13, #3
++	str x14, [x12]
++	str x10, [x8, #136]
++	mov x7, x9
++82:
++	lsr x12, x9, #21
++	and x12, x12, #511
++	add x12, x13, x12, lsl #3
++	ldr x14, [x12]
++	cbnz x14, 83f
++	add x16, x16, #4096
++	cmp x16, x17
++	b.hs EXT(p6_bad_bootargs)
++	orr x14, x16, #3
++	str x14, [x12]
++83:
++	and x14, x14, #0x0000fffffffff000
++	lsr x15, x9, #12
++	and x15, x15, #511
++	add x15, x14, x15, lsl #3
++	// Target CACHE_ATTRINDX_DISABLE (Device-nGnRnE), AF, OuterShareable, PXN/UXN.
++	MOV64 x18, (0x0060000000000603 | (CACHE_ATTRINDX_DISABLE << 2))
++	orr x18, x18, x9
++	str x18, [x15]
++	add x9, x9, #4096
++	cmp x9, x11
++	b.lo 82b
++	str x7, [x8, #128] // publish only after complete mapping
++	dsb sy
++#endif
+ #if defined(ARM64_BOARD_CONFIG_MSM8998)
+ 	P6_BAR 48,0xffff,0xff00,3 // S03 cyan: tables built
+ #endif
+@@ -841,6 +946,12 @@
+ 	add		x0, x0, x22									// Convert exception vector address to KVA
+ 	sub		x0, x0, x23
+ 1:
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	cbnz x21, 86f
++	adrp x0, EXT(LowExceptionVectorBase)@page
++	add x0, x0, EXT(LowExceptionVectorBase)@pageoff
++86:
++#endif
+ 	MSR_VBAR_EL1_X0
+ 
+ #if HAS_APPLE_PAC
+@@ -849,11 +960,46 @@
+ 
+ 	// Enable caches, MMU, ROP and JOP
+ #if defined(ARM64_BOARD_CONFIG_MSM8998)
++
++	adrp x12, EXT(p6_diag_record)@page
++	add x12, x12, EXT(p6_diag_record)@pageoff
++	mrs x9, TTBR0_EL1
++	str x9, [x12, #144]
++	and x9, x9, #(TTBR_BADDR_MASK)
++	cmp x9, x25
++	b.ne EXT(p6_bad_bootargs)
++	mrs x9, TTBR1_EL1
++	str x9, [x12, #152]
++	and x9, x9, #(TTBR_BADDR_MASK)
++	add x10, x25, PGBYTES
++	cmp x9, x10
++	b.ne EXT(p6_bad_bootargs)
++	mrs x9, TCR_EL1
++	str x9, [x12, #160]
++	MOV64 x10, TCR_EL1_BOOT
++	cmp x9, x10
++	b.ne EXT(p6_bad_bootargs)
++	mrs x9, MAIR_EL1
++	str x9, [x12, #168]
++	ubfx x9, x9, #(CACHE_ATTRINDX_DISABLE * 8), #8
++	cbnz x9, EXT(p6_bad_bootargs)
++	mrs x9, SCTLR_EL1
++	str x9, [x12, #176]
++	adr x9, .
++	str x9, [x12, #184]
++	mrs x9, VBAR_EL1
++	str x9, [x12, #192]
+ 	P6_BAR 72,0xffff,0xffff,5 // S05 white: before SCTLR enables MMU
+ #endif
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
++
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	mrs x9, SCTLR_EL1
++	tbz x9, #0, EXT(p6_early_fault)
++	P7_BAR 112,0x00ff,0xff00,6 // S06 blue: M readback and post-ISB execution
++#endif
+ 
+ #if !VMAPPLE
+ 	MOV64   x1, SCTLR_EL1_DEFAULT
+@@ -1028,9 +1174,12 @@
+ 	str x10, [x16, #120]
+ 	dsb sy
+ 	// MMU-on framebuffer isn't guaranteed mapped: retain record and stop.
+-	tbnz x9, #0, Lp6_fault_stop
++	tbz x9, #0, 85f
++	ldr x10, [x16, #128]
++	cbz x10, Lp6_fault_stop
++85:
+ 	cbz x20, Lp6_fault_stop
+-	P6_BAR 96,0x0000,0xffff,0xff // Red fault stripe
++	P7_BAR 96,0x0000,0xffff,0xff // bounded mapped FB; may be unavailable on pre-map fault
+ 	ldr x19, [x20, #0x28]
+ 	cbz x19, Lp6_fault_stop
+ 	tst x19, #3
+@@ -1146,6 +1295,18 @@
+ 	.align 3
+ 	.globl EXT(p6_diag_record)
+ LEXT(p6_diag_record)
+-	.space 128,0
++	.space 256,0
+ 	.text
+ #endif
++
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	.text
++	.align 2
++	.globl EXT(p7_c_entry)
++LEXT(p7_c_entry)
++	P7_BAR 136,0x8000,0xffff,7 // S07 orange: LR reached KVA wrapper
++	stp x0, lr, [sp, #-16]!
++	ldp x0, lr, [sp], #16
++	P7_BAR 160,0xc0c0,0xffc0,8 // S08 gray: real stack store/load
++	b EXT(arm_init)
++#endif
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -346,6 +346,31 @@
+ arm_init(
+ 	boot_args       *args)
+ {
++
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	__asm__ volatile(
++	    "adrp x12, _p6_diag_record@PAGE\n"
++	    "add x12, x12, _p6_diag_record@PAGEOFF\n"
++	    "ldr x9, [x12, #128]\n"
++	    "cbz x9, 99f\n"
++	    "mov x10, #9\n"
++	    "str x10, [x12, #8]\n"
++	    "ldr x10, [x12, #208]\n"
++	    "mov x11, #184\n"
++	    "madd x9, x10, x11, x9\n"
++	    "lsl x10, x10, #3\n"
++	    "mov w11, #0x80ff\n"
++	    "movk w11, #0xffff, lsl #16\n"
++	    "98: stp w11, w11, [x9], #8\n"
++	    "subs x10, x10, #8\n"
++	    "b.hi 98b\n"
++	    "dsb sy\n"
++	    "99:\n"
++	    "adrp x9, _ExceptionVectorsBase@PAGE\n"
++	    "add x9, x9, _ExceptionVectorsBase@PAGEOFF\n"
++	    "msr VBAR_EL1, x9\n"
++	    "isb\n" ::: "x9", "x10", "x11", "x12", "cc", "memory");
++#endif
+ 	unsigned int    maxmem;
+ 	uint32_t        memsize;
+ 	uint64_t        xmaxmem;

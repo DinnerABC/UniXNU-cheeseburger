@@ -1,0 +1,20 @@
+--- a/ArmCpu.cpp
++++ b/ArmCpu.cpp
+@@ -199,7 +199,7 @@
+   // P4: use the real DT virtual timer INTID; do not inherit sheng/QEMU PPI27.
+   IORegistryEntry *timer = IORegistryEntry::fromPath ("/arm-io/timer", gIODTPlane);
+   if (timer == nullptr) { return false; }
+-  OSData *irq = OSDynamicCast (OSData, timer->getProperty ("interrupts"));
++  OSData *irq = OSDynamicCast (OSData, timer->getProperty ("p8,timer-intid"));
+   uint32_t intid = 0;
+   bool timerValid = irq != nullptr && irq->getLength () == sizeof (intid);
+   if (timerValid) { memcpy (&intid, irq->getBytesNoCopy (), sizeof (intid)); }
+@@ -219,7 +219,7 @@
+   OSData *compatible = OSDynamicCast (OSData, gic->getProperty ("compatible"));
+   uint64_t bus[3];
+   uint64_t regions[4];
+-  bool valid = (ranges != nullptr) && (ranges->getLength () == sizeof (bus)) &&
++  bool valid = (ranges != nullptr) && (ranges->getLength () >= sizeof (bus)) && (ranges->getLength () % sizeof (bus) == 0) &&
+                (reg != nullptr) && (reg->getLength () == sizeof (regions)) &&
+                (compatible != nullptr) && (compatible->getLength () == 11) &&
+                (memcmp (compatible->getBytesNoCopy (), "arm,gic-v3", 11) == 0);

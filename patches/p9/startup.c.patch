@@ -1,0 +1,42 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -221,6 +221,11 @@
+ static inline void
+ kernel_bootstrap_log(const char *message)
+ {
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++ extern void p9_note_stage(const char *);
++ p9_note_stage(message);
++#endif
++
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap: %s\n", message);
+@@ -231,6 +236,11 @@
+ static inline void
+ kernel_bootstrap_thread_log(const char *message)
+ {
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++ extern void p9_note_stage(const char *);
++ p9_note_stage(message);
++#endif
++
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap_thread: %s\n", message);
+@@ -694,6 +704,7 @@
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_init_iokit");
+ 	PE_init_iokit();
++	kernel_bootstrap_thread_log("PE_init_iokit returned");
+ #endif
+ 
+ 	assert(ml_get_interrupts_enabled() == FALSE);
+@@ -811,6 +822,7 @@
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
++	kernel_bootstrap_thread_log("bsd_init");
+ 	bsd_init();
+ #endif
+ 

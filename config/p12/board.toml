@@ -1,0 +1,28 @@
+# P12 offline reference only. Never an iPhone installation candidate.
+[board]
+name = "cheeseburger-p12-reference"
+soc = "MSM8998"
+[reference]
+product = "iPad7,1"
+iphone_target_unchanged = true
+install_allowed = false
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 32785
+board_id = 12
+[userdata]
+first_lba = 2441472
+last_lba = 14145279
+lba_bytes = 4096
+windows = [{name="OS", component="OS"}, {name="SystemOS", component="Cryptex1,SystemOS"}]
+
+[ipsw.sha256]
+"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
+"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+
+[payload.adt]
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"

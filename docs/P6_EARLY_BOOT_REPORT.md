@@ -1,8 +1,8 @@
 # P6 本地执行记录
 
-目标已按用户要求改为 **iPhone iOS**。P6-v1 已真实增量编译、打包，并对真实 OnePlus 5 执行了一次 `fastboot boot`。观察 240 秒后未恢复通信，控制器以 `NO_TRANSPORT_MANUAL_RECOVERY` 停止（退出码 2）。目前尚未收到本轮屏幕照片/描述，不能把 Fastboot 接受镜像或 USB 消失当成新的 XNU 执行证据。
+目标已按用户要求改为 **iPhone iOS**。P6-v1 已真实增量编译、打包，并对真实 OnePlus 5 执行了一次 `fastboot boot`。观察 240 秒后未恢复通信，控制器以 `NO_TRANSPORT_MANUAL_RECOVERY` 停止（退出码 2）。用户随后提供了本轮屏幕照片，已保存为 `evidence/p6/boot-v1-s05.jpg`。照片确认 S00 品红、S01 黄、S03 青、S05 白，证明实际执行到 MMU 开启前检查点。
 
-此前 P5 的人工屏幕证据确认过 `__start`；P6 是否到达 S01、S03、S05 或更深，仍待本轮屏幕证据。**未证实 MMU 启用、首段 C 初始化、CPU/VM/Platform Expert 或 iOS 启动。**
+P6 最新实机证据已超过 P5 的 `__start`：确认 BootArgs 有限检查和页表构造循环完成，最后可确认位置为 **S05，写 SCTLR 之前**。**未证实 MMU 启用、首段 C 初始化、CPU/VM/Platform Expert 或 iOS 启动。**
 
 ## 实际产物
 
@@ -33,4 +33,4 @@ run_id：`20261022T020508Z-20037c90`。
 
 Fastboot 接受镜像，之后 USB/ADB/Fastboot 均失联。240 秒观察结束后停止，没有重复发送同一镜像，没有尝试未经验证的重置、EDL 或分区写入。结果 `summary.json` 与 `out/p6/stages.json` 严格区分传输状态和执行证据。
 
-当前需要保留屏幕证据，再通过人工长按电源恢复 Android；不能自动认定已经死在某条指令。尚未取得本轮异常数值，也未实现 EBS 后日志自动回收。
+本轮照片已经归档；设备仍需人工长按电源恢复 Android，尚未收到恢复确认。不能把最后可见 S05 直接认作故障指令位置。尚未取得本轮异常数值，也未实现 EBS 后日志自动回收。

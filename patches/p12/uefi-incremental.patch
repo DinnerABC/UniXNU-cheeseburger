@@ -1,0 +1,113 @@
+--- a/P9Integration/Probe/P9Expected.h
++++ b/P9Integration/Probe/P9Expected.h
+@@ -1,5 +1,5 @@
+ /* Generated from verified P11 inputs. SHA256 checks never bypassed. */
+-STATIC CONST UINT8 P9KernelHash[32] = {0x40,0xa9,0x44,0x92,0x09,0x88,0x50,0x28,0xc0,0xb0,0xc0,0x9d,0x72,0x8a,0xa8,0xd7,0x9f,0x2d,0xb1,0x82,0x6a,0x55,0x94,0x8a,0x61,0xbe,0x87,0x47,0xd1,0x87,0x60,0xdd};
+-#define P9KernelBytes 51544064
+-STATIC CONST UINT8 P9AdtHash[32] = {0xa3,0xc4,0x96,0x85,0x13,0xab,0xb0,0xe8,0xce,0x48,0x0e,0x86,0x78,0xed,0x79,0xad,0xea,0x67,0x12,0xba,0xcf,0xb1,0xe5,0x24,0xd8,0xaf,0xbe,0xef,0x19,0xea,0xc7,0xac};
+-#define P9AdtBytes 14740
++STATIC CONST UINT8 P9KernelHash[32] = {0xd3,0x98,0x06,0x5b,0x4c,0x65,0x8d,0x1f,0x61,0x47,0x14,0xaf,0xf0,0x34,0x54,0x8f,0xea,0x4c,0x7d,0x67,0x31,0x7a,0x3b,0x21,0x37,0x8a,0x9b,0x62,0x1a,0x3d,0x71,0x33};
++#define P9KernelBytes 124907520
++STATIC CONST UINT8 P9AdtHash[32] = {0x73,0x3a,0xd0,0xdc,0x2f,0xaa,0x3d,0xd2,0x3f,0x59,0x7f,0xd4,0x4c,0xc0,0x52,0xdc,0xf6,0x02,0xf1,0xe5,0x91,0x6a,0x47,0xdc,0xe8,0xa0,0x72,0xea,0x99,0x4b,0x98,0x43};
++#define P9AdtBytes 14948
+--- a/DarwinBootPkg/Driver/P9Expected.h
++++ b/DarwinBootPkg/Driver/P9Expected.h
+@@ -1,5 +1,5 @@
+ /* Generated from verified P11 inputs. SHA256 checks never bypassed. */
+-STATIC CONST UINT8 P9KernelHash[32] = {0x40,0xa9,0x44,0x92,0x09,0x88,0x50,0x28,0xc0,0xb0,0xc0,0x9d,0x72,0x8a,0xa8,0xd7,0x9f,0x2d,0xb1,0x82,0x6a,0x55,0x94,0x8a,0x61,0xbe,0x87,0x47,0xd1,0x87,0x60,0xdd};
+-#define P9KernelBytes 51544064
+-STATIC CONST UINT8 P9AdtHash[32] = {0xa3,0xc4,0x96,0x85,0x13,0xab,0xb0,0xe8,0xce,0x48,0x0e,0x86,0x78,0xed,0x79,0xad,0xea,0x67,0x12,0xba,0xcf,0xb1,0xe5,0x24,0xd8,0xaf,0xbe,0xef,0x19,0xea,0xc7,0xac};
+-#define P9AdtBytes 14740
++STATIC CONST UINT8 P9KernelHash[32] = {0xd3,0x98,0x06,0x5b,0x4c,0x65,0x8d,0x1f,0x61,0x47,0x14,0xaf,0xf0,0x34,0x54,0x8f,0xea,0x4c,0x7d,0x67,0x31,0x7a,0x3b,0x21,0x37,0x8a,0x9b,0x62,0x1a,0x3d,0x71,0x33};
++#define P9KernelBytes 124907520
++STATIC CONST UINT8 P9AdtHash[32] = {0x73,0x3a,0xd0,0xdc,0x2f,0xaa,0x3d,0xd2,0x3f,0x59,0x7f,0xd4,0x4c,0xc0,0x52,0xdc,0xf6,0x02,0xf1,0xe5,0x91,0x6a,0x47,0xdc,0xe8,0xa0,0x72,0xea,0x99,0x4b,0x98,0x43};
++#define P9AdtBytes 14948
+--- a/P9Integration/Probe/P9Probe.c
++++ b/P9Integration/Probe/P9Probe.c
+@@ -20,7 +20,7 @@
+  Buffer=AllocatePool(ExpectedSize);if(!Buffer){S=EFI_OUT_OF_RESOURCES;goto Done;}
+  N=ExpectedSize;S=F->Read(F,&N,Buffer);if(EFI_ERROR(S))goto Done;
+  if(N!=ExpectedSize || !Sha256HashAll(Buffer,N,Hash) || CompareMem(Hash,ExpectedHash,32)){S=EFI_SECURITY_VIOLATION;goto Done;}
+- Print(L"P11 %s bytes=%lu SHA256 PASS\r\n",Path,(UINT64)N);S=EFI_SUCCESS;
++ Print(L"P12 %s bytes=%lu SHA256 PASS\r\n",Path,(UINT64)N);S=EFI_SUCCESS;
+ Done:
+  if(Buffer)FreePool(Buffer);
+  if(Info)FreePool(Info);
+@@ -29,7 +29,7 @@
+ STATIC VOID EFIAPI Ready(EFI_EVENT Event,VOID *Context){
+  EFI_HANDLE *Handles=NULL;UINTN Count=0,I;EFI_STATUS S,K,A;EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs;EFI_FILE_PROTOCOL *Root;
+  gBS->CloseEvent(Event);
+- Print(L"P11 integrated read-only payload; next output is XNU text console\r\n");
++ Print(L"P12 integrated read-only payload; next output is XNU text console\r\n");
+  S=gBS->LocateHandleBuffer(ByProtocol,&gEfiSimpleFileSystemProtocolGuid,NULL,&Count,&Handles);
+  if(!EFI_ERROR(S))for(I=0;I<Count;I++){
+   S=gBS->HandleProtocol(Handles[I],&gEfiSimpleFileSystemProtocolGuid,(VOID**)&Fs);if(EFI_ERROR(S))continue;
+@@ -37,7 +37,7 @@
+   K=CheckFile(Root,L"\\kernel.macho",P9KernelBytes,P9KernelHash);
+   A=CheckFile(Root,L"\\kernel.macho.adt",P9AdtBytes,P9AdtHash);
+   Root->Close(Root);
+-  if(!EFI_ERROR(K)&&!EFI_ERROR(A))Print(L"P11 RAM filesystem inputs verified\r\n");
++  if(!EFI_ERROR(K)&&!EFI_ERROR(A))Print(L"P12 RAM filesystem inputs verified\r\n");
+  }
+  if(Handles)FreePool(Handles);
+ }
+--- a/DarwinBootPkg/Driver/DarwinBoot.c
++++ b/DarwinBootPkg/Driver/DarwinBoot.c
+@@ -523,11 +523,11 @@
+   {
+     UINT8 Hash[32];
+     if (ImageSize != P9KernelBytes || !Sha256HashAll(Image,ImageSize,Hash) || CompareMem(Hash,P9KernelHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
+-    Print(L"P11 Stage1: kernel read SHA256 PASS bytes=%lu\r\n",(UINT64)ImageSize);
++    Print(L"P12 Stage1: kernel read SHA256 PASS bytes=%lu\r\n",(UINT64)ImageSize);
+   }
+   Status = ParseKernel (Image, ImageSize, &Kernel);
+   if (EFI_ERROR (Status)) { goto Fail; }
+-  Print(L"P11 Stage2: Mach-O parsed; entry=0x%lx\r\n",Kernel.Entry);
++  Print(L"P12 Stage2: Mach-O parsed; entry=0x%lx\r\n",Kernel.Entry);
+   Length = StrSize (Request->KernelPath);
+   TreePath = AllocatePool (Length + 11 * sizeof (CHAR16));
+   if (TreePath == NULL) { Status = EFI_OUT_OF_RESOURCES; goto Fail; }
+@@ -538,7 +538,7 @@
+   {
+     UINT8 Hash[32];
+     if (TreeSize != P9AdtBytes || !Sha256HashAll(Tree,TreeSize,Hash) || CompareMem(Hash,P9AdtHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
+-    Print(L"P11 ADT read SHA256 PASS bytes=%lu\r\n",(UINT64)TreeSize);
++    Print(L"P12 ADT read SHA256 PASS bytes=%lu\r\n",(UINT64)TreeSize);
+   }
+   Offset = 0;
+   RamdiskOffset = MAX_UINTN;
+@@ -623,7 +623,7 @@
+          Video[0], Video[1], Video[2], Video[3], Video[4], Video[5]);
+   Print (L"DARWINBOOT: inputs validated; exiting boot services\n");
+ 
+-  Print(L"P11 Stage3: ADT/BootArgs/memory-map ready. Starting XNU; persistent text console follows.\r\n");
++  Print(L"P12 Stage3: ADT/BootArgs/memory-map ready. Starting XNU; persistent text console follows.\r\n");
+   gBS->Stall(20000000);
+ 
+   //
+--- a/P5Integration/RamPayload/Range.h
++++ b/P5Integration/RamPayload/Range.h
+@@ -13,8 +13,8 @@
+   Node=fdt_path_offset(F,"/chosen");
+   if(Node<0 || !P4FdtNumber(F,Node,"linux,initrd-start",Start) ||
+      !P4FdtNumber(F,Node,"linux,initrd-end",End))return FALSE;
+-  /* P10 bounded protocol budget; actual addresses remain bootloader-provided, and PEI must reserve the entire range inside conventional RAM. */
+-  if(*End<=*Start || *End-*Start>67108864 || *End>MAX_UINT64-4095)return FALSE;
++  /* P12 offline bounded protocol budget; actual addresses remain bootloader-provided, and PEI must reserve the entire range inside conventional RAM. */
++  if(*End<=*Start || *End-*Start>268435456 || *End>MAX_UINT64-4095)return FALSE;
+   for(I=0;fdt_get_memory(F,I,&Base,&Size);I++)
+     if(*Start>=Base && Size<=MAX_UINT64-Base && *End<=Base+Size)return TRUE;
+   return FALSE;
+--- a/Platforms/Msm8998FamilyPkg/MemoryInitPei/P4Range.h
++++ b/Platforms/Msm8998FamilyPkg/MemoryInitPei/P4Range.h
+@@ -13,8 +13,8 @@
+   Node=fdt_path_offset(F,"/chosen");
+   if(Node<0 || !P4FdtNumber(F,Node,"linux,initrd-start",Start) ||
+      !P4FdtNumber(F,Node,"linux,initrd-end",End))return FALSE;
+-  /* P10 bounded protocol budget; actual addresses remain bootloader-provided, and PEI must reserve the entire range inside conventional RAM. */
+-  if(*End<=*Start || *End-*Start>67108864 || *End>MAX_UINT64-4095)return FALSE;
++  /* P12 offline bounded protocol budget; actual addresses remain bootloader-provided, and PEI must reserve the entire range inside conventional RAM. */
++  if(*End<=*Start || *End-*Start>268435456 || *End>MAX_UINT64-4095)return FALSE;
+   for(I=0;fdt_get_memory(F,I,&Base,&Size);I++)
+     if(*Start>=Base && Size<=MAX_UINT64-Base && *End<=Base+Size)return TRUE;
+   return FALSE;

@@ -1,0 +1,68 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -585,7 +585,7 @@
+ 	cmp w9, w10
+ 	b.ne EXT(p6_bad_bootargs)
+ 	cbz x24, EXT(p6_bad_bootargs)
+-	P6_BAR 24,0xff00,0xffff,1 // S01 yellow: actual BootArgs loaded/checked
++	// P8: no per-stage visual probes
+ #endif
+ 
+ 
+@@ -812,7 +812,7 @@
+ 	dsb sy
+ #endif
+ #if defined(ARM64_BOARD_CONFIG_MSM8998)
+-	P6_BAR 48,0xffff,0xff00,3 // S03 cyan: tables built
++	// P8: no per-stage visual probes
+ #endif
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+@@ -989,7 +989,7 @@
+ 	str x9, [x12, #184]
+ 	mrs x9, VBAR_EL1
+ 	str x9, [x12, #192]
+-	P6_BAR 72,0xffff,0xffff,5 // S05 white: before SCTLR enables MMU
++	// P8: no per-stage visual probes
+ #endif
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+@@ -998,7 +998,7 @@
+ #if defined(ARM64_BOARD_CONFIG_MSM8998)
+ 	mrs x9, SCTLR_EL1
+ 	tbz x9, #0, EXT(p6_early_fault)
+-	P7_BAR 112,0x00ff,0xff00,6 // S06 blue: M readback and post-ISB execution
++	// P8: no per-stage visual probes
+ #endif
+ 
+ #if !VMAPPLE
+@@ -1179,7 +1179,7 @@
+ 	cbz x10, Lp6_fault_stop
+ 85:
+ 	cbz x20, Lp6_fault_stop
+-	P7_BAR 96,0x0000,0xffff,0xff // bounded mapped FB; may be unavailable on pre-map fault
++	// P8: no per-stage visual probes
+ 	ldr x19, [x20, #0x28]
+ 	cbz x19, Lp6_fault_stop
+ 	tst x19, #3
+@@ -1291,7 +1291,7 @@
+ 	.quad 0x7c21f843f
+ 	.quad 0x421f843f
+ 
+-	.section __BOOTDATA,__data
++	.section __DATA,__data
+ 	.align 3
+ 	.globl EXT(p6_diag_record)
+ LEXT(p6_diag_record)
+@@ -1304,9 +1304,9 @@
+ 	.align 2
+ 	.globl EXT(p7_c_entry)
+ LEXT(p7_c_entry)
+-	P7_BAR 136,0x8000,0xffff,7 // S07 orange: LR reached KVA wrapper
++	// P8: no per-stage visual probes
+ 	stp x0, lr, [sp, #-16]!
+ 	ldp x0, lr, [sp], #16
+-	P7_BAR 160,0xc0c0,0xffc0,8 // S08 gray: real stack store/load
++	// P8: no per-stage visual probes
+ 	b EXT(arm_init)
+ #endif

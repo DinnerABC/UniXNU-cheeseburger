@@ -1,0 +1,10 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -767,6 +767,7 @@
+ 
+ 	/* Initialize the runtime for the trust cache interface */
+ 	trust_cache_runtime_init();
++	kernel_bootstrap_log("P10 Trust Cache Runtime initialized");
+ 
+ 	/* Load the static and engineering trust caches */
+ 	load_static_trust_cache();

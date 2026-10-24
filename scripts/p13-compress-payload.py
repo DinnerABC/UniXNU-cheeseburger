@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import hashlib,json,lzma,struct,time
+r=Path(__file__).resolve().parents[1];o=r/'out/p13/compressed';o.mkdir(exist_ok=True);p=r/'out/p12/payload/payload.bundle';data=p.read_bytes();expected='21af3f6eb418c3103ab4eed473cf43e148988568e5172fd69c64b3a3df049194';assert hashlib.sha256(data).hexdigest()==expected;t=time.time();compressed=lzma.compress(data,format=lzma.FORMAT_ALONE,preset=6);compressed=compressed[:5]+struct.pack('<Q',len(data))+compressed[13:];assert lzma.decompress(compressed,format=lzma.FORMAT_ALONE)==data
+container=struct.pack('<8sQQ32s',b'P13LZ001',len(compressed),len(data),bytes.fromhex(expected))+compressed;(o/'payload.lzma').write_bytes(compressed);(o/'payload.container').write_bytes(container)
+record={'result':'LOSSLESS_HOST_ROUNDTRIP_PASS','source':'out/p12/payload/payload.bundle','source_bytes':len(data),'source_sha256':expected,'lzma_bytes':len(compressed),'container_bytes':len(container),'container_sha256':hashlib.sha256(container).hexdigest(),'codec':'LZMA-alone; explicit actual output length for EDK2 API','kernel_adt_trustcache_config_unchanged':True,'decompression_seconds_including_compression':time.time()-t,'target_decompressor_tested':False};(o/'compression.json').write_text(json.dumps(record,indent=2)+'\n');print(json.dumps(record,indent=2))

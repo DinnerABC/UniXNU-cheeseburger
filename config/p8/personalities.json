@@ -1,0 +1,67 @@
+{
+  "IOBlockStorageDriver": {
+    "IOClass": "IOBlockStorageDriver",
+    "IOPropertyMatch": {
+      "device-type": "Generic"
+    },
+    "IOProviderClass": "IOBlockStorageDevice"
+  },
+  "IOGUIDPartitionScheme": {
+    "Content Mask": "GUID_partition_scheme",
+    "IOClass": "IOGUIDPartitionScheme",
+    "IOMatchCategory": "IOStorage",
+    "IOProbeScore": 4000,
+    "IOPropertyMatch": {
+      "Whole": true
+    },
+    "IOProviderClass": "IOMedia"
+  },
+  "IOFDiskPartitionScheme": {
+    "Content Mask": "FDisk_partition_scheme",
+    "Content Table": {
+      "0x01": "DOS_FAT_12",
+      "0x04": "DOS_FAT_16_S",
+      "0x06": "DOS_FAT_16",
+      "0x07": "Windows_NTFS",
+      "0x0B": "DOS_FAT_32",
+      "0x0C": "Windows_FAT_32",
+      "0x0E": "Windows_FAT_16",
+      "0x14": "DOS_FAT_16_S_Hidden",
+      "0x16": "DOS_FAT_16_Hidden",
+      "0x42": "Windows_LDM",
+      "0x82": "Linux_Swap",
+      "0x83": "Linux",
+      "0x8E": "Linux_LVM",
+      "0xA5": "FreeBSD",
+      "0xA6": "OpenBSD",
+      "0xA7": "Apple_Rhapsody_UFS",
+      "0xA8": "Apple_UFS",
+      "0xA9": "NetBSD",
+      "0xAB": "Apple_Boot",
+      "0xAE": "Apple_Encrypted",
+      "0xAF": "Apple_HFS",
+      "0xFD": "Linux_RAID"
+    },
+    "IOClass": "IOFDiskPartitionScheme",
+    "IOMatchCategory": "IOStorage",
+    "IOProbeScore": 3000,
+    "IOPropertyMatch": {
+      "Whole": true
+    },
+    "IOProviderClass": "IOMedia"
+  },
+  "IOMediaBSDClient": {
+    "IOClass": "IOMediaBSDClient",
+    "IOMatchCategory": "IOMediaBSDClient",
+    "IOProbeScore": 30000,
+    "IOProviderClass": "IOMedia",
+    "IOResourceMatch": "IOBSD"
+  },
+  "NativeUfs": {
+    "IOClass": "NativeUfs",
+    "IOProviderClass": "IOPlatformDevice",
+    "IONameMatch": "qcom,ufshc",
+    "IOProbeScore": 1000,
+    "CFBundleIdentifier": "org.unixnu.cheeseburger.NativeUfs"
+  }
+}

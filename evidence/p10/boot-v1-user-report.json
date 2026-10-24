@@ -1,0 +1,8 @@
+{
+  "run_id": "20261022T135549Z-9d1d0e2c",
+  "boot_image_sha256": "8425902fb16feae4315704d3b6fecceefcb305319bf5e1a4e0e17b84cb42c082",
+  "user_report": "进入到了最开始的shell中了，似乎没有正常引导P10，还是这样设计的？现在已经回到安卓了",
+  "kernel_execution_confirmed": false,
+  "image4_registration_observed": false,
+  "return_manual_or_automatic": "Not specified by user"
+}

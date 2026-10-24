@@ -1,0 +1,13 @@
+{
+  "upstream": "UniXNU/UniXNU-sheng",
+  "commit": "0c2046b84dbee545e7e3923eb74d7bb1ce020978",
+  "source": "scripts/xnu-panic-screen.c",
+  "sha256": "1cae38a51c7b0df2a96da7e0a4d3ebcf9e849386e711010b4847597cd0d52af8",
+  "adaptations": [
+    "Use source panic funnel hook, no fixed offsets/code caves/reset probes",
+    "2x glyph scale on 1080p display",
+    "Guard format and argument reads, including precision slots",
+    "Replace semicolon instruction separators with explicit newlines for Darwin assembler; verify actual AT/ISB/MRS machine code",
+    "Permanent first-fatal record and caller/state/stack capture"
+  ]
+}

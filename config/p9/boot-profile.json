@@ -1,0 +1,6 @@
+{
+  "image": "out/p9/uefi/boot-p9-xnu.img",
+  "sha256": "7e07986fed99e6b4ed1283a97df693cb84e38bb055beaf6058571e7566a8b509",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

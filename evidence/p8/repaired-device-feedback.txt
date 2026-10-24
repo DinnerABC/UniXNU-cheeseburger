@@ -1,0 +1,3 @@
+Run: 20261022T111743Z-a9a520d5
+User observation: booted, text scrolled for a while, then only one line remains: MACH Reboot.
+User supplied no earlier panic, ArmCpu, UFS, root or BSD text. Preserve screen; do not infer subsystem success.

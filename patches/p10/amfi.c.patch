@@ -1,0 +1,8 @@
+--- a/libkern/amfi/amfi.c
++++ b/libkern/amfi/amfi.c
+@@ -11,4 +11,5 @@
+ 		panic("AppleMobileFileIntegrity interface already set");
+ 	}
+ 	amfi = mfi;
++	printf("P10 AMFI registered: TrustCache interface=%u\n", mfi->TrustCache.version);
+ }

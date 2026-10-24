@@ -1,0 +1,6 @@
+{
+  "image": "out/p11/uefi/boot-p11-xnu.img",
+  "sha256": "57ce685b94469091fff85a4a8c782bd9c47b30561b69b150677ac4c157f894fe",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

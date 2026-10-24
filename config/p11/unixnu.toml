@@ -1,0 +1,19 @@
+version = 1
+[boot]
+timeout = 8
+default = "xnu"
+[ui]
+title = "P11 original Image4 and AMFI integration"
+[kits]
+autoload = false
+[[entry]]
+id = "xnu"
+title = "MSM8998 XNU (temporary RAM boot)"
+type = "xnu"
+path = "/kernel.macho"
+args = "-v keepsyms=1 cpus=1 debug=0x8 -enable_kprintf_spam startup_debug=1"
+[[entry]]
+id = "exit"
+title = "Return to firmware"
+type = "action"
+action = "exit"

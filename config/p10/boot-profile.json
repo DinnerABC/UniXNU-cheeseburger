@@ -1,0 +1,6 @@
+{
+  "image": "out/p10/uefi/boot-p10-xnu.img",
+  "sha256": "5923c72ce73bf8ce3b0eb6c66c9870fbb23baa3b8e339bf1562ec2e4a2b8480e",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

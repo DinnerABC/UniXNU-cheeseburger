@@ -1,0 +1,19 @@
+--- a/Renderer.inc
++++ b/Renderer.inc
+@@ -120,7 +120,7 @@
+   u64 a = (u64)s, par;
+   (void)args;
+   if (a < 0xffff000000000000UL) return 0;
+-  __asm__ volatile ("at s1e1r, %1; isb; mrs %0, par_el1" : "=r" (par) : "r" (a) : "memory");
++  __asm__ volatile ("at s1e1r, %1\n\tisb\n\tmrs %0, par_el1" : "=r" (par) : "r" (a) : "memory");
+   return !(par & 1) && ((par >> 60) != 0);
+ }
+ 
+@@ -152,6 +152,7 @@
+       precision = 0;
+       c = (u8)fmt[++i];
+       if (c == '*') {
++        if (!readable((const char*)(args+used),args) || !readable((const char*)(args+used)+7,args)) break;
+         precision = (u32)args[used++];
+         c = (u8)fmt[++i];
+       } else {

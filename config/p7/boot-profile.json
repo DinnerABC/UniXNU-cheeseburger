@@ -1,0 +1,6 @@
+{
+  "image": "out/p7/uefi/boot-p7-xnu.img",
+  "sha256": "5171c19816486446326b1d5bfb0c50bc9d11963b74ae4719111318932e7da455",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

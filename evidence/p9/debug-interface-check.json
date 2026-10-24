@@ -1,0 +1,19 @@
+{
+  "official_docs": [
+    "https://unixnu.com/guide/debugging",
+    "https://unixnu.com/porting/bring-up",
+    "https://unixnu.com/reference/troubleshooting"
+  ],
+  "fixed_generic_commit": "b6ae99c17194e6a18fd819d3148e69fe405e91fc",
+  "device_overlay_commit": "0c2046b84dbee545e7e3923eb74d7bb1ce020978",
+  "panic_script": "UniXNU-sheng/scripts/patch-xnu-entry-probe.py",
+  "compatibility": "Actual P8 copy refused: Require one verified SCTLR/ISB/CPACR entry sequence",
+  "no_reset_scope": "Omits patcher reset probes; renderer parks fatal kernel; not a global restart disable",
+  "boot_progress": "Board-specific BootProgress package exists in sheng, not linked in P8; do not pretend boot-progress=1/2 activates it",
+  "uart_host_ports": [
+    "/dev/cu.debug-console",
+    "/dev/cu.Bluetooth-Incoming-Port"
+  ],
+  "device_uart_proven": false,
+  "dt_region": "No validated owned pram reservation; no guessed address added. Kernel-owned DATA record used, not claimed persistent across reset"
+}

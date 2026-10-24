@@ -1,0 +1,95 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -341,6 +341,42 @@
+  *		Function:		Runs on the boot CPU, once, on entry from iBoot.
+  */
+ 
++/* P7-v2: pre-arm_vm_init only. Uses the already validated device mapping.
++ * No helper calls; no change to assertions or platform initialization. */
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++#define P7_C_POINT(stage, row, color) do { \
++    __asm__ volatile( \
++        "adrp x12, _p6_diag_record@PAGE\n" \
++        "add x12, x12, _p6_diag_record@PAGEOFF\n" \
++        "ldr x9, [x12, #128]\n" \
++        "cbz x9, 99f\n" \
++        "ldr x10, [x12, #208]\n" \
++        "mov x11, #%c1\n" \
++        "add x11, x11, #8\n" \
++        "mul x11, x11, x10\n" \
++        "ldr x9, [x12, #136]\n" \
++        "cmp x11, x9\n" \
++        "b.hi 99f\n" \
++        "mov x11, #%c0\n" \
++        "str x11, [x12, #8]\n" \
++        "ldr x9, [x12, #128]\n" \
++        "mov x11, #%c1\n" \
++        "madd x9, x10, x11, x9\n" \
++        "lsl x10, x10, #3\n" \
++        "mov w11, #%c2\n" \
++        "movk w11, #%c3, lsl #16\n" \
++        "98: stp w11, w11, [x9], #8\n" \
++        "subs x10, x10, #8\n" \
++        "b.hi 98b\n" \
++        "dsb sy\n" \
++        "99:\n" \
++        :: "i"(stage), "i"(row), "i"((color) & 65535), "i"((color) >> 16) \
++        : "x9", "x10", "x11", "x12", "cc", "memory"); \
++} while (0)
++#else
++#define P7_C_POINT(stage, row, color) do {} while (0)
++#endif
++
+ __startup_func
+ void
+ arm_init(
+@@ -379,14 +415,17 @@
+ 	unsigned int dt_entry_size = 0;
+ 
+ 	arm_setup_pre_sign();
++	P7_C_POINT(10, 208, 0xff00ff80U); /* pre-sign done */
+ 
+ 	arm_slide_rebase_and_sign_image();
++	P7_C_POINT(11, 224, 0xff8080ffU); /* slide/rebase done */
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
+ 	BootArgs = args = &const_boot_args;
+ 
+ 	cpu_data_init(&BootCpuData);
++	P7_C_POINT(12, 240, 0xffffc000U); /* BootArgs copied and cpu data initialized */
+ #if defined(HAS_APPLE_PAC)
+ 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
+ 	BootCpuData.rop_key = ml_default_rop_pid();
+@@ -394,6 +433,7 @@
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	P7_C_POINT(13, 256, 0xff80ffffU); /* early PE returned; not IOKit */
+ 
+ #if __arm64__
+ 	configure_timer_apple_regs();
+@@ -465,6 +505,7 @@
+ #endif
+ 
+ 	ml_parse_cpu_topology();
++	P7_C_POINT(14, 272, 0xffff8080U); /* CPU topology parsed */
+ 
+ 
+ 	master_cpu = ml_get_boot_cpu_number();
+@@ -494,6 +535,7 @@
+ 	 */
+ 	thread->machine.preemption_count = 0;
+ 	cpu_bootstrap();
++	P7_C_POINT(15, 288, 0xff80ff80U); /* cpu_bootstrap returned */
+ 
+ 	rtclock_early_init();
+ 
+@@ -554,6 +596,7 @@
+ 	__builtin_arm_wsr("pan", 1);
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
++	P7_C_POINT(16, 304, 0xffffffffU); /* about to enter arm_vm_init; no post-VM FB assumption */
+ 	arm_vm_init(xmaxmem, args);
+ 
+ 	if (debug_boot_arg) {

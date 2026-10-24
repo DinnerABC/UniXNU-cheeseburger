@@ -1,0 +1,107 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1817,6 +1817,42 @@
+ #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
+ #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
+ 
++/* P7-v2: pre-arm_vm_init only. Uses the already validated device mapping.
++ * No helper calls; no change to assertions or platform initialization. */
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++#define P7_C_POINT(stage, row, color) do { \
++    __asm__ volatile( \
++        "adrp x12, _p6_diag_record@PAGE\n" \
++        "add x12, x12, _p6_diag_record@PAGEOFF\n" \
++        "ldr x9, [x12, #128]\n" \
++        "cbz x9, 99f\n" \
++        "ldr x10, [x12, #208]\n" \
++        "mov x11, #%c1\n" \
++        "add x11, x11, #8\n" \
++        "mul x11, x11, x10\n" \
++        "ldr x9, [x12, #136]\n" \
++        "cmp x11, x9\n" \
++        "b.hi 99f\n" \
++        "mov x11, #%c0\n" \
++        "str x11, [x12, #8]\n" \
++        "ldr x9, [x12, #128]\n" \
++        "mov x11, #%c1\n" \
++        "madd x9, x10, x11, x9\n" \
++        "lsl x10, x10, #3\n" \
++        "mov w11, #%c2\n" \
++        "movk w11, #%c3, lsl #16\n" \
++        "98: stp w11, w11, [x9], #8\n" \
++        "subs x10, x10, #8\n" \
++        "b.hi 98b\n" \
++        "dsb sy\n" \
++        "99:\n" \
++        :: "i"(stage), "i"(row), "i"((color) & 65535), "i"((color) >> 16) \
++        : "x9", "x10", "x11", "x12", "cc", "memory"); \
++} while (0)
++#else
++#define P7_C_POINT(stage, row, color) do {} while (0)
++#endif
++
+ void
+ arm_vm_init(uint64_t memory_size, boot_args * args)
+ {
+@@ -1833,6 +1869,7 @@
+ 	/*
+ 	 * Get the virtual and physical kernel-managed memory base from boot_args.
+ 	 */
++	P7_C_POINT(17, 320, 0xffff00ffU); /* VM function entered */
+ 	gVirtBase = args->virtBase;
+ 	gPhysBase = args->physBase;
+ #if KASAN
+@@ -2101,7 +2138,9 @@
+ 	vm_prelink_sdata = segPRELINKDATAB;
+ 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
+ 
++	P7_C_POINT(18, 336, 0xff0080ffU); /* before kernel region protections */
+ 	arm_vm_prot_init(args);
++	P7_C_POINT(19, 352, 0xff00ff00U); /* kernel region protections built */
+ 
+ 	/*
+ 	 * Initialize the page tables for the low globals:
+@@ -2147,8 +2186,11 @@
+ 
+ 	arm_set_user_tbi();
+ 
++	P7_C_POINT(20, 368, 0xffff8000U); /* before physical aperture setup */
+ 	arm_vm_physmap_init(args);
++	P7_C_POINT(21, 384, 0xff00ffffU); /* physical aperture setup returned */
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
++	P7_C_POINT(22, 400, 0xffffffffU); /* new TTBR1 active; old TTBR0 still valid */
+ 
+ #if XNU_MONITOR
+ 	ml_enable_monitor();
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -598,6 +598,21 @@
+ 
+ 	P7_C_POINT(16, 304, 0xffffffffU); /* about to enter arm_vm_init; no post-VM FB assumption */
+ 	arm_vm_init(xmaxmem, args);
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++	/* TTBR0 has now been invalidated by normal VM initialization.
++	 * Obtain a real early IO VA; never retain the old physical FB alias. */
++	extern volatile uint64_t p6_diag_record[];
++	uint64_t p7_fb_phys = p6_diag_record[16];
++	uint64_t p7_fb_bytes = p6_diag_record[17];
++	p6_diag_record[16] = 0;
++	if (p7_fb_phys && p7_fb_bytes && p7_fb_bytes <= 0x1000000ULL) {
++		vm_offset_t p7_fb_va = ml_io_map((vm_offset_t)p7_fb_phys, (vm_size_t)p7_fb_bytes);
++		p6_diag_record[29] = p7_fb_phys;
++		p6_diag_record[16] = (uint64_t)p7_fb_va;
++		P7_C_POINT(23, 416, 0xffff80ffU); /* VM returned and valid IO VA is usable */
++	}
++#endif
++
+ 
+ 	if (debug_boot_arg) {
+ 		patch_low_glo();
+@@ -666,6 +681,7 @@
+ 	cpu_machine_idle_init(TRUE);
+ 
+ 	PE_init_platform(TRUE, &BootCpuData);
++	P7_C_POINT(24, 432, 0xff80ff80U); /* later PE returned, not IOKit completion */
+ 
+ #if __arm64__
+ 	extern bool cpu_config_correct;

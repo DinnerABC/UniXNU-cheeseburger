@@ -1,0 +1,1312 @@
+/*
+ * Copyright (c) 2007-2022 Apple Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
+#include "assym.s"
+#include <arm64/asm.h>
+#include <arm64/proc_reg.h>
+#include <arm64/machine_machdep.h>
+#include <arm64/proc_reg.h>
+#include <pexpert/arm64/board_config.h>
+#include <mach_assert.h>
+#include <machine/asm.h>
+#if defined(APPLE_ARM64_ARCH_FAMILY)
+#include <arm64/tunables/tunables.s>
+#endif
+#include <arm64/exception_asm.h>
+
+#if __ARM_KERNEL_PROTECT__
+#include <arm/pmap.h>
+#endif /* __ARM_KERNEL_PROTECT__ */
+
+
+
+
+// P6 EARLY DIAGNOSTICS V1: x20=BootArgs PA; clobbers x9-x12 only.
+// No stack/calls. Never access the physical framebuffer with MMU enabled.
+.macro P6_BAR
+	mrs x9, SCTLR_EL1
+	tbnz x9, #0, 99f
+	cbz x20, 99f
+	adrp x12, EXT(p6_diag_record)@page
+	add x12, x12, EXT(p6_diag_record)@pageoff
+	mov x9, #$3
+	str x9, [x12, #8]
+	ldr x9, [x20, #0x50]
+	cmp x9, #32
+	b.ne 99f
+	ldr x9, [x20, #0x48]
+	cmp x9, #($0+8)
+	b.lo 99f
+	ldr x9, [x20, #0x28]
+	cbz x9, 99f
+	ldr x10, [x20, #0x38]
+	cbz x10, 99f
+	cmp x10, #16, lsl #12
+	b.hi 99f
+	mov x11, #$0
+	madd x9, x10, x11, x9
+	lsl x10, x10, #3
+	bic x10, x10, #7
+	mov w11, #$1
+	movk w11, #$2, lsl #16
+98:
+	stp w11, w11, [x9], #8
+	subs x10, x10, #8
+	b.hi 98b
+	dsb sy
+99:
+.endmacro
+
+// P7 draw: mapping was bounded/validated before SCTLR; x9-x12 scratch only.
+.macro P7_BAR
+	adrp x12, EXT(p6_diag_record)@page
+	add x12, x12, EXT(p6_diag_record)@pageoff
+	ldr x9, [x12, #128]
+	cbz x9, 89f
+	mov x10, #$3
+	str x10, [x12, #8]
+	ldr x10, [x12, #208]
+	mov x11, #$0
+	madd x9, x10, x11, x9
+	lsl x10, x10, #3
+	mov w11, #$1
+	movk w11, #$2, lsl #16
+88:
+	stp w11, w11, [x9], #8
+	subs x10, x10, #8
+	b.hi 88b
+	dsb sy
+89:
+.endmacro
+
+.macro MSR_VBAR_EL1_X0
+#if defined(KERNEL_INTEGRITY_KTRR)
+	mov	x1, lr
+	bl		EXT(pinst_set_vbar)
+	mov	lr, x1
+#else
+	msr		VBAR_EL1, x0
+#endif
+.endmacro
+
+.macro MSR_TCR_EL1_X1
+#if defined(KERNEL_INTEGRITY_KTRR)
+	mov		x0, x1
+	mov		x1, lr
+	bl		EXT(pinst_set_tcr)
+	mov		lr, x1
+#else
+	msr		TCR_EL1, x1
+#endif
+.endmacro
+
+.macro MSR_TTBR1_EL1_X0
+#if defined(KERNEL_INTEGRITY_KTRR)
+	mov		x1, lr
+	bl		EXT(pinst_set_ttbr1)
+	mov		lr, x1
+#else
+	msr		TTBR1_EL1, x0
+#endif
+.endmacro
+
+.macro MSR_SCTLR_EL1_X0
+#if defined(KERNEL_INTEGRITY_KTRR)
+	mov		x1, lr
+
+	// This may abort, do so on SP1
+	bl		EXT(pinst_spsel_1)
+
+	bl		EXT(pinst_set_sctlr)
+	msr		SPSel, #0									// Back to SP0
+	mov		lr, x1
+#else
+	msr		SCTLR_EL1, x0
+#endif /* defined(KERNEL_INTEGRITY_KTRR) */
+.endmacro
+
+/*
+ * Checks the reset handler for global and CPU-specific reset-assist functions,
+ * then jumps to the reset handler with boot args and cpu data. This is copied
+ * to the first physical page during CPU bootstrap (see cpu.c).
+ *
+ * Variables:
+ *	x19 - Reset handler data pointer
+ *	x20 - Boot args pointer
+ *	x21 - CPU data pointer
+ */
+	.text
+	.align 12
+	.globl EXT(LowResetVectorBase)
+LEXT(LowResetVectorBase)
+	/*
+	 * On reset, both RVBAR_EL1 and VBAR_EL1 point here.  SPSel.SP is 1,
+	 * so on reset the CPU will jump to offset 0x0 and on exceptions
+	 * the CPU will jump to offset 0x200, 0x280, 0x300, or 0x380.
+	 * In order for both the reset vector and exception vectors to
+	 * coexist in the same space, the reset code is moved to the end
+	 * of the exception vector area.
+	 */
+	b		EXT(reset_vector)
+
+	/* EL1 SP1: These vectors trap errors during early startup on non-boot CPUs. */
+	.align	9
+	b		.
+	.align	7
+	b		.
+	.align	7
+	b		.
+	.align	7
+	b		.
+
+	.align	7
+	.globl EXT(reset_vector)
+LEXT(reset_vector)
+	// Preserve x0 for start_first_cpu, if called
+	// Unlock the core for debugging
+	msr		OSLAR_EL1, xzr
+	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+
+#if !(defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR))
+	// Set low reset vector before attempting any loads
+	adrp    x0, EXT(LowExceptionVectorBase)@page
+	add     x0, x0, EXT(LowExceptionVectorBase)@pageoff
+	msr     VBAR_EL1, x0
+#endif
+
+
+
+	// Process reset handlers
+	adrp	x19, EXT(ResetHandlerData)@page			// Get address of the reset handler data
+	add		x19, x19, EXT(ResetHandlerData)@pageoff
+	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
+#if HAS_CLUSTER
+	and		x0, x15, #0xFFFF					// CPU number in Affinity0, cluster ID in Affinity1
+#else
+	and		x0, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
+#endif
+	ldr		x1, [x19, CPU_DATA_ENTRIES]			// Load start of data entries
+	add		x3, x1, MAX_CPUS * 16				// end addr of data entries = start + (16 * MAX_CPUS)
+Lcheck_cpu_data_entry:
+	ldr		x21, [x1, CPU_DATA_PADDR]			// Load physical CPU data address
+	cbz		x21, Lnext_cpu_data_entry
+	ldr		w2, [x21, CPU_PHYS_ID]				// Load ccc cpu phys id
+	cmp		x0, x2						// Compare cpu data phys cpu and MPIDR_EL1 phys cpu
+	b.eq	Lfound_cpu_data_entry				// Branch if match
+Lnext_cpu_data_entry:
+	add		x1, x1, #16					// Increment to the next cpu data entry
+	cmp		x1, x3
+	b.eq	Lskip_cpu_reset_handler				// Not found
+	b		Lcheck_cpu_data_entry	// loop
+Lfound_cpu_data_entry:
+
+
+	adrp	x20, EXT(const_boot_args)@page
+	add		x20, x20, EXT(const_boot_args)@pageoff
+	ldr		x0, [x21, CPU_RESET_HANDLER]		// Call CPU reset handler
+	cbz		x0, Lskip_cpu_reset_handler
+
+	// Validate that our handler is one of the two expected handlers
+	adrp	x2, EXT(resume_idle_cpu)@page
+	add		x2, x2, EXT(resume_idle_cpu)@pageoff
+	cmp		x0, x2
+	beq		1f
+	adrp	x2, EXT(start_cpu)@page
+	add		x2, x2, EXT(start_cpu)@pageoff
+	cmp		x0, x2
+	bne		Lskip_cpu_reset_handler
+1:
+
+#if HAS_BP_RET
+	bl		EXT(set_bp_ret)
+#endif
+
+#if __ARM_KERNEL_PROTECT__ && defined(KERNEL_INTEGRITY_KTRR)
+	/*
+	 * Populate TPIDR_EL1 (in case the CPU takes an exception while
+	 * turning on the MMU).
+	 */
+	ldr		x13, [x21, CPU_ACTIVE_THREAD]
+	msr		TPIDR_EL1, x13
+#endif /* __ARM_KERNEL_PROTECT__ */
+
+	blr		x0
+Lskip_cpu_reset_handler:
+	b		.									// Hang if the handler is NULL or returns
+
+	.align 3
+	.global EXT(LowResetVectorEnd)
+LEXT(LowResetVectorEnd)
+	.global	EXT(SleepToken)
+#if WITH_CLASSIC_S2R
+LEXT(SleepToken)
+	.space	(stSize_NUM),0
+#endif
+
+	.section __DATA_CONST,__const
+	.align	3
+	.globl  EXT(ResetHandlerData)
+LEXT(ResetHandlerData)
+	.space  (rhdSize_NUM),0		// (filled with 0s)
+	.text
+
+
+/*
+ * __start trampoline is located at a position relative to LowResetVectorBase
+ * so that iBoot can compute the reset vector position to set IORVBAR using
+ * only the kernel entry point.  Reset vector = (__start & ~0xfff)
+ */
+	.align	3
+	.globl EXT(_start)
+LEXT(_start)
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	// P5: actual XNU __start breadcrumb, independent of DarwinEnter green bar.
+	// Only framebuffer supplied by verified DarwinBoot BootArgs; preserve x0.
+	ldr x9, [x0, #0x50]  // Video depth, Darwin23 boot_args ABI
+	cmp x9, #32
+	b.ne 95f
+	ldr x9, [x0, #0x28]  // Video physical base
+	cbz x9, 95f
+	ldr x10, [x0, #0x48] // Video height
+	cmp x10, #16
+	b.lo 95f
+	ldr x10, [x0, #0x38] // rowbytes
+	cbz x10, 95f
+	cmp x10, #16, lsl #12
+	b.hi 95f
+	lsl x10, x10, #4
+	bic x10, x10, #7
+	mov w11, #0x00ff
+	movk w11, #0xffff, lsl #16 // BGRA magenta: actual kernel entry only
+94:
+	stp w11, w11, [x9], #8
+	subs x10, x10, #8
+	b.hi 94b
+	dsb sy
+95:
+#endif
+	b	EXT(start_first_cpu)
+
+
+/*
+ * Provides an early-boot exception vector so that the processor will spin
+ * and preserve exception information (e.g., ELR_EL1) when early CPU bootstrap
+ * code triggers an exception. This is copied to the second physical page
+ * during CPU bootstrap (see cpu.c).
+ */
+	.align 12, 0
+	.global	EXT(LowExceptionVectorBase)
+LEXT(LowExceptionVectorBase)
+	/* EL1 SP 0 */
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	/* EL1 SP1 */
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	/* EL0 64 */
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	/* EL0 32 */
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align	7
+	b		EXT(p6_early_fault)
+	.align 12, 0
+
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+/*
+ * Provide a global symbol so that we can narrow the V=P mapping to cover
+ * this page during arm_vm_init.
+ */
+.align ARM_PGSHIFT
+.globl EXT(bootstrap_instructions)
+LEXT(bootstrap_instructions)
+
+#endif /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) */
+	.align 2
+	.globl EXT(resume_idle_cpu)
+LEXT(resume_idle_cpu)
+	adrp	lr, EXT(arm_init_idle_cpu)@page
+	add		lr, lr, EXT(arm_init_idle_cpu)@pageoff
+	b		start_cpu
+
+	.align 2
+	.globl EXT(start_cpu)
+LEXT(start_cpu)
+	adrp	lr, EXT(arm_init_cpu)@page
+	add		lr, lr, EXT(arm_init_cpu)@pageoff
+	b		start_cpu
+
+	.align 2
+start_cpu:
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+	// This is done right away in reset vector for pre-KTRR devices
+	// Set low reset vector now that we are in the KTRR-free zone
+	adrp	x0, EXT(LowExceptionVectorBase)@page
+	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
+	MSR_VBAR_EL1_X0
+#endif /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) */
+
+	// x20 set to BootArgs phys address
+	// x21 set to cpu data phys address
+
+	// Get the kernel memory parameters from the boot args
+	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
+	ldr		x23, [x20, BA_PHYS_BASE]			// Get the kernel phys base
+	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
+	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
+	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+
+
+	// Set TPIDR_EL0 with cached CPU info
+	ldr		x0, [x21, CPU_TPIDR_EL0]
+	msr		TPIDR_EL0, x0
+
+	// Set TPIDRRO_EL0 to 0
+	msr		TPIDRRO_EL0, xzr
+
+
+	// Set the exception stack pointer
+	ldr		x0, [x21, CPU_EXCEPSTACK_TOP]
+
+
+	// Set SP_EL1 to exception stack
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+	mov		x1, lr
+	bl		EXT(pinst_spsel_1)
+	mov		lr, x1
+#else
+	msr		SPSel, #1
+#endif
+	mov		sp, x0
+
+	// Set the interrupt stack pointer
+	ldr		x0, [x21, CPU_INTSTACK_TOP]
+	msr		SPSel, #0
+	mov		sp, x0
+
+	// Convert lr to KVA
+	add		lr, lr, x22
+	sub		lr, lr, x23
+
+	b		common_start
+
+/*
+ * create_l1_table_entry
+ *
+ * Given a virtual address, creates a table entry in an L1 translation table
+ * to point to an L2 translation table.
+ *   arg0 - Virtual address
+ *   arg1 - L1 table address
+ *   arg2 - L2 table address
+ *   arg3 - Scratch register
+ *   arg4 - Scratch register
+ *   arg5 - Scratch register
+ */
+.macro create_l1_table_entry
+	and		$3,	$0, #(ARM_TT_L1_INDEX_MASK)
+	lsr		$3, $3, #(ARM_TT_L1_SHIFT)			// Get index in L1 table for L2 table
+	lsl		$3, $3, #(TTE_SHIFT)				// Convert index into pointer offset
+	add		$3, $1, $3							// Get L1 entry pointer
+	mov		$4, #(ARM_TTE_BOOT_TABLE)			// Get L1 table entry template
+	and		$5, $2, #(ARM_TTE_TABLE_MASK)		// Get address bits of L2 table
+	orr		$5, $4, $5 							// Create table entry for L2 table
+	str		$5, [$3]							// Write entry to L1 table
+.endmacro
+
+/*
+ * create_l2_block_entries
+ *
+ * Given base virtual and physical addresses, creates consecutive block entries
+ * in an L2 translation table.
+ *   arg0 - Virtual address
+ *   arg1 - Physical address
+ *   arg2 - L2 table address
+ *   arg3 - Number of entries
+ *   arg4 - Scratch register
+ *   arg5 - Scratch register
+ *   arg6 - Scratch register
+ *   arg7 - Scratch register
+ */
+.macro create_l2_block_entries
+	and		$4,	$0, #(ARM_TT_L2_INDEX_MASK)
+	lsr		$4, $4, #(ARM_TTE_BLOCK_L2_SHIFT)	// Get index in L2 table for block entry
+	lsl		$4, $4, #(TTE_SHIFT)				// Convert index into pointer offset
+	add		$4, $2, $4							// Get L2 entry pointer
+	mov		$5, #(ARM_TTE_BOOT_BLOCK)			// Get L2 block entry template
+	and		$6, $1, #(ARM_TTE_BLOCK_L2_MASK)	// Get address bits of block mapping
+	orr		$6, $5, $6
+	mov		$5, $3
+	mov		$7, #(ARM_TT_L2_SIZE)
+1:
+	str		$6, [$4], #(1 << TTE_SHIFT)			// Write entry to L2 table and advance
+	add		$6, $6, $7							// Increment the output address
+	subs	$5, $5, #1							// Decrement the number of entries
+	b.ne	1b
+.endmacro
+
+/*
+ *  arg0 - virtual start address
+ *  arg1 - physical start address
+ *  arg2 - number of entries to map
+ *  arg3 - L1 table address
+ *  arg4 - free space pointer
+ *  arg5 - scratch (entries mapped per loop)
+ *  arg6 - scratch
+ *  arg7 - scratch
+ *  arg8 - scratch
+ *  arg9 - scratch
+ */
+.macro create_bootstrap_mapping
+	/* calculate entries left in this page */
+	and	$5, $0, #(ARM_TT_L2_INDEX_MASK)
+	lsr	$5, $5, #(ARM_TT_L2_SHIFT)
+	mov	$6, #(TTE_PGENTRIES)
+	sub	$5, $6, $5
+
+	/* allocate an L2 table */
+3:	add	$4, $4, PGBYTES
+	/* Refuse before a new table can overwrite adjacent kernel globals. */
+	add $6, x25, #(BOOTSTRAP_TABLE_BYTES >> 12), lsl #12
+	cmp $4, $6
+	b.hs Lbootstrap_tables_exhausted
+
+	/* create_l1_table_entry(virt_base, L1 table, L2 table, scratch1, scratch2, scratch3) */
+	create_l1_table_entry	$0, $3, $4, $6, $7, $8
+
+	/* determine how many entries to map this loop - the smaller of entries
+	 * remaining in page and total entries left */
+	cmp	$2, $5
+	csel	$5, $2, $5, lt
+
+	/* create_l2_block_entries(virt_base, phys_base, L2 table, num_ents, scratch1, scratch2, scratch3) */
+	create_l2_block_entries	$0, $1, $4, $5, $6, $7, $8, $9
+
+	/* subtract entries just mapped and bail out if we're done */
+	subs	$2, $2, $5
+	beq	2f
+
+	/* entries left to map - advance base pointers */
+	add 	$0, $0, $5, lsl #(ARM_TT_L2_SHIFT)
+	add 	$1, $1, $5, lsl #(ARM_TT_L2_SHIFT)
+
+	mov	$5, #(TTE_PGENTRIES)  /* subsequent loops map (up to) a whole L2 page */
+	b	3b
+2:
+.endmacro
+
+/*
+ * _start_first_cpu
+ * Cold boot init routine.  Called from __start
+ *   x0 - Boot args
+ */
+	.align 2
+	.globl EXT(start_first_cpu)
+LEXT(start_first_cpu)
+
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	mov x20, x0
+	adrp x12, EXT(LowExceptionVectorBase)@page
+	add x12, x12, EXT(LowExceptionVectorBase)@pageoff
+	msr VBAR_EL1, x12
+	isb
+#endif
+
+	// Unlock the core for debugging
+	msr		OSLAR_EL1, xzr
+	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+
+	mov		x20, x0
+	mov		x21, #0
+
+	// Set low reset vector before attempting any loads
+	adrp	x0, EXT(LowExceptionVectorBase)@page
+	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
+	MSR_VBAR_EL1_X0
+
+
+	// Get the kernel memory parameters from the boot args
+	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
+	ldr		x23, [x20, BA_PHYS_BASE]			// Get the kernel phys base
+	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
+	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
+	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	tst x20, #15
+	b.ne EXT(p6_bad_bootargs)
+	ldr w9, [x20]
+	mov w10, #2
+	movk w10, #2, lsl #16
+	cmp w9, w10
+	b.ne EXT(p6_bad_bootargs)
+	cbz x24, EXT(p6_bad_bootargs)
+	P6_BAR 24,0xff00,0xffff,1 // S01 yellow: actual BootArgs loaded/checked
+#endif
+
+
+	// Clear the registers that will be used to store the userspace thread pointer and CPU number.
+	// We may not actually be booting from ordinal CPU 0, so this register will be updated
+	// in ml_parse_cpu_topology(), which happens later in bootstrap.
+	msr		TPIDRRO_EL0, xzr
+	msr		TPIDR_EL0, xzr
+
+	// Set up exception stack pointer
+	adrp	x0, EXT(excepstack_top)@page		// Load top of exception stack
+	add		x0, x0, EXT(excepstack_top)@pageoff
+	add		x0, x0, x22							// Convert to KVA
+	sub		x0, x0, x23
+
+	// Set SP_EL1 to exception stack
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+	bl		EXT(pinst_spsel_1)
+#else
+	msr		SPSel, #1
+#endif
+
+	mov		sp, x0
+
+	// Set up interrupt stack pointer
+	adrp	x0, EXT(intstack_top)@page			// Load top of irq stack
+	add		x0, x0, EXT(intstack_top)@pageoff
+	add		x0, x0, x22							// Convert to KVA
+	sub		x0, x0, x23
+	msr		SPSel, #0							// Set SP_EL0 to interrupt stack
+	mov		sp, x0
+
+	// Load address to the C init routine into link register
+	adrp	lr, EXT(p7_c_entry)@page
+	add		lr, lr, EXT(p7_c_entry)@pageoff
+	add		lr, lr, x22							// Convert to KVA
+	sub		lr, lr, x23
+
+	/*
+	 * Set up the bootstrap page tables with a single block entry for the V=P
+	 * mapping, a single block entry for the trampolined kernel address (KVA),
+	 * and all else invalid. This requires four pages:
+	 *	Page 1 - V=P L1 table
+	 *	Page 2 - V=P L2 table
+	 *	Page 3 - KVA L1 table
+	 *	Page 4 - KVA L2 table
+	 */
+
+	// Invalidate all entries in the bootstrap page tables
+	mov		x0, #(ARM_TTE_EMPTY)				// Load invalid entry template
+	mov		x1, x25								// Start at V=P pagetable root
+	mov		x2, #(BOOTSTRAP_TABLE_BYTES / ARM_PGBYTES)
+	lsl		x2, x2, #(ARM_PGSHIFT - TTE_SHIFT) // Clear the whole reserved pool
+
+Linvalidate_bootstrap:							// do {
+	str		x0, [x1], #(1 << TTE_SHIFT)			//   Invalidate and advance
+	subs	x2, x2, #1							//   entries--
+	b.ne	Linvalidate_bootstrap				// } while (entries != 0)
+
+	/*
+	 * In order to reclaim memory on targets where TZ0 (or some other entity)
+	 * must be located at the base of memory, iBoot may set the virtual and
+	 * physical base addresses to immediately follow whatever lies at the
+	 * base of physical memory.
+	 *
+	 * If the base address belongs to TZ0, it may be dangerous for xnu to map
+	 * it (as it may be prefetched, despite being technically inaccessible).
+	 * In order to avoid this issue while keeping the mapping code simple, we
+	 * may continue to use block mappings, but we will only map the kernelcache
+	 * mach header to the end of memory.
+	 *
+	 * Given that iBoot guarantees that the unslid kernelcache base address
+	 * will begin on an L2 boundary, this should prevent us from accidentally
+	 * mapping TZ0.
+	 */
+	adrp	x0, EXT(_mh_execute_header)@page	// address of kernel mach header
+	add		x0, x0, EXT(_mh_execute_header)@pageoff
+	ldr		w1, [x0, #0x18]						// load mach_header->flags
+	tbz		w1, #0x1f, Lkernelcache_base_found	// if MH_DYLIB_IN_CACHE unset, base is kernel mach header
+	ldr		w1, [x0, #0x20]						// load first segment cmd (offset sizeof(kernel_mach_header_t))
+	cmp		w1, #0x19							// must be LC_SEGMENT_64
+	bne		.
+	ldr		x1, [x0, #0x38]						// load first segment vmaddr
+	sub		x1, x0, x1							// compute slide
+	MOV64	x0, VM_KERNEL_LINK_ADDRESS
+	add		x0, x0, x1							// base is kernel link address + slide
+
+Lkernelcache_base_found:
+	/*
+	 * Adjust physical and virtual base addresses to account for physical
+	 * memory preceeding xnu Mach-O header
+	 * x22 - Kernel virtual base
+	 * x23 - Kernel physical base
+	 * x24 - Physical memory size
+	 */
+	sub		x18, x0, x23
+	sub		x24, x24, x18
+	add		x22, x22, x18
+	add		x23, x23, x18
+
+	/*
+	 * x0  - V=P virtual cursor
+	 * x4  - V=P physical cursor
+	 * x14 - KVA virtual cursor
+	 * x15 - KVA physical cursor
+	 */
+	mov		x4, x0
+	mov		x14, x22
+	mov		x15, x23
+
+	/*
+	 * Allocate L1 tables
+	 * x1 - V=P L1 page
+	 * x3 - KVA L1 page
+	 * x2 - free mem pointer from which we allocate a variable number of L2
+	 * pages. The maximum number of bootstrap page table pages is limited to
+	 * BOOTSTRAP_TABLE_SIZE. For a 2G 4k page device, assuming the worst-case
+	 * slide, we need 1xL1 and up to 3xL2 pages (1GB mapped per L1 entry), so
+	 * 8 total pages for V=P and KVA.
+	 */
+	mov		x1, x25
+	add		x3, x1, PGBYTES
+	mov		x2, x3
+
+	/*
+	 * Setup the V=P bootstrap mapping
+	 * x5 - total number of L2 entries to allocate
+	 */
+	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+	/* create_bootstrap_mapping(vbase, pbase, num_ents, L1 table, freeptr) */
+	create_bootstrap_mapping x0,  x4,  x5, x1, x2, x6, x10, x11, x12, x13
+
+	/* Setup the KVA bootstrap mapping */
+	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+
+	b Lbootstrap_tables_ready
+Lbootstrap_tables_exhausted:
+	// MMU is still off. Stop with the offending cursor/end preserved for
+	// the early debugger rather than corrupting memory or forging a map.
+	b Lbootstrap_tables_exhausted
+Lbootstrap_tables_ready:
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+// P7: map only page-rounded BootArgs framebuffer; no stack or calls.
+// x2 is last allocated bootstrap page. All pool pages were zeroed above.
+	adrp x8, EXT(p6_diag_record)@page
+	add x8, x8, EXT(p6_diag_record)@pageoff
+	ldr x9, [x20, #0x28]
+	cbz x9, EXT(p6_bad_bootargs)
+	tst x9, #4095
+	b.ne EXT(p6_bad_bootargs)
+	ldr x10, [x20, #0x50]
+	cmp x10, #32
+	b.ne EXT(p6_bad_bootargs)
+	ldr x10, [x20, #0x38]
+	cbz x10, EXT(p6_bad_bootargs)
+	cmp x10, #16, lsl #12
+	b.hi EXT(p6_bad_bootargs)
+	str x10, [x8, #208]
+	ldr x11, [x20, #0x48]
+	cmp x11, #300
+	b.lo EXT(p6_bad_bootargs)
+	cmp x11, #4096
+	b.hi EXT(p6_bad_bootargs)
+	mul x10, x10, x11
+	add x10, x10, #4095
+	and x10, x10, #0xfffffffffffff000
+	MOV64 x12, 0x1000000
+	cmp x10, x12
+	b.hi EXT(p6_bad_bootargs)
+	add x11, x9, x10
+	cmp x11, x9
+	b.ls EXT(p6_bad_bootargs)
+	lsr x12, x11, #38
+	cbnz x12, EXT(p6_bad_bootargs)
+	sub x12, x11, #1
+	eor x12, x12, x9
+	lsr x12, x12, #30
+	cbnz x12, EXT(p6_bad_bootargs) // one L1 slot only
+	add x12, x23, x24
+	cmp x9, x12
+	b.hs 81f
+	cmp x11, x23
+	b.hi EXT(p6_bad_bootargs) // refuse overlap with owned RAM window
+81:
+	lsr x12, x9, #30
+	and x12, x12, #255
+	add x12, x25, x12, lsl #3
+	ldr x13, [x12]
+	cbnz x13, EXT(p6_bad_bootargs) // do not overwrite an existing RAM mapping
+	add x17, x25, #(BOOTSTRAP_TABLE_BYTES >> 12), lsl #12
+	add x16, x2, #4096
+	cmp x16, x17
+	b.hs EXT(p6_bad_bootargs)
+	mov x13, x16
+	orr x14, x13, #3
+	str x14, [x12]
+	str x10, [x8, #136]
+	mov x7, x9
+82:
+	lsr x12, x9, #21
+	and x12, x12, #511
+	add x12, x13, x12, lsl #3
+	ldr x14, [x12]
+	cbnz x14, 83f
+	add x16, x16, #4096
+	cmp x16, x17
+	b.hs EXT(p6_bad_bootargs)
+	orr x14, x16, #3
+	str x14, [x12]
+83:
+	and x14, x14, #0x0000fffffffff000
+	lsr x15, x9, #12
+	and x15, x15, #511
+	add x15, x14, x15, lsl #3
+	// Target CACHE_ATTRINDX_DISABLE (Device-nGnRnE), AF, OuterShareable, PXN/UXN.
+	MOV64 x18, (0x0060000000000603 | (CACHE_ATTRINDX_DISABLE << 2))
+	orr x18, x18, x9
+	str x18, [x15]
+	add x9, x9, #4096
+	cmp x9, x11
+	b.lo 82b
+	str x7, [x8, #128] // publish only after complete mapping
+	dsb sy
+#endif
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	P6_BAR 48,0xffff,0xff00,3 // S03 cyan: tables built
+#endif
+	/* Ensure TTEs are visible */
+	dsb		ish
+
+
+	b		common_start
+
+/*
+ * Begin common CPU initialization
+ *
+ * Regster state:
+ *	x20 - PA of boot args
+ *	x21 - zero on cold boot, PA of cpu data on warm reset
+ *	x22 - Kernel virtual base
+ *	x23 - Kernel physical base
+ *	x25 - PA of the V=P pagetable root
+ *	 lr - KVA of C init routine
+ *	 sp - SP_EL0 selected
+ *
+ *	SP_EL0 - KVA of CPU's interrupt stack
+ *	SP_EL1 - KVA of CPU's exception stack
+ *	TPIDRRO_EL0 - CPU number
+ */
+common_start:
+
+#if HAS_NEX_PG
+	mov x19, lr
+	bl		EXT(set_nex_pg)
+	mov lr, x19
+#endif
+
+	// Set the translation control register.
+	adrp	x0,     EXT(sysreg_restore)@page		// Load TCR value from the system register restore structure
+	add		x0, x0, EXT(sysreg_restore)@pageoff
+	ldr		x1, [x0, SR_RESTORE_TCR_EL1]
+	MSR_TCR_EL1_X1
+
+	/* Set up translation table base registers.
+	 *	TTBR0 - V=P table @ top of kernel
+	 *	TTBR1 - KVA table @ top of kernel + 1 page
+	 */
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+	/* Note that for KTRR configurations, the V=P map will be modified by
+	 * arm_vm_init.c.
+	 */
+#endif
+	and		x0, x25, #(TTBR_BADDR_MASK)
+	mov		x19, lr
+	bl		EXT(set_mmu_ttb)
+	mov		lr, x19
+	add		x0, x25, PGBYTES
+	and		x0, x0, #(TTBR_BADDR_MASK)
+	MSR_TTBR1_EL1_X0
+
+	// Set up MAIR attr0 for normal memory, attr1 for device memory
+	mov		x0, xzr
+	mov		x1, #(MAIR_WRITEBACK << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_WRITEBACK))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_DISABLE << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_DISABLE))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_WRITETHRU << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_WRITETHRU))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_WRITECOMB << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_WRITECOMB))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_WRITEBACK << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_RESERVED))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_POSTED_COMBINED_REORDERED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED))
+	orr		x0, x0, x1
+#if HAS_FEAT_XS
+	mov		x1, #(MAIR_POSTED_XS << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_XS))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_POSTED_COMBINED_REORDERED_XS << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED_XS))
+	orr		x0, x0, x1
+#else
+	mov		x1, #(MAIR_POSTED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_POSTED_REORDERED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_REORDERED))
+	orr		x0, x0, x1
+#endif /* HAS_FEAT_XS */
+	msr		MAIR_EL1, x0
+	isb
+	tlbi	vmalle1
+	dsb		ish
+
+
+#if defined(BCM2837)
+	// Setup timer interrupt routing; must be done before MMU is enabled
+	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
+	and		x15, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
+	mov		x0, #0x4000
+	lsl		x0, x0, #16
+	add		x0, x0, #0x0040						// x0: 0x4000004X Core Timers interrupt control
+	add		x0, x0, x15, lsl #2
+	mov		w1, #0xF0 						// x1: 0xF0 	  Route to Core FIQs
+	str		w1, [x0]
+	isb		sy
+#endif
+
+#ifndef __ARM_IC_NOALIAS_ICACHE__
+	/* Invalidate the TLB and icache on systems that do not guarantee that the
+	 * caches are invalidated on reset.
+	 */
+	tlbi	vmalle1
+	ic		iallu
+#endif
+
+	/* If x21 is not 0, then this is either the start_cpu path or
+	 * the resume_idle_cpu path.  cpu_ttep should already be
+	 * populated, so just switch to the kernel_pmap now.
+	 */
+
+	cbz		x21, 1f
+	adrp	x0, EXT(cpu_ttep)@page
+	add		x0, x0, EXT(cpu_ttep)@pageoff
+	ldr		x0, [x0]
+	MSR_TTBR1_EL1_X0
+1:
+
+	// Set up the exception vectors
+#if __ARM_KERNEL_PROTECT__
+	/* If this is not the first reset of the boot CPU, the alternate mapping
+	 * for the exception vectors will be set up, so use it.  Otherwise, we
+	 * should use the mapping located in the kernelcache mapping.
+	 */
+	MOV64	x0, ARM_KERNEL_PROTECT_EXCEPTION_START
+
+	cbnz		x21, 1f
+#endif /* __ARM_KERNEL_PROTECT__ */
+	adrp	x0, EXT(ExceptionVectorsBase)@page			// Load exception vectors base address
+	add		x0, x0, EXT(ExceptionVectorsBase)@pageoff
+	add		x0, x0, x22									// Convert exception vector address to KVA
+	sub		x0, x0, x23
+1:
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	cbnz x21, 86f
+	adrp x0, EXT(LowExceptionVectorBase)@page
+	add x0, x0, EXT(LowExceptionVectorBase)@pageoff
+86:
+#endif
+	MSR_VBAR_EL1_X0
+
+#if HAS_APPLE_PAC
+	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
+#endif /* HAS_APPLE_PAC */
+
+	// Enable caches, MMU, ROP and JOP
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+
+	adrp x12, EXT(p6_diag_record)@page
+	add x12, x12, EXT(p6_diag_record)@pageoff
+	mrs x9, TTBR0_EL1
+	str x9, [x12, #144]
+	and x9, x9, #(TTBR_BADDR_MASK)
+	cmp x9, x25
+	b.ne EXT(p6_bad_bootargs)
+	mrs x9, TTBR1_EL1
+	str x9, [x12, #152]
+	and x9, x9, #(TTBR_BADDR_MASK)
+	add x10, x25, PGBYTES
+	cmp x9, x10
+	b.ne EXT(p6_bad_bootargs)
+	mrs x9, TCR_EL1
+	str x9, [x12, #160]
+	MOV64 x10, TCR_EL1_BOOT
+	cmp x9, x10
+	b.ne EXT(p6_bad_bootargs)
+	mrs x9, MAIR_EL1
+	str x9, [x12, #168]
+	ubfx x9, x9, #(CACHE_ATTRINDX_DISABLE * 8), #8
+	cbnz x9, EXT(p6_bad_bootargs)
+	mrs x9, SCTLR_EL1
+	str x9, [x12, #176]
+	adr x9, .
+	str x9, [x12, #184]
+	mrs x9, VBAR_EL1
+	str x9, [x12, #192]
+	P6_BAR 72,0xffff,0xffff,5 // S05 white: before SCTLR enables MMU
+#endif
+	MOV64   x0, SCTLR_EL1_DEFAULT
+	MSR_SCTLR_EL1_X0
+	isb		sy
+
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	mrs x9, SCTLR_EL1
+	tbz x9, #0, EXT(p6_early_fault)
+	P7_BAR 112,0x00ff,0xff00,6 // S06 blue: M readback and post-ISB execution
+#endif
+
+#if !VMAPPLE
+	MOV64   x1, SCTLR_EL1_DEFAULT
+	cmp		x0, x1
+	bne		.
+#endif /* !VMAPPLE */
+
+#if (!CONFIG_KERNEL_INTEGRITY || (CONFIG_KERNEL_INTEGRITY && !defined(KERNEL_INTEGRITY_WT)))
+	/* Watchtower
+	 *
+	 * If we have a Watchtower monitor it will setup CPACR_EL1 for us, touching
+	 * it here would trap to EL3.
+	 */
+
+	// Enable NEON
+	mov		x0, #(CPACR_FPEN_ENABLE)
+	msr		CPACR_EL1, x0
+#endif
+
+	// Clear thread pointer
+	msr		TPIDR_EL1, xzr						// Set thread register
+
+
+#if defined(APPLE_ARM64_ARCH_FAMILY)
+	mrs		x12, MDSCR_EL1
+	orr		x12, x12, MDSCR_TDCC
+	msr		MDSCR_EL1, x12
+	// Initialization common to all non-virtual Apple targets
+#endif  // APPLE_ARM64_ARCH_FAMILY
+
+
+#if defined(APPLE_ARM64_ARCH_FAMILY)
+	// Read MIDR before start of per-SoC tunables
+	mrs x12, MIDR_EL1
+
+	APPLY_TUNABLES x12, x13, x14
+#endif
+
+#if HAS_CLUSTER && !NO_CPU_OVRD
+	// Unmask external IRQs if we're restarting from non-retention WFI
+	mrs		x9, CPU_OVRD
+	and		x9, x9, #(~(ARM64_REG_CYC_OVRD_irq_mask | ARM64_REG_CYC_OVRD_fiq_mask))
+	msr		CPU_OVRD, x9
+#endif
+
+	// If x21 != 0, we're doing a warm reset, so we need to trampoline to the kernel pmap.
+	cbnz	x21, Ltrampoline
+
+	// Set KVA of boot args as first arg
+	add		x0, x20, x22
+	sub		x0, x0, x23
+
+#if KASAN
+	mov	x20, x0
+	mov	x21, lr
+
+	// x0: boot args
+	// x1: KVA page table phys base
+	mrs	x1, TTBR1_EL1
+	bl	EXT(kasan_bootstrap)
+
+	mov	x0, x20
+	mov	lr, x21
+#endif
+
+	// Return to arm_init()
+	ret
+
+Ltrampoline:
+	// Load VA of the trampoline
+	adrp	x0, arm_init_tramp@page
+	add		x0, x0, arm_init_tramp@pageoff
+	add		x0, x0, x22
+	sub		x0, x0, x23
+
+	// Branch to the trampoline
+	br		x0
+
+/*
+ * V=P to KVA trampoline.
+ *	x0 - KVA of cpu data pointer
+ */
+	.text
+	.align 2
+arm_init_tramp:
+	/* On a warm boot, the full kernel translation table is initialized in
+	 * addition to the bootstrap tables. The layout is as follows:
+	 *
+	 *  +--Top of Memory--+
+	 *         ...
+	 *  |                 |
+	 *  |  Primary Kernel |
+	 *  |   Trans. Table  |
+	 *  |                 |
+	 *  +--Top + 5 pages--+
+	 *  |                 |
+	 *  |  Invalid Table  |
+	 *  |                 |
+	 *  +--Top + 4 pages--+
+	 *  |                 |
+	 *  |    KVA Table    |
+	 *  |                 |
+	 *  +--Top + 2 pages--+
+	 *  |                 |
+	 *  |    V=P Table    |
+	 *  |                 |
+	 *  +--Top of Kernel--+
+	 *  |                 |
+	 *  |  Kernel Mach-O  |
+	 *  |                 |
+	 *         ...
+	 *  +---Kernel Base---+
+	 */
+
+
+	mov		x19, lr
+	// Convert CPU data PA to VA and set as first argument
+	mov		x0, x21
+	bl		EXT(phystokv)
+
+	mov		lr, x19
+
+	/* Return to arm_init() */
+	ret
+
+//#include	"globals_asm.h"
+
+/* vim: set ts=4: */
+
+
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	.align 3
+	.globl EXT(p6_bad_bootargs)
+LEXT(p6_bad_bootargs)
+	mov x9, #0xbad
+	b EXT(p6_record_fault)
+	.globl EXT(p6_early_fault)
+LEXT(p6_early_fault)
+	mov x9, #0x6001
+LEXT(p6_record_fault)
+	// Own kernel data only; no stack/calls, no cross-reboot retention claim.
+	adrp x16, EXT(p6_diag_record)@page
+	add x16, x16, EXT(p6_diag_record)@pageoff
+	str x9, [x16]
+	mrs x9, ESR_EL1
+	mrs x10, FAR_EL1
+	mrs x11, ELR_EL1
+	stp x9, x10, [x16, #16]
+	str x11, [x16, #32]
+	mrs x9, SPSR_EL1
+	mrs x12, SPSel
+	msr SPSel, #0
+	mov x10, sp
+	msr SPSel, #1
+	mov x11, sp
+	tbnz x12, #0, 97f
+	msr SPSel, #0
+97:
+	stp x9, x10, [x16, #40]
+	str x11, [x16, #56]
+	str lr, [x16, #64]
+	mrs x9, SCTLR_EL1
+	mrs x10, TCR_EL1
+	mrs x11, TTBR0_EL1
+	stp x9, x10, [x16, #72]
+	str x11, [x16, #88]
+	mrs x10, TTBR1_EL1
+	mrs x11, MAIR_EL1
+	stp x10, x11, [x16, #96]
+	str x20, [x16, #112]
+	ldr x10, [x16, #8]
+	str x10, [x16, #120]
+	dsb sy
+	// MMU-on framebuffer isn't guaranteed mapped: retain record and stop.
+	tbz x9, #0, 85f
+	ldr x10, [x16, #128]
+	cbz x10, Lp6_fault_stop
+85:
+	cbz x20, Lp6_fault_stop
+	P7_BAR 96,0x0000,0xffff,0xff // bounded mapped FB; may be unavailable on pre-map fault
+	ldr x19, [x20, #0x28]
+	cbz x19, Lp6_fault_stop
+	tst x19, #3
+	b.ne Lp6_fault_stop
+	ldr x21, [x20, #0x38]
+	cbz x21, Lp6_fault_stop
+	cmp x21, #16, lsl #12
+	b.hi Lp6_fault_stop
+	ldr x9, [x20, #0x40]
+	cmp x9, #640
+	b.lo Lp6_fault_stop
+	ldr x9, [x20, #0x48]
+	cmp x9, #300
+	b.lo Lp6_fault_stop
+	ldr x9, [x20, #0x50]
+	cmp x9, #32
+	b.ne Lp6_fault_stop
+	// Display ESR, ELR, FAR as three 16-hex-digit rows. Only when MMU off.
+	mov x22, #0
+Lp6_hex_line:
+	adrp x16, EXT(p6_diag_record)@page
+	add x16, x16, EXT(p6_diag_record)@pageoff
+	cmp x22, #0
+	b.eq Lp6_esr
+	cmp x22, #1
+	b.eq Lp6_elr
+	ldr x24, [x16, #24]
+	b Lp6_hex_value
+Lp6_esr:
+	ldr x24, [x16, #16]
+	b Lp6_hex_value
+Lp6_elr:
+	ldr x24, [x16, #32]
+Lp6_hex_value:
+	mov x23, #0
+Lp6_digit:
+	mov x9, #60
+	lsl x10, x23, #2
+	sub x9, x9, x10
+	lsrv x9, x24, x9
+	and x9, x9, #15
+	adr x10, Lp6_hex_font
+	ldr x25, [x10, x9, lsl #3]
+	mov x26, #0
+Lp6_glyph_row:
+	mov x27, #0
+Lp6_glyph_col:
+	mov x9, #5
+	madd x9, x26, x9, x27
+	lsrv x9, x25, x9
+	and x9, x9, #1
+	mov w15, #-1
+	cmp x9, #0
+	csel w15, w15, wzr, ne
+	mov x28, #0
+Lp6_pixel_row:
+	mov x9, #48
+	madd x9, x22, x9, xzr
+	add x9, x9, #128
+	mov x10, #6
+	madd x9, x26, x10, x9
+	add x9, x9, x28
+	madd x14, x9, x21, x19
+	mov x9, #36
+	mul x9, x23, x9
+	mov x10, #6
+	madd x9, x27, x10, x9
+	add x9, x9, #24
+	add x14, x14, x9, lsl #2
+	mov x29, #6
+Lp6_pixel_col:
+	str w15, [x14], #4
+	subs x29, x29, #1
+	b.ne Lp6_pixel_col
+	add x28, x28, #1
+	cmp x28, #6
+	b.lo Lp6_pixel_row
+	add x27, x27, #1
+	cmp x27, #5
+	b.lo Lp6_glyph_col
+	add x26, x26, #1
+	cmp x26, #7
+	b.lo Lp6_glyph_row
+	add x23, x23, #1
+	cmp x23, #16
+	b.lo Lp6_digit
+	add x22, x22, #1
+	cmp x22, #3
+	b.lo Lp6_hex_line
+	dsb sy
+Lp6_fault_stop:
+	b Lp6_fault_stop
+	.align 3
+Lp6_hex_font:
+	.quad 0x7e318c63f
+	.quad 0x3884210c4
+	.quad 0x7c21fc21f
+	.quad 0x7e10fc21f
+	.quad 0x4210fc631
+	.quad 0x7e10f843f
+	.quad 0x7e31f843f
+	.quad 0x8422221f
+	.quad 0x7e31fc63f
+	.quad 0x7e10fc63f
+	.quad 0x4631fc62e
+	.quad 0x3e317c62f
+	.quad 0x7c210843f
+	.quad 0x3e318c62f
+	.quad 0x7c21f843f
+	.quad 0x421f843f
+
+	.section __BOOTDATA,__data
+	.align 3
+	.globl EXT(p6_diag_record)
+LEXT(p6_diag_record)
+	.space 256,0
+	.text
+#endif
+
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+	.text
+	.align 2
+	.globl EXT(p7_c_entry)
+LEXT(p7_c_entry)
+	P7_BAR 136,0x8000,0xffff,7 // S07 orange: LR reached KVA wrapper
+	stp x0, lr, [sp, #-16]!
+	ldp x0, lr, [sp], #16
+	P7_BAR 160,0xc0c0,0xffc0,8 // S08 gray: real stack store/load
+	b EXT(arm_init)
+#endif

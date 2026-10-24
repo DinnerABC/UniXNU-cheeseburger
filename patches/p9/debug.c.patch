@@ -1,0 +1,28 @@
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1132,6 +1132,13 @@
+ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsigned int reason, void *ctx,
+     uint64_t panic_options_mask, void *panic_data_ptr, unsigned long panic_caller)
+ {
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++ /* P9_FIRST_FATAL_CAPTURE: preserve first format+Darwin va_list before any
++  * debugger trap, panic sync, nested panic, platform callout or reset. */
++ extern void p9_panic_capture(const char *, va_list *, unsigned, void *, unsigned long) __attribute__((noreturn));
++ p9_panic_capture(panic_format_str, panic_args, reason, ctx, panic_caller);
++#endif
++
+ #pragma clang diagnostic pop
+ 
+ #if defined(__x86_64__) && (DEVELOPMENT || DEBUG)
+@@ -1252,6 +1259,11 @@
+ static void
+ kdp_machine_reboot_type(unsigned int type, uint64_t debugger_flags)
+ {
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++ extern void p9_debugger_reboot(unsigned, unsigned, const char *, unsigned long) __attribute__((noreturn));
++ p9_debugger_reboot(type, (unsigned)debugger_current_op, debugger_message, (unsigned long)__builtin_return_address(0));
++#endif
++
+ 	if ((type == kPEPanicRestartCPU) && (debugger_flags & DEBUGGER_OPTION_SKIP_PANICEND_CALLOUTS)) {
+ 		PEHaltRestart(kPEPanicRestartCPUNoCallouts);
+ 	} else {

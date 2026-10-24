@@ -1,0 +1,19 @@
+--- a/scripts/p10-build-adt.py
++++ b/scripts/p10-build-adt.py
+@@ -1,11 +1,14 @@
+ #!/usr/bin/env python3
+ from pathlib import Path
+-import hashlib,json,sys
++import hashlib,json,sys,struct
+ r=Path(__file__).resolve().parents[1];sys.path.insert(0,str(r/'tools/adt'));from adt import decode,encode
+ b=(r/'out/p9/adt/kernel.macho.adt').read_bytes();t=decode(b);chosen=next(x for x in t['children'] if x['name']=='chosen');mm=next(x for x in chosen['children'] if x['name']=='memory-map');assert 'TrustCache' not in mm['properties'];mm['properties']['TrustCache']=bytes(16)
+ assert 'crypto-hash-method' not in chosen['properties']
+ # Required Image4 algorithm selector, not a digest or a forged manifest.
+ chosen['properties']['crypto-hash-method']=b'sha2-384\0'
++assert 'amfi-only-platform-code' not in chosen['properties']
++# Original AMFI requires a four-byte policy input; 1 retains platform-only code.
++chosen['properties']['amfi-only-platform-code']=struct.pack('<I',1)
+ def pack(t):return encode(t['name'],t['properties'],[pack(x) for x in t['children']])
+ data=pack(t);assert decode(data)==t;o=r/'out/p10/adt';o.mkdir(exist_ok=True);(o/'kernel.macho.adt').write_bytes(data)
+-(o/'validation.json').write_text(json.dumps(dict(result='PASS',sha256=hashlib.sha256(data).hexdigest(),bytes=len(data),source_sha256=hashlib.sha256(b).hexdigest(),changes=['/chosen/memory-map/TrustCache loader placeholder','/chosen/crypto-hash-method=sha2-384 (NUL terminated)'],hash_method_source='Original AppleImage4 accepted-string comparison and fixed upstream make-dt.py option; matches selected SHA384 donor inputs',hardware_identity_unchanged=True),indent=2)+'\n');print('ADT roundtrip PASS; TrustCache loader placeholder and explicit Image4 sha2-384 selector')
++(o/'validation.json').write_text(json.dumps(dict(result='PASS',sha256=hashlib.sha256(data).hexdigest(),bytes=len(data),source_sha256=hashlib.sha256(b).hexdigest(),changes=['/chosen/memory-map/TrustCache loader placeholder','/chosen/crypto-hash-method=sha2-384 (NUL terminated)','/chosen/amfi-only-platform-code=uint32_le(1)'],hash_method_source='Original AppleImage4 accepted-string comparison and fixed upstream make-dt.py option; matches selected SHA384 donor inputs',hardware_identity_unchanged=True),indent=2)+'\n');print('ADT roundtrip PASS; TrustCache placeholder, Image4 sha2-384, AMFI platform-only uint32=1')

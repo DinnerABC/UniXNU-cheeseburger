@@ -1,0 +1,41 @@
+/* P8 persistent, allocation-free single-boot framebuffer console.
+ * No storage/firmware writes, no reset, no execution checkpoints. Uses the
+ * proven ml_io_map VA after arm_vm_init, and XNU's existing ISO bitmap font.
+ * cpus=1 target; concurrent IRQ text may interleave. RAM ring is not claimed
+ * recoverable across reboot; hardware reset can destroy this evidence.
+ */
+#if defined(ARM64_BOARD_CONFIG_MSM8998)
+extern volatile uint64_t p6_diag_record[];
+extern unsigned char iso_font[];
+char p8_console_ring[32768];
+volatile unsigned int p8_console_count;
+static unsigned int p8_col, p8_row;
+static boolean_t p8_console_ready(void) {
+ return p6_diag_record[16] && p6_diag_record[29] &&
+  p6_diag_record[26] == 4320 && p6_diag_record[17] >= 4320*1920;
+}
+static void p8_console_char(char ch) {
+ unsigned int pos=__atomic_fetch_add(&p8_console_count,1,__ATOMIC_RELAXED);
+ p8_console_ring[pos%sizeof(p8_console_ring)]=ch;
+ if(ch=='\r'){p8_col=0;return;}
+ if(ch=='\n'){p8_col=0;p8_row++;return;}
+ if((unsigned char)ch<32)return;
+ if(p8_col>=67){p8_col=0;p8_row++;}
+ volatile uint32_t *fb=(volatile uint32_t*)(uintptr_t)p6_diag_record[16];
+ if(p8_row>=60||pos==0){
+  for(unsigned int i=0;i<1080*1920;i++)fb[i]=0xff000000;
+  p8_row=0;
+ }
+ unsigned int x=p8_col*16,y=p8_row*32;
+ for(unsigned int gy=0;gy<16;gy++){
+  unsigned char bits=iso_font[(unsigned char)ch*16+gy];
+  for(unsigned int gx=0;gx<8;gx++){
+   uint32_t color=bits&(1U<<gx)?0xffffffff:0xff000000;
+   unsigned int at=(y+gy*2)*1080+x+gx*2;
+   fb[at]=color;fb[at+1]=color;fb[at+1080]=color;fb[at+1081]=color;
+  }
+ }
+ p8_col++;
+ __asm__ volatile("dsb sy":::"memory");
+}
+#endif

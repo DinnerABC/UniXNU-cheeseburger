@@ -1,0 +1,8 @@
+--- a/libkern/img4/interface.c
++++ b/libkern/img4/interface.c
+@@ -15,4 +15,5 @@
+ 		panic("img4 interface already set");
+ 	}
+ 	img4if = i4;
++	printf("P10 Image4 registered: interface=%u\n", i4->i4if_version);
+ }

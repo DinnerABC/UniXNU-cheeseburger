@@ -1,0 +1,11 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1819,7 +1819,7 @@
+ 
+ /* P7-v2: pre-arm_vm_init only. Uses the already validated device mapping.
+  * No helper calls; no change to assertions or platform initialization. */
+-#if defined(ARM64_BOARD_CONFIG_MSM8998)
++#if 0 /* P8 uses the functional text console */
+ #define P7_C_POINT(stage, row, color) do { \
+     __asm__ volatile( \
+         "adrp x12, _p6_diag_record@PAGE\n" \

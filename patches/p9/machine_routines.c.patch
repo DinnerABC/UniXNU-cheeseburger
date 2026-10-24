@@ -1,0 +1,15 @@
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -800,6 +800,12 @@
+ void
+ halt_all_cpus(boolean_t reboot)
+ {
++#if defined(ARM64_BOARD_CONFIG_MSM8998)
++ /* A non-panic host reboot is recorded separately, never called a panic. */
++ extern void p9_halt_capture(unsigned, unsigned long) __attribute__((noreturn));
++ p9_halt_capture((unsigned)reboot, (unsigned long)__builtin_return_address(0));
++#endif
++
+ 	if (reboot) {
+ 		printf("MACH Reboot\n");
+ 		PEHaltRestart(kPERestartCPU);

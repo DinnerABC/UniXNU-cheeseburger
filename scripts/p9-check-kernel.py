@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import re,json,subprocess,hashlib,os
+r=Path(__file__).resolve().parents[1];variant=os.environ.get('P9_KERNEL_VARIANT','kernel');assert re.fullmatch(r'kernel(?:-v[0-9]+)?',variant);o=r/'out/p9'/variant.replace('kernel','kernel-check',1);o.mkdir(exist_ok=True);base=r/'out/p9'/variant;k=base/'kernel.macho';syms=(base/'tool-validation/symbols.log').read_text();v=json.loads((base/'validation.json').read_text());assert v['result']=='PASS' and v['undefined_symbols']==0 and hashlib.sha256(k.read_bytes()).hexdigest()==v['sha256']
+for name in ['_p9_first_fatal','_p9_last_bootstrap']:
+ line=next(x for x in syms.splitlines() if x.endswith(' '+name));assert '(__DATA,' in line and '__BOOTDATA' not in line
+for name,target in [('_panic_trap_to_debugger','_p9_panic_capture'),('_halt_all_cpus','_p9_halt_capture')]:
+ line=next(x for x in syms.splitlines() if x.endswith(' '+name));addr=int(line.split()[0],16);cmd=['/opt/homebrew/opt/llvm/bin/llvm-objdump','-d','--start-address='+hex(addr),'--stop-address='+hex(addr+128),str(k)];p=subprocess.run(cmd,capture_output=True,text=True);(o/(name+'.asm')).write_text(p.stdout+p.stderr);assert p.returncode==0 and target in p.stdout,(name,p.stdout)
+actual=r/'.work/p4-unixnu/.cache/xnu-work/osfmk/kern/debug.c';s=actual.read_text();at=s.index('panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsigned int reason, void *ctx,\n    uint64_t panic_options_mask, void *panic_data_ptr, unsigned long panic_caller)\n{');part=s[at:s.index('panic_spin_forever(void)',at)];assert part.index('p9_panic_capture(panic_format_str')<part.index('iotrace_disable()') and part.index('p9_panic_capture(panic_format_str')<part.index('sync(NULL')
+(o/'result.json').write_text(json.dumps(dict(result='PASS',sha256=v['sha256'],actual_branch_instructions_verified=True,first_capture_precedes_sync_debugger_and_platform_callouts=True,persistent_data=True,no_hardware_claim=True),indent=2)+'\n');print('Actual linked panic/halt capture branches, first-fatal ordering and permanent DATA PASS')

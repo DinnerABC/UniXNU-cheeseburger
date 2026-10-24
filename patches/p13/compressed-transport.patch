@@ -1,0 +1,80 @@
+--- a/P5Integration/RamPayload/P4RamPayload.c
++++ b/P5Integration/RamPayload/P4RamPayload.c
+@@ -14,6 +14,7 @@
+ #include <Library/HobLib.h>
+ #include <Pi/PiHob.h>
+ #include "Range.h"
++#include "CompressedPayload.h"
+ #pragma pack(1)
+ typedef struct {CHAR8 Magic[8];UINT64 Size;UINT32 Count,Crc;} HEADER;
+ typedef struct {CHAR8 Name[64];UINT64 Offset,Size;UINT32 Crc,Flags;} ENTRY;
+@@ -107,7 +108,7 @@
+ }
+ STATIC EFI_STATUS EFIAPI OpenVolume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This,EFI_FILE_PROTOCOL **Root){return NewFile(-1,L"\\",Root);}
+ EFI_STATUS EFIAPI P4RamPayloadEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *System){
+- UINT64 Start,End;HEADER *H;UINT32 Crc,I,J;EFI_STATUS Status;EFI_HANDLE Handle=NULL;BOOLEAN Reserved=FALSE;
++ UINT64 Start,End,PayloadSize;VOID *Payload;HEADER *H;UINT32 Crc,I,J;EFI_STATUS Status;EFI_HANDLE Handle=NULL;BOOLEAN Reserved=FALSE;
+  EFI_PEI_HOB_POINTERS Hob;UINT64 HB,HL;
+  if(!P4InitrdRange(GetFdt(),&Start,&End))return EFI_NOT_FOUND;
+  /* Require the matching PEI allocation HOB before touching the candidate payload. */
+@@ -118,9 +119,10 @@
+   }Hob.Raw=GET_NEXT_HOB(Hob);
+  }
+  if(!Reserved)return EFI_ACCESS_DENIED;
+- H=(HEADER*)(UINTN)Start;
+- if(End-Start<sizeof(*H)||CompareMem(H->Magic,"P4BNDL01",8)!=0)return EFI_NOT_FOUND;
+- if(H->Count==0||H->Count>LIMIT||H->Size!=End-Start||sizeof(*H)+H->Count*sizeof(ENTRY)>H->Size)return EFI_COMPROMISED_DATA;
++ Status=P13Expand(Start,End,&Payload,&PayloadSize);if(EFI_ERROR(Status))return Status;
++ H=Payload;
++ if(PayloadSize<sizeof(*H)||CompareMem(H->Magic,"P4BNDL01",8)!=0)return EFI_NOT_FOUND;
++ if(H->Count==0||H->Count>LIMIT||H->Size!=PayloadSize||sizeof(*H)+H->Count*sizeof(ENTRY)>H->Size)return EFI_COMPROMISED_DATA;
+  mData=(UINT8*)H;mSize=H->Size;mCount=H->Count;mEntries=(ENTRY*)(H+1);
+  Status=gBS->CalculateCrc32(mEntries,mCount*sizeof(ENTRY),&Crc);if(EFI_ERROR(Status)||Crc!=H->Crc)return EFI_CRC_ERROR;
+  for(I=0;I<mCount;I++){
+--- a/P5Integration/RamPayload/P4RamPayload.inf
++++ b/P5Integration/RamPayload/P4RamPayload.inf
+@@ -8,8 +8,11 @@
+ [Sources]
+   P4RamPayload.c
+   Range.h
++  CompressedPayload.h
+ [Packages]
+   MdePkg/MdePkg.dec
++  MdeModulePkg/MdeModulePkg.dec
++  CryptoPkg/CryptoPkg.dec
+   Platforms/Msm8998FamilyPkg/Msm8998FamilyPkg.dec
+   SimpleInit.dec
+ [LibraryClasses]
+@@ -19,6 +22,7 @@
+   MemoryAllocationLib
+   BaseMemoryLib
+   BaseLib
++  BaseCryptLib
+   DevicePathLib
+   HobLib
+   SimpleInitLib
+--- a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.dsc
++++ b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.dsc
+@@ -31,7 +31,10 @@
+   P4Integration/AutoReturn/P4AutoReturn.inf
+ 
+ [Components]
+-  P5Integration/RamPayload/P4RamPayload.inf
++  P5Integration/RamPayload/P4RamPayload.inf {
++    <LibraryClasses>
++      NULL|MdeModulePkg/Library/LzmaCustomDecompressLib/LzmaCustomDecompressLib.inf
++  }
+ 
+ [LibraryClasses]
+   RngLib|MdePkg/Library/BaseRngLibNull/BaseRngLibNull.inf
+--- a/Platforms/Msm8998FamilyPkg/MemoryInitPei/MemoryInitPeiLib.c
++++ b/Platforms/Msm8998FamilyPkg/MemoryInitPei/MemoryInitPeiLib.c
+@@ -173,7 +173,7 @@
+     UINT64 Begin, End, PageBegin, PageEnd; BOOLEAN Valid=FALSE, Conflict=FALSE;
+     PARM_MEMORY_REGION_DESCRIPTOR_EX D;
+     if (P4InitrdRange(Fdt,&Begin,&End) && End-Begin>=sizeof("P4BNDL01")-1 &&
+-        CompareMem((VOID*)(UINTN)Begin,"P4BNDL01",8)==0) {
++        (CompareMem((VOID*)(UINTN)Begin,"P4BNDL01",8)==0 || CompareMem((VOID*)(UINTN)Begin,"P13LZ001",8)==0)) {
+       PageBegin=Begin & ~((UINT64)4095); PageEnd=(End+4095) & ~((UINT64)4095);
+       for(D=GetPlatformMemoryMap(); D->Length; D++) {
+         if((D->HobOption==Mem4G || D->HobOption==Mem6G || D->HobOption==Mem8G) && D->HobOption!=Mem)continue;

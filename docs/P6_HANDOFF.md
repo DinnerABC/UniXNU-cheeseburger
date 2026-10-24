@@ -11,9 +11,9 @@
 - SHA256 `af72619bc49b1dd7b7942259779ae225639a8dd1facd0fe91b7d3369e941c0c3`
 - Fastboot 接受，观察 240 秒后无 USB/ADB/Fastboot；控制器退出 2，结果 `NO_TRANSPORT_MANUAL_RECOVERY`。
 - `out/p6/device-loop/20261022T020508Z-20037c90/summary.json`、`events.jsonl`、private 原始命令日志已保存。
-- **已向用户请求本轮屏幕照片/色条描述，尚待回复。不要重复提问或重发镜像。** 保留现场后需用户长按电源恢复 Android。
+- **用户照片已收到并归档 `evidence/p6/boot-v1-s05.jpg`，确认 S00/S01/S03/S05。** 尚未确认本轮设备已恢复 Android，不得重发旧镜像。
 
-没有 P6 屏幕证据前，不能声称 S01/S03/S05 已执行。P5 已有人工观察级别的 __start 证据；本轮尚未证明 MMU/C 初始化。没有自动日志回收或自动恢复 EBS 后停机的能力。
+本轮照片证明已到 S05，超过 P5 的 __start；尚未证明 MMU/C 初始化。没有自动日志回收或自动恢复 EBS 后停机的能力。
 
 ## 已完成的真实开发
 
@@ -38,7 +38,7 @@
 
 ## 后续按证据迭代
 
-先收到本轮照片/描述，更新 `out/p6/stages.json` 并把证据存入 `evidence/p6/`，记录对应镜像 SHA，不能仅凭超时推断卡点。
+本轮照片和对应镜像 SHA 已写入 `out/p6/stages.json` / `evidence/p6/boot-v1-s05.json`。优先按 S05 分支推进；设备需先人工恢复 Android。不能把 S05 认作精确故障 PC。
 
 - 只见S00：优先看 OSLAR / BootArgs / Low VBAR 阶段，使用红条数字；没有红条也不能排除向量未执行。
 - 到S01但没有S03：定位栈地址准备、页表清空/边界检查及构造。

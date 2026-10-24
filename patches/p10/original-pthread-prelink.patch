@@ -1,0 +1,25 @@
+--- a/scripts/p10-official-prelink.py
++++ b/scripts/p10-official-prelink.py
+@@ -14,7 +14,7 @@
+ native_begin=min(x['va'] for x in nm['segments'] if x['size'])
+ slide=min(0,((native_begin-old_end-4096)//4096)*4096)
+ out=r/'out/p10'/os.environ.get('P10_PRELINK_VARIANT','prelink-v1');out.mkdir(exist_ok=True)
+-spec=dict(tool='.work/p4-unixnu/kits/NativePrelink/emit_prelink.py',kernel=str(native.relative_to(r)),kernelcache=str(cache.relative_to(r)),kernelcache_sha256=source['kernelcache_sha256'],slide=hex(slide),roots=['com.apple.security.AppleImage4','com.apple.driver.AppleMobileFileIntegrity','com.apple.kext.CoreTrust'],early_security_init=source['early_security_init'])
++spec=dict(tool='.work/p4-unixnu/kits/NativePrelink/emit_prelink.py',kernel=str(native.relative_to(r)),kernelcache=str(cache.relative_to(r)),kernelcache_sha256=source['kernelcache_sha256'],slide=hex(slide),roots=['com.apple.security.AppleImage4','com.apple.driver.AppleMobileFileIntegrity','com.apple.kext.CoreTrust','com.apple.kec.pthread'],early_security_init=source['early_security_init'])
+ assert spec['early_security_init'].startswith('com.apple.driver.AppleMobileFileIntegrity=')
+ (out/'spec.json').write_text(json.dumps(dict(spec=spec,layout_source='Actual native and donor Mach-O coalesced segment boundaries',initializer_source='Pinned upstream declaration, accepted only after exact donor hash equality',original_coalesced_end=hex(old_end),native_first_segment=hex(native_begin)),indent=2)+'\n')
+ class Context:
+--- a/scripts/p10-qualify-prelink.py
++++ b/scripts/p10-qualify-prelink.py
+@@ -1,9 +1,9 @@
+ #!/usr/bin/env python3
+ """Validate official output and selected ABI evidence before RAM payload packing."""
+ from pathlib import Path
+-import hashlib,json,struct,subprocess,sys
++import hashlib,json,struct,subprocess,sys,os
+ r=Path(__file__).resolve().parents[1];sys.path.insert(0,str(r/'.work/p4-unixnu/kits/NativePrelink'));import native_prelink as np
+-p=r/'out/p10/prelink-v3/kernel/kernel.macho';b=p.read_bytes();plan=json.loads(p.with_suffix('.json').read_text());m=np.macho(b);assert hashlib.sha256(b).hexdigest()==plan['candidate_sha256'];assert plan['original_sha256']=='f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7'
++p=r/'out/p10'/os.environ.get('P10_PRELINK_VARIANT','prelink-v4')/'kernel/kernel.macho';b=p.read_bytes();plan=json.loads(p.with_suffix('.json').read_text());m=np.macho(b);assert hashlib.sha256(b).hexdigest()==plan['candidate_sha256'];assert plan['original_sha256']=='f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7'
+ def read(a,n):return b[np.backed_offset(m['segments'],a,n,len(b)):][:n]
+ for binding in plan['bindings']:assert struct.unpack('<Q',read(binding['new_site'],8))[0]==binding['new_target']
+ info=next(x for x in m['segments'] if x['name']=='__PRELINK_INFO');entries=np.unserialize_xml(read(info['va'],info['filesize']))['_PrelinkInfoDictionary'];by_name={x['CFBundleIdentifier']:x for x in entries};assert len(by_name)==len(entries)

@@ -1,0 +1,14 @@
+{
+  "source": "User transcribed/recognized phone display in this chat",
+  "recorded_utc": "2026-10-22T13:03:19.275831+00:00",
+  "run_id": "20261022T123820Z-b6fabca3",
+  "boot_image_sha256": "7e07986fed99e6b4ed1283a97df693cb84e38bb055beaf6058571e7566a8b509",
+  "electronic_kernel_log": false,
+  "first_panic_body_visible": false,
+  "raw_caller": "0xfffffff007ala5b0",
+  "normalized_candidate": "0xfffffff007a1a5b0",
+  "normalization": "OCR l to hexadecimal 1 only; callsite verification is conditional on this interpretation",
+  "last_bootstrap": "trust_cache_init",
+  "frame_chain_visible": false,
+  "exception_context_validated": false
+}

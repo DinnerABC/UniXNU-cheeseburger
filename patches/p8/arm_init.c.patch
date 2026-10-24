@@ -1,0 +1,35 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -343,7 +343,7 @@
+ 
+ /* P7-v2: pre-arm_vm_init only. Uses the already validated device mapping.
+  * No helper calls; no change to assertions or platform initialization. */
+-#if defined(ARM64_BOARD_CONFIG_MSM8998)
++#if 0 /* P8 uses the functional text console */
+ #define P7_C_POINT(stage, row, color) do { \
+     __asm__ volatile( \
+         "adrp x12, _p6_diag_record@PAGE\n" \
+@@ -385,23 +385,6 @@
+ 
+ #if defined(ARM64_BOARD_CONFIG_MSM8998)
+ 	__asm__ volatile(
+-	    "adrp x12, _p6_diag_record@PAGE\n"
+-	    "add x12, x12, _p6_diag_record@PAGEOFF\n"
+-	    "ldr x9, [x12, #128]\n"
+-	    "cbz x9, 99f\n"
+-	    "mov x10, #9\n"
+-	    "str x10, [x12, #8]\n"
+-	    "ldr x10, [x12, #208]\n"
+-	    "mov x11, #184\n"
+-	    "madd x9, x10, x11, x9\n"
+-	    "lsl x10, x10, #3\n"
+-	    "mov w11, #0x80ff\n"
+-	    "movk w11, #0xffff, lsl #16\n"
+-	    "98: stp w11, w11, [x9], #8\n"
+-	    "subs x10, x10, #8\n"
+-	    "b.hi 98b\n"
+-	    "dsb sy\n"
+-	    "99:\n"
+ 	    "adrp x9, _ExceptionVectorsBase@PAGE\n"
+ 	    "add x9, x9, _ExceptionVectorsBase@PAGEOFF\n"
+ 	    "msr VBAR_EL1, x9\n"

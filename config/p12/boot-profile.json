@@ -1,0 +1,6 @@
+{
+  "image": "out/p12/uefi/boot-p12-reference.img",
+  "sha256": "26d57d0db06d0d2830a9757e7ec55f382c1b89349045965f5b4b2480005c5f1f",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

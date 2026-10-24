@@ -1,0 +1,6 @@
+{
+  "image": "out/p8/uefi/boot-p8-xnu.img",
+  "sha256": "a4458921798976dba7e57f220f78163b488a18cb9d5da5e615c36770986629d2",
+  "observe_seconds": 240,
+  "max_attempts": 1
+}

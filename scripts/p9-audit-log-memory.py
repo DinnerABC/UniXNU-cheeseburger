@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Read verified FDT and fixed Linux sources; authorize no physical-memory write."""
+from pathlib import Path
+import hashlib,json,runpy,struct
+r=Path(__file__).resolve().parents[1];p=r/'out/p3/private/recovery-device.dtb';b=p.read_bytes();assert hashlib.sha256(b).hexdigest()=='743b9d0fee2a7aedb9db32dc57ddfb8197378b78ea003d8c653f492b7e5a2448'
+tree=runpy.run_path(str(r/'scripts/p3-dtb-inspect.py'))['parse'](b);props=tree['/reserved-memory/ramoops'];base,size=struct.unpack('>QQ',props['reg']);assert base==0xac000000 and size==0x200000 and 'no-map' in props
+linux=r/'upstream/linux-msm8998';src=(linux/'fs/pstore/ram.c').read_text();header=(linux/'include/linux/pstore_ram.h').read_text()
+assert 'memory-region' in src and 'pdata->console_size = ramoops_console_size;' in src and 'struct persistent_ram_buffer {' in header
+result=dict(result='RESERVATION_VERIFIED_WRITER_NOT_ENABLED',fdt_sha256=hashlib.sha256(b).hexdigest(),node='/reserved-memory/ramoops',base=hex(base),bytes=size,no_map=True,compatible=props['compatible'].rstrip(b'\0').decode().split('\0'),fdt_record_size=struct.unpack('>I',props['record-size'])[0],fdt_console_size=struct.unpack('>I',props['console-size'])[0],fixed_linux_commit=json.loads((linux/'source.json').read_text())['commit'],layout_not_qualified_reasons=['Actual Recovery FDT declares sizes on the reserved node; fetched historical vendor driver expects memory-region phandle and uses module defaults. Its ABI is not proven to match the running Android/Recovery kernel.','Actual UEFI/XNU runtime ownership/exclusion of the reservation has not been verified.','Retention across long-press power recovery and subsequent bootloader/Android initialization has not been tested.','Current v1 P9 stores fatal only in ordinary kernel DATA, not this reservation.'],physical_memory_written=False,partition_written=False,current_hung_kernel_readable_via_adb=False)
+o=r/'out/p9/log-transports';(o/'reserved-memory-audit.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))

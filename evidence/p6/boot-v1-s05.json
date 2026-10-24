@@ -1,0 +1,21 @@
+{
+  "recorded_utc": "2026-10-22T08:38:37.889397+00:00",
+  "photo": "evidence/p6/boot-v1-s05.jpg",
+  "sha256": "040cce50f8626abe96c6830f74d392ff420a9fcb6daaa02e7704d81bfd424faa",
+  "run_id": "20261022T020508Z-20037c90",
+  "image_sha256": "af72619bc49b1dd7b7942259779ae225639a8dd1facd0fe91b7d3369e941c0c3",
+  "observed_colors_top_to_bottom": [
+    "magenta S00",
+    "yellow S01",
+    "cyan S03",
+    "white S05",
+    "remaining loader green"
+  ],
+  "last_confirmed": "S05",
+  "scope": "MMU write/readback, first C and later initialization remain unproven",
+  "ocr_corrections": {
+    "video_width": "1080, not OCR 1088",
+    "owned_window": "0x20000000, not OCR 0x20000009"
+  },
+  "recovery": "Not yet confirmed after this photo"
+}

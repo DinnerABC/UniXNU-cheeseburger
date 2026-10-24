@@ -1,0 +1,3 @@
+User explicitly confirmed: 八条新增色带都出现了.
+Stages17..24 correspond to the source and image in stages-v3.json.
+User later reported: 已恢复安卓, and requested this phase conclude without more tests.

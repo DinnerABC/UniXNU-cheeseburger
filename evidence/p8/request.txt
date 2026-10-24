@@ -1,0 +1,367 @@
+# UniXNU-cheeseburger P8：跨阶段集成 IOKit、MSM8998 UFS 与 iOS 根卷
+
+## 0. 总目标
+
+项目：
+
+`/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger/`
+
+设备：OnePlus 5 / cheeseburger / Qualcomm MSM8998。
+
+P7 已实机确认：
+
+- XNU MMU 开启成功；
+- 高地址内核代码运行；
+- 内核栈可用；
+- `arm_init()` 执行；
+- CPU topology 和 `cpu_bootstrap()`；
+- VM 初始化返回；
+- Platform Expert 前后阶段返回。
+
+手机当前已恢复 Android，Linux VM 已停止，未刷写分区。
+
+**本轮全面转向功能移植和系统集成。不再进行 S00–Sxx 式逐点实机验证，不再重复早期 MMU、CPU、VM 调试。**
+
+核心目标：完成从 kernel bootstrap 到 IOKit、MSM8998 UFS 块设备、APFS 根卷和 iOS 用户空间启动所需的尽可能完整的软件实现，形成一个可实际启动测试的 P8 集成候选。
+
+允许长时间持续工作，以实际源码修改、构建和集成为主。
+
+## 一、调整工作方式
+
+本轮执行以下新规则：
+
+1. 不再每完成一个模块就启动手机验证。
+2. 不再为已经通过的 MMU、CPU、VM 阶段添加新的探针。
+3. 不再生成大量独立的阶段性审计报告。
+4. 优先完成多个相互依赖模块的代码实现。
+5. 每个模块完成必要的编译、链接和离线接口检查即可进入下一个模块。
+6. 待关键模块集成完成后，再执行一次端到端实机测试。
+7. 若出现真实阻塞，再有针对性地恢复诊断。
+8. 不要把未实机验证的功能描述成已经运行成功。
+
+允许连续推进多个开发阶段，不因完成单一模块而停止。
+
+保留 P1–P7 的全部历史成果。
+
+## 二、任务 A：推进 Kernel Bootstrap、IOKit 和 BSD 启动链
+
+首先根据当前固定版本 XNU，检查：
+
+- `osfmk/kern/startup.c`
+- `kernel_bootstrap()`
+- `kernel_bootstrap_thread()`
+- 内核线程创建；
+- 调度器；
+- IPC；
+- IOKit 初始化；
+- IORegistry；
+- BSD 初始化；
+- 根设备选择；
+- 初始用户进程创建。
+
+重点不是再次插入探针，而是提前补齐这些组件在非 Apple MSM8998 平台上运行所需的依赖。
+
+检查并处理：
+
+1. Apple 平台专有初始化依赖；
+2. 设备平台信息；
+3. CPU、定时器与调度器接口；
+4. Platform Expert 注册；
+5. IOKit Provider；
+6. KernelConfigTables；
+7. 驱动匹配；
+8. 启动所需的内核服务；
+9. BSD 根设备和 VFS 启动路径。
+
+尽可能复用官方通用实现。
+
+避免通过简单禁用核心初始化模块或绕过关键检查来获得表面成功。
+
+目标是让完整内核启动路径具备运行条件。
+
+## 三、任务 B：直接移植 MSM8998 UFS 驱动
+
+这是本轮最重要的设备适配任务。
+
+参考：
+
+- `https://github.com/UniXNU/NativeUfs`
+- `https://github.com/UniXNU/UniXNU-sheng`
+- 一加 5 对应的 Linux 内核源码与设备树；
+- MSM8998 UFS 控制器实现；
+- P3 已备份的真实分区表与硬件信息。
+
+重点移植：
+
+### B1. UFS 控制器
+
+- 控制器 MMIO 地址；
+- Qualcomm UFS Host Controller；
+- 时钟、PHY 与复位依赖；
+- 电源域；
+- 中断与 GIC；
+- UniPro / UIC 初始化；
+- 链路就绪；
+- LUN 枚举。
+
+所有地址和硬件配置必须来自真实资料或已有设备证据。
+
+不得直接复用 SM8550 专用硬件参数。
+
+### B2. DMA 与 SMMU
+
+- MSM8998 SMMU；
+- DMA 映射；
+- Descriptor；
+- Queue；
+- Cache 同步；
+- 内存屏障；
+- DMA 可访问内存。
+
+不能假设 sheng 的 SMMU 和 DMA 初始化适用于 MSM8998。
+
+### B3. 块设备
+
+复用 NativeUfs 的可移植部分：
+
+- 命令提交与完成；
+- UFS READ；
+- 块读取；
+- LUN；
+- 容量与块大小；
+- IOMedia 发布；
+- GPT 分区发现。
+
+优先实现真正的**只读存储访问**。
+
+在恢复条件和数据安全未满足之前，不允许执行会修改手机存储的 UFS 写入。
+
+### B4. IOKit 集成
+
+完成：
+
+- NativeUfs 设备匹配；
+- Provider；
+- Driver Personality；
+- KernelConfigTables；
+- IORegistry；
+- IOMedia 发布；
+- 根设备匹配路径。
+
+目标是让 XNU 能够通过标准存储驱动路径找到设备，而不是仅用特殊调试代码直接访问 UFS 寄存器。
+
+## 四、任务 C：提前准备 APFS 和 iOS 系统镜像
+
+不要等 UFS 实机成功之后才开始准备系统镜像。
+
+可以与任务 B 并行开发。
+
+### C1. 明确目标 iOS 版本
+
+用户目标是运行 iPhone iOS。
+
+先核对当前固定 XNU 版本、Darwin 版本、原始 kernelcache、预链接组件和 Trust Cache 的匹配关系。
+
+选择具备真实来源和可复现构建条件的目标 IPSW。
+
+不得为追求 iPhone 产品标识而未经验证地混用不同 Darwin 版本、KernelCache、DeviceTree 和 Trust Cache。
+
+如果当前构建链仍依赖 sheng 的 iPadOS 17 配套组件，应先确保现有启动链一致，再建立独立的 iPhone iOS 用户空间配置，不要破坏 P7 已通过的内核基线。
+
+### C2. 系统卷
+
+准备：
+
+- OS 镜像；
+- SystemOS；
+- APFS；
+- Root UUID；
+- Trust Cache；
+- KernelCache 相关组件；
+- 所需系统库；
+- 根卷选择配置。
+
+复用 UniXNU 的 userdata 镜像构建和 SHNGROOT manifest 实现。
+
+根据 OnePlus 5 真实 userdata 分区几何参数修改设备配置。
+
+离线制作：
+
+`userdata-root.img`
+
+并生成对应 JSON 报告。
+
+检查系统镜像、分区容量、窗口偏移及哈希。
+
+### C3. Data 卷
+
+研究并复用官方 Data ramdisk seed 机制。
+
+提前准备可用 Data 卷以及必需的初始化配置。
+
+不要直接复制 sheng 的设备唯一信息或 Data UUID。
+
+### C4. 根卷挂载
+
+提前完成：
+
+- IOMedia 根设备匹配；
+- APFS 驱动依赖；
+- 根卷 UUID；
+- SystemOS 关联；
+- 只读根卷；
+- Data 卷；
+- BSD/VFS 挂载参数。
+
+如果实际 UFS 硬件仍存在阻塞，可以建立最小的内存块设备实验路径，用于离线测试 APFS 和 IOKit 存储接口。
+
+但内存块设备测试不能替代真实 UFS 驱动，更不能认定完整 iOS 已可启动。
+
+## 五、任务 D：准备 iOS 用户空间启动条件
+
+在完成内核、IOKit 和根卷的主要代码集成后，进一步处理：
+
+- BSD 初始化；
+- VFS；
+- APFS；
+- AMFI 与代码签名依赖；
+- Trust Cache；
+- launchd；
+- 必需的 platform services；
+- IOSurface / 显示基础依赖；
+- 启动早期必须存在的系统服务。
+
+优先保障 launchd 所需的最小环境。
+
+本轮不优先适配：
+
+- GPU / Metal；
+- 摄像头；
+- 音频；
+- Wi-Fi；
+- 蓝牙；
+- 传感器；
+- 完整触控交互。
+
+如果能够进入 launchd，再逐步处理 SpringBoard 和图形服务。
+
+不允许将禁用代码签名、伪造服务成功或跳过必要的系统安全机制作为默认方案。
+
+## 六、任务 E：集中集成与本地构建
+
+在项目中建立一套 P8 集成配置。
+
+保持一个正式的 P8 候选，而不是生成大量分散版本。
+
+推荐保留：
+
+`out/p8/`
+
+构建流程：
+
+1. 增量编译 XNU；
+2. 编译新增平台组件；
+3. 编译 NativeUfs 及相关驱动；
+4. 更新 KernelConfigTables；
+5. 重新链接并预链接；
+6. 生成 ADT；
+7. 生成 payload；
+8. 集成现有 UEFI；
+9. 生成 boot.img；
+10. 构建独立 userdata-root.img；
+11. 验证产物完整性。
+
+复用 P7 内核基础与 P2/P3 的 UEFI。
+
+主机只有 16 GiB 内存，XNU 编译使用 `MAKEJOBS=-j2`，大型编译时关闭 Linux VM。
+
+不要重新克隆整个项目，也不要反复全量构建。
+
+允许使用必要的离线静态检查、单元测试和镜像回读校验，但不要重新建立大型逐点诊断体系。
+
+## 七、实机测试策略
+
+**本轮先开发、后测试。**
+
+在完成上述主要模块的代码集成之前，不主动重复进入 Fastboot 测试。
+
+待 P8 候选具备基本完整性后：
+
+1. 确认 Android 正常；
+2. 验证设备身份；
+3. 验证测试镜像；
+4. 自动进入 Fastboot；
+5. 使用 `fastboot boot` 临时启动；
+6. 观察 kernel bootstrap、IOKit、UFS、root 和 BSD 启动状态；
+7. 保存结果；
+8. 如发生停机，停止自动重试。
+
+不进行无意义的多轮颜色标记实验。
+
+如果集成测试失败，直接根据故障所在子系统修复相关代码。
+
+设备失联时不通过无限重启、危险 watchdog 修改或自动 EDL 刷写尝试恢复。
+
+用户可以清除普通用户数据，但本轮仍禁止未经独立确认的实际分区刷写。
+
+## 八、持续推进规则
+
+这是连续的开发任务。
+
+执行顺序：
+
+**Kernel Bootstrap → IOKit → MSM8998 UFS → IOMedia → APFS → 根卷 → BSD → launchd**
+
+这些阶段不需要人为拆成多轮对话。
+
+能连续完成的源码实现和离线构建应直接推进。
+
+如发现模块尚缺底层依赖，应优先补齐依赖，而不是继续包装当前成果或重复审计。
+
+只有遇到真正的技术阻塞、设备无法恢复或存在破坏性写入风险时，才停止相应工作路径。
+
+不要把尚未实机验证的阶段宣称完成。
+
+## 九、交付要求
+
+尽量减少报告数量。
+
+只需要：
+
+- `docs/P8_IMPLEMENTATION.md`
+- `docs/P8_BOOT_RESULT.md`
+- `docs/P8_HANDOFF.md`
+- `out/p8/`
+
+保留：
+
+- 真实源码修改；
+- 可复现编译脚本；
+- 驱动和补丁；
+- 最终 kernel.macho；
+- 最终 boot.img；
+- 离线 userdata-root.img（如果成功构建）；
+- 关键日志和哈希；
+- 实机测试结论。
+
+最终明确报告：
+
+1. Kernel Bootstrap、IOKit 和 BSD 路径完成了哪些实际代码集成；
+2. NativeUfs 是否已适配 MSM8998；
+3. UFS 哪些操作已编译、哪些已经实机验证；
+4. IOMedia / APFS 根卷是否具备启动配置；
+5. iOS 系统镜像是否已完整生成；
+6. P8 集成 boot.img 是否成功构建；
+7. 一次集成实机测试最深到达的阶段；
+8. 是否具备安全开展 userdata 持久化刷写的条件；
+9. 距离 launchd 和 SpringBoard 还有哪些明确阻塞。
+
+## 十、最终目标
+
+**本轮不再追求零散的启动标记，而是尽可能一次性完成 IOKit、UFS、根卷和 iOS 用户空间依赖的实质性开发。**
+
+最优结果：生成完整的 P8 启动候选，并在一次集中实机测试中运行到根设备识别、根文件系统挂载，争取进入 BSD 初始化和 launchd。
+
+如果无法达到最终目标，应最大化真实完成的代码和模块集成，而不是反复输出验证报告。
+
+优先实际编程、增量构建和组件集成。保持长期自主执行，减少人工干预。

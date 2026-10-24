@@ -1,0 +1,13 @@
+--- a/scripts/p10-build-adt.py
++++ b/scripts/p10-build-adt.py
+@@ -3,6 +3,9 @@
+ import hashlib,json,sys
+ r=Path(__file__).resolve().parents[1];sys.path.insert(0,str(r/'tools/adt'));from adt import decode,encode
+ b=(r/'out/p9/adt/kernel.macho.adt').read_bytes();t=decode(b);chosen=next(x for x in t['children'] if x['name']=='chosen');mm=next(x for x in chosen['children'] if x['name']=='memory-map');assert 'TrustCache' not in mm['properties'];mm['properties']['TrustCache']=bytes(16)
++assert 'crypto-hash-method' not in chosen['properties']
++# Required Image4 algorithm selector, not a digest or a forged manifest.
++chosen['properties']['crypto-hash-method']=b'sha2-384\0'
+ def pack(t):return encode(t['name'],t['properties'],[pack(x) for x in t['children']])
+ data=pack(t);assert decode(data)==t;o=r/'out/p10/adt';o.mkdir(exist_ok=True);(o/'kernel.macho.adt').write_bytes(data)
+-(o/'validation.json').write_text(json.dumps(dict(result='PASS',sha256=hashlib.sha256(data).hexdigest(),bytes=len(data),source_sha256=hashlib.sha256(b).hexdigest(),only_change='/chosen/memory-map/TrustCache zero address+length placeholder patched by DarwinBoot after allocation',hardware_identity_unchanged=True),indent=2)+'\n');print('ADT roundtrip PASS; only real trust-cache loader placeholder added')
++(o/'validation.json').write_text(json.dumps(dict(result='PASS',sha256=hashlib.sha256(data).hexdigest(),bytes=len(data),source_sha256=hashlib.sha256(b).hexdigest(),changes=['/chosen/memory-map/TrustCache loader placeholder','/chosen/crypto-hash-method=sha2-384 (NUL terminated)'],hash_method_source='Original AppleImage4 accepted-string comparison and fixed upstream make-dt.py option; matches selected SHA384 donor inputs',hardware_identity_unchanged=True),indent=2)+'\n');print('ADT roundtrip PASS; TrustCache loader placeholder and explicit Image4 sha2-384 selector')

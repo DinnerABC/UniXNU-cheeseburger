@@ -2,7 +2,13 @@
 
 面向 **OnePlus 5（一加 5，cheeseburger / Qualcomm MSM8998）** 的独立 UniXNU 设备移植仓库，最终系统目标为 **iPhone iOS**。
 
-截至 **2026-10-22**，已完成原生 UEFI 与集成固件构建、实机 EFI Shell / UniXNU 菜单验证、XNU ARM64 内核编译及临时启动实验。最深实机证据是 P5 中用户观察到真实 XNU `__start` 的入口色条；**尚未证实 MMU 启用、C 初始化、根卷挂载或 iOS 启动**。P6-v1 已试启动，但该轮屏幕证据尚待补充。
+截至 **2026-10-24（P18）**，最深已人工核准的实机成果为 **P17-R4：真实 APFS Data 可写挂载，tzinit 时区软链调用返回 0**。此前已确认 MMU / C / VM / PE、只读 UFS 根卷与 owner 授权、SystemOS 挂载、Owner Boot Manifest 发布读回，以及 PID1 真实 EL0 执行。P16 已越过 P15 的 mount exit(66)；P17-R4 已越过 P16 的 timezone EROFS。
+
+P17-R4 后续画面出现 IPC ports / zalloc 元数据检查 panic，完整归因仍有证据缺口。P18 已应用上游 PGZ 对齐校验最小修复，通过离线门禁并仅临时启动一次；**当前状态为 `TRANSPORT_ACCEPTED_SCREEN_PENDING`，尚不能宣称实机修复成功或达到更深阶段**。最新状态见 [P18 启动结果](docs/P18_BOOT_RESULT.md)、[IPC / PGZ 分析](docs/P18_IPC_ROOT_CAUSE.md)及[交接](docs/P18_HANDOFF.md)。
+
+当前实测用户空间仍来自 **iPad7,1 / iPadOS 17.7.11 / 21H461 参考系统**。可写 Data 为 RAM scratch，不代表生产加密 Data 或 Data Protection 成功。tzinit 退出完成、launchd `LC_MAIN` 首指令直接观察、Keybag / Sandbox / FIPS 整体成功与图形界面均未独立证实，最终 iPhone iOS 目标尚未完成。
+
+**设备状态变更：** P13 已在当轮明确授权下将参考根卷写入 userdata，原 Android 用户数据不再可用；没有有效的 userdata 回滚备份。该历史授权不扩展到后续刷写。详见 [P13 写入与回读记录](docs/P13_FLASH_RESULT.md)。本次仓库更新只添加文件、更新文档并推送，没有执行设备操作。
 
 ## 原仓库与来源
 
@@ -33,20 +39,25 @@
 | 板级配置与构建入口 | OnePlus 5 身份、defconfig、源码锁定、审计脚本已建立 | `board.toml` 保留 `example = true`；通用完整设备 build/bootimg 流程仍受门禁限制 | [P1 审计](docs/P1_BUILD_AUDIT.md) |
 | 原生 UEFI / boot image | 原版及 UniXNU 集成版真实构建；镜像回读、FV 内容校验通过；原版实机进入 EFI Shell | 后续诊断镜像按阶段独立构建，尚无完整系统启动镜像 | [P2 集成](docs/P2_UNIXNU_INTEGRATION.md)、[P3 实测](docs/P3_UEFI_BOOT_TEST.md) |
 | UniXNU UEFI 应用 / UniXNUDxe | 通用 EFI package、源编译 UniXNUDxe 已构建；实机确认 UniXNU 0.1.0 图形菜单执行 | UEFI 界面可见不代表 iOS 图形栈运行 | [P3 UniXNU](docs/P3_UNIXNU_BOOT_TEST.md) |
-| DarwinBoot 加载器 | P5 人工屏幕证据确认文件哈希、Mach-O 装载、ADT / BootArgs / 内存图准备与 EBS 后交接；主机解析器含损坏输入负例 | 尚未完成内核初始化；EBS 后加载器绿条与 XNU 入口标记分开判读 | [P5 启动报告](docs/P5_BOOT_REPORT.md) |
-| RAM payload / 只读文件系统 | RAM bundle、文件表 / CRC / 边界检查、镜像回读及主机文件回调测试通过；P5 屏幕证据确认读取内核 / ADT | 只用于 RAM 中的启动文件，不提供持久化存储或 iOS 根卷 | [P4 测试](docs/P4_BOOT_TESTS.md)、[P5 报告](docs/P5_BOOT_REPORT.md) |
-| XNU 内核 | 独立 MSM8998 ARM64 目标完成编译 / 链接；P5 入口色条获人工实机观察证据；P6 诊断内核已增量链接并打包 | 未确认 MMU、`arm_init` 或更深初始化；P6 需补屏幕证据定位 | [P4 构建](docs/P4_XNU_BUILD.md)、[P6 记录](docs/P6_EARLY_BOOT_REPORT.md) |
-| ADT / BootArgs / NVRAM proxy | 基于实际 FDT 与寄存器观察建立独立 ADT；真实 DarwinBoot 解析器宿主测试通过；P5 补充 8192 字节易失 CHRP proxy | proxy 为软件易失状态；尚未证明 XNU 平台初始化正确消费全部参数 | [P4 ADT](docs/P4_ADT_BRINGUP.md)、[P5 报告](docs/P5_BOOT_REPORT.md) |
-| ArmCpu / ArmDTPlatform / GIC / timer | 静态库已编译、链接，P5 补齐匹配项；定时器配置沿用实测 19.2 MHz / PPI19 | CPU 注册、中断、调度及多核均未实机验证 | [P6 平台状态](docs/P6_PLATFORM_PROGRESS.md) |
-| Crypto bootstrap / POST | corecrypto 及真实 STARTUP 回调已编译；内核保留 POST，并完成构建期 HMAC sealing | 尚无运行时 POST 执行或通过证据 | [P4 构建](docs/P4_XNU_BUILD.md)、[P6 平台状态](docs/P6_PLATFORM_PROGRESS.md) |
-| 早期异常与日志 | P6 加入 MMU 前检查点、无栈异常记录器；最终 ARM64 指令及页表构造的主机合成输入测试通过 | 未证明实机 MMU 开启；无真实 ESR / ELR / FAR 回传，异常覆盖不贯穿整个启动期，电子日志自动回收未实现 | [P6 MMU 诊断](docs/P6_MMU_DIAGNOSIS.md) |
-| 显示 / 输入 / GPU | UEFI GOP 与输入相关协议已有探针记录，屏幕菜单 / 色条可见 | XNU 显示驱动、GPU / Metal、触控和系统输入未验证 | [P3 实测](docs/P3_UNIXNU_BOOT_TEST.md) |
-| UFS / IOKit / APFS / 根卷 | UEFI Block I/O 协议已观察；设备备份与 GPT 核验已有本地记录 | XNU 根设备枚举、UFS 驱动、APFS 挂载及根卷均未验证 | [P6 根卷准备](docs/P6_IOS_ROOT_PREP.md) |
-| iPhone iOS / dyld / launchd | 目标类型已明确，保留输入身份与兼容性门禁 | 尚未选择 / 下载 IPSW；ABI、Trust Cache、根 UUID 未确定，未进入用户态 | [P6 根卷准备](docs/P6_IOS_ROOT_PREP.md) |
-| 设备测试自动化 | 主机命令、USB / ADB / Fastboot 状态与镜像门禁可记录；P4 有自动返回 Android 记录 | EBS 后失联无法自动恢复；P6-v1 观察超时后已停止，不能据此判定具体停机指令 | [P4 自动化](docs/P4_AUTOMATION.md)、[P6 续接](docs/P6_HANDOFF.md) |
-| GitHub Actions | 已提交 P1 macOS / P2 Linux 工作流，已有一次 P1 远程运行 | P1 在 Python 安装步骤失败；P2 尚无远程运行记录 | 见下方 CI 状态 |
+| DarwinBoot / RAM payload | 内核与 ADT 校验、Mach-O 装载、BootArgs、EBS 交接已有实机证据；P13–P15 使用经过固定解码器与回读测试的压缩载荷 | 不代表完整系统可用；当前候选仅用于受控启动实验 | [P5](docs/P5_BOOT_REPORT.md)、[P13](docs/P13_ROOT_BOOT_RESULT.md)、[P15](docs/P15_BOOT_RESULT.md) |
+| XNU / MMU / C / VM / PE | P7 人工观察确认 MMU、高地址、栈、`arm_init`、CPU topology、VM 与 PE 路径；后续已进入 BSD 及用户空间 | 多核、完整系统稳定性与服务初始化尚未验证 | [P7](docs/P7_REAL_BOOT_REPORT.md)、[P15](docs/P15_BOOT_RESULT.md) |
+| ADT / NVRAM proxy | 基于实采 FDT 与寄存器建立设备 ADT；后续修正 DRAM 描述并参与真实启动；易失 CHRP proxy 保留 | 不冒称 Apple NVRAM；P16 已真实发布并读回 Owner Boot Manifest，mount PID3 退出0，越过 P15 阻塞；该摘要使用明确 owner 域，不是 Apple 固件身份 | [P7 根因](docs/P7_MMU_ROOT_CAUSE.md)、[P16](docs/P16_BOOT_RESULT.md) |
+| ArmCpu / ArmDTPlatform / timer | 静态链接与匹配项已集成，采用实测 19.2 MHz / PPI19；后续启动已推进至用户空间 | 不据此推定全部中断、多核、调度或电源管理合格 | [P8 实现](docs/P8_IMPLEMENTATION.md)、[P15](docs/P15_BOOT_RESULT.md) |
+| Crypto / AMFI / PMGR 兼容 | 集成真实 crypto 启动回调、安全组件及 PMGR 兼容接口；P11 观察到 AMFI READ/OR/WRITE 调用并越过 No PMGR 阻塞 | PMGR 接口不代表 Qualcomm 电源控制或硬件安全锁存器实现；不声称取得认证加密资质 | [P10](docs/P10_SECURITY_INTEGRATION.md)、[P11](docs/P11_BOOT_RESULT.md) |
+| UFS / IOKit / 根窗口 | P11 发布 6 个只读 LUN，LUN0 四次 READ10 成功；P12 集成真实 RootLayout、NativeUfsBlock 与 VerifiedRoot，后续根设备身份已有实机证据 | 初步成功不代表全部 LUN、完整磁盘读取与长期稳定性验证通过 | [P11](docs/P11_BOOT_RESULT.md)、[P12](docs/P12_ROOT_INTEGRATION.md) |
+| APFS / 根卷 / owner 授权 | P13 部署参考 OS/SystemOS 根镜像并回读校验；P14/P15 只读根卷的设备号、UUID、签名策略与 owner 接受链有屏幕证据；P15 SystemOS 挂载 / 授权成功 | Apple 原始 EAUTH=80 保留，owner 接受不等于 Apple 原厂根封印认证成功 | [P13](docs/P13_FLASH_RESULT.md)、[P14](docs/P14_ROOT_AUTH.md)、[P15](docs/P15_BOOT_RESULT.md) |
+| 原始压缩文件 / 签名缓存 | P15 原始类型 3/4 处理器真实注册，越过 exec ENOTSUP45；实际块与页面校验、ready blobs 有屏幕计数 | 未独立记录全部 Sandbox handler / shared_region 返回值 | [P15 根因](docs/P15_EXEC_ROOT_CAUSE.md)、[实机结果](docs/P15_BOOT_RESULT.md) |
+| dyld / PID1 / mount / tzinit | P16 mount PID3 退出0；P17-R4 PID1 有3879次EL0调用，tzinit 时区软链 errno0 | tzinit 退出完成与 LC_MAIN 首指令直接证据仍缺；完整服务初始化未完成 | [P16](docs/P16_BOOT_RESULT.md)、[P17](docs/P17_BOOT_RESULT.md) |
+| 可写 Data / RAM scratch | P17-R4 Data stage4/status0/readonly0，RAM reads89/writes5/failures0；真实APFS挂载成功 | 不代表持久化加密Data、Data Protection或生产系统可用；P18尚待新屏幕证据 | [P17 实现](docs/P17_DATA_IMPLEMENTATION.md)、[实机结果](docs/P17_BOOT_RESULT.md) |
+| IPC / PGZ 校验 | P18 应用上游两行最小修复，完成实际机器码核验和10项提取源码host测试；临时启动一次 | 手机对象属于PGZ alias仍缺直接记录；未运行完整HVF回归，实机修复结果待确认 | [P18 分析](docs/P18_IPC_ROOT_CAUSE.md)、[结果](docs/P18_BOOT_RESULT.md) |
+| 显示 / 输入 / GPU | UEFI GOP、菜单与内核诊断屏幕已有证据 | iOS 图形界面、GPU / Metal、触控及完整系统输入未验证 | [P3](docs/P3_UNIXNU_BOOT_TEST.md)、[P15 续接](docs/P15_HANDOFF.md) |
+| iPhone iOS 目标 | 当前参考系统推进了启动链验证 | 实测仍为 iPad7,1 / 21H461；未完成最终 iPhone 用户空间集成；已集成实验用RAM Data，Keybag / Sandbox / FIPS无整体成功结论 | [P17](docs/P17_BOOT_RESULT.md)、[P18](docs/P18_HANDOFF.md) |
+| 诊断 / 自动化 | 主机命令与镜像门禁、屏幕首 fatal、符号核对及 EL0 观察逐阶段建立 | 屏幕证据与主机传输状态分开记录；未实现通用电子日志回收或失联自动恢复，不自动重试实机镜像 | [P9](docs/P9_ROOT_CAUSE.md)、[P15](docs/P15_HANDOFF.md) |
+| GitHub Actions | P1 / P2 均仅保留手动入口 | push / PR 不自动运行；仅在明确要求时手动触发 | 见下方 CI 状态 |
 
-当前优先顺序：补充 P6 屏幕 / 异常证据 → 定位 MMU 切换与 C 入口 → 验证 CPU / VM / Platform Expert → 验证存储及根卷 → 推进 iOS 用户态。`drivers/`、`kits/`、`package/`、`firmware/` 中的早期 TODO 是 P1 骨架记录；后续阶段实现主要位于 `config/`、`patches/`、`scripts/` 和 `tools/`，以本表及对应阶段报告为准。
+当前优先顺序：取得 P18 屏幕与执行证据 → 核对 P17 已确认的 owner / SystemOS / Manifest / 可写 Data / tzinit 节点是否保持 → 判断 IPC / PGZ 旧 panic 是否消失或记录新的首 fatal → 按真实阻塞继续定位。不能用 Fastboot 接受镜像代替执行成功，不重发已测镜像，也不绕过 PGZ 或其他安全检查。
+
+`drivers/`、`kits/`、`package/`、`firmware/` 中部分早期 TODO 属于 P1 历史记录。公开阶段实现主要位于 `config/p7`–`p14`、`drivers/`、`patches/`、`scripts/` 和 `tools/`。P15–P18 的源码副本、脚本及完整证据 / 产物目前位于 Git 忽略的 `out/p15/`–`out/p18/`，本次提交其阶段报告，尚不是 P18 完整公开复现包。独立上游 Git 检出及设备备份不随本次提交。
 
 ## 文件位置
 
@@ -97,7 +108,7 @@ bash scripts/build-package.sh --upstream ../upstream/UniXNU --edk2 ../upstream/M
 - [MSM8998_UEFI_GAP.md](docs/MSM8998_UEFI_GAP.md)：协议差距及复用现有 UEFI 的集成路径。
 - [PORTING_ROADMAP.md](docs/PORTING_ROADMAP.md)：分阶段验收与下一步最小目标。
 
-本工程没有执行刷写、分区修改或用户数据删除，也未生成使用未确认设备参数的刷写命令。
+P1–P12 未执行设备分区写入；P13 在当轮明确授权后写入 userdata 并完成已部署镜像范围的回读校验。原 Android 用户数据已不可用，且没有有效 userdata 回滚副本；boot、GPT 等其他分区未写入。P14–P18 采用临时启动。阶段授权与执行范围见对应报告，不将历史授权当作后续设备操作许可。
 
 ## P2 已完成（2026-10-22）
 
@@ -123,10 +134,40 @@ bash scripts/build-package.sh --upstream ../upstream/UniXNU --edk2 ../upstream/M
 
 ## P6 本地早期启动定位
 
-最终系统目标已更正为 **iPhone iOS**。P6 新诊断内核与独立 UEFI 已真实编译并临时启动一次；观察超时后控制器停止，当前尚待本轮屏幕证据，不能确认 MMU 或 C 初始化。未写入设备分区。
+最终系统目标已更正为 **iPhone iOS**。P6 新诊断内核与独立 UEFI 已真实编译并临时启动一次；观察超时后控制器停止；随后照片确认已执行到 S05（BootArgs 检查、页表构造完成，MMU 写入前），尚不能确认 MMU 或 C 初始化。未写入设备分区。
 
 - [P6 精确续接](docs/P6_HANDOFF.md)
 - [P6 真实执行记录](docs/P6_EARLY_BOOT_REPORT.md)
 - [MMU 与诊断覆盖](docs/P6_MMU_DIAGNOSIS.md)
 - [平台初始化状态](docs/P6_PLATFORM_PROGRESS.md)
 - [iPhone iOS 根卷准备](docs/P6_IOS_ROOT_PREP.md)
+
+## P7 实机突破与收尾（2026-10-22）
+
+三轮仅临时启动，用户逐轮确认诊断标记：MMU开启、高地址代码、栈、arm_init、CPU topology、cpu_bootstrap、VM初始化返回和PE(FALSE/TRUE)返回均已验证。证据为人工观察，尚未证明IOKit、UFS根设备或iOS启动。手机已恢复Android，VM停止；按用户要求结束本轮。
+
+- [P7 实机结果](docs/P7_REAL_BOOT_REPORT.md)
+- [MMU与具体缺项分析](docs/P7_MMU_ROOT_CAUSE.md)
+- [下一轮精确续接](docs/P7_HANDOFF.md)
+- [iPhone iOS就绪状态](docs/P7_IOS_READINESS.md)
+
+最终产物在out/p7，三份成功版本完整保存在out/p7/milestones。下一轮集中kernel bootstrap、IOKit和UFS，不重复MMU定位。
+
+
+## P8–P18 阶段索引（2026-10-22 至 2026-10-24）
+
+以下为历史推进顺序，早期阶段的限制不代表当前状态；各轮失败、证据边界及本地产物位置保留在原报告。
+
+| 阶段 | 工作与结果 | 文档 |
+| --- | --- | --- |
+| P8 | IOKit / 存储组件与平台集成，出现设备树处理日志及重启阻塞 | [实现](docs/P8_IMPLEMENTATION.md)、[结果](docs/P8_BOOT_RESULT.md)、[续接](docs/P8_HANDOFF.md) |
+| P9 | 首 fatal 与日志诊断，定位后续安全初始化问题 | [根因](docs/P9_ROOT_CAUSE.md)、[结果](docs/P9_BOOT_RESULT.md)、[续接](docs/P9_HANDOFF.md) |
+| P10 | 原始安全组件与 PMGR 依赖集成 / 审计 | [安全集成](docs/P10_SECURITY_INTEGRATION.md)、[结果](docs/P10_BOOT_RESULT.md)、[续接](docs/P10_HANDOFF.md) |
+| P11 | 越过 No PMGR，6 个只读 UFS LUN 与初步 READ10 成功，尚停于根设备匹配 | [实现](docs/P11_IMPLEMENTATION.md)、[结果](docs/P11_BOOT_RESULT.md)、[续接](docs/P11_HANDOFF.md) |
+| P12 | 离线参考根卷、签名策略、UFS 窗口与 APFS 组件集成 | [根卷](docs/P12_ROOT_INTEGRATION.md)、[就绪状态](docs/P12_INSTALL_READINESS.md)、[续接](docs/P12_HANDOFF.md) |
+| P13 | 经授权写 userdata，回读一致；压缩临时启动推进到根认证阻塞 | [写入](docs/P13_FLASH_RESULT.md)、[根启动](docs/P13_ROOT_BOOT_RESULT.md)、[续接](docs/P13_HANDOFF.md) |
+| P14 | owner 根授权实机通过，原始 Apple 错误保留；首进程 exec ENOTSUP45 | [根授权](docs/P14_ROOT_AUTH.md)、[结果](docs/P14_BOOT_RESULT.md)、[续接](docs/P14_HANDOFF.md) |
+| P15 | 原始类型3/4处理器注册、SystemOS 挂载、PID1 EL0 执行；新阻塞为 mount exit(66) | [exec 根因](docs/P15_EXEC_ROOT_CAUSE.md)、[结果](docs/P15_BOOT_RESULT.md)、[续接](docs/P15_HANDOFF.md) |
+| P16 | Owner Boot Manifest 实机发布读回，mount退出0；新阻塞为tzinit在只读路径symlink返回EROFS | [用户空间](docs/P16_USERLAND_BOOT.md)、[结果](docs/P16_BOOT_RESULT.md)、[续接](docs/P16_HANDOFF.md) |
+| P17 | R4真实可写APFS Data、RAM写入与tzinit symlink返回0；后续IPC ports / zalloc检查panic待定位 | [Data实现](docs/P17_DATA_IMPLEMENTATION.md)、[结果](docs/P17_BOOT_RESULT.md)、[续接](docs/P17_HANDOFF.md) |
+| P18 | 上游PGZ最小修复、离线门禁通过；一次临时启动已被Fastboot接受，实机屏幕证据待补 | [IPC根因](docs/P18_IPC_ROOT_CAUSE.md)、[结果](docs/P18_BOOT_RESULT.md)、[续接](docs/P18_HANDOFF.md) |
