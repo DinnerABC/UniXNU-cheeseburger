@@ -1,0 +1,66 @@
+--- a/ArmCpu.cpp
++++ b/ArmCpu.cpp
+@@ -87,7 +87,8 @@
+ OSDefineMetaClassAndStructors (ArmCpu, IOCPU)
+ 
+ // Redistributor ISENABLER0: SGIs 0..15 (only SGI 0 is used by the kernel; the others let the self-SGI probe tell which INTIDs the GIC accepts) and PPI 27.
+-static const uint32_t kSgiPpiEnable = 0xffffU | (1U << 27);
++static uint32_t gTimerPpi = 0;
++static uint32_t timerEnableMask (void) { return 0xffffU | (1U << gTimerPpi); }
+ 
+ static const uint32_t kIpiSpiBase = 1008;   // INTIDs 1008..1015 stand for 'IPI to logical core 0..7'
+ 
+@@ -195,6 +196,17 @@
+ 
+ bool ArmCpu::mapGic (void)
+ {
++  // P4: use the real DT virtual timer INTID; do not inherit sheng/QEMU PPI27.
++  IORegistryEntry *timer = IORegistryEntry::fromPath ("/arm-io/timer", gIODTPlane);
++  if (timer == nullptr) { return false; }
++  OSData *irq = OSDynamicCast (OSData, timer->getProperty ("p8,timer-intid"));
++  uint32_t intid = 0;
++  bool timerValid = irq != nullptr && irq->getLength () == sizeof (intid);
++  if (timerValid) { memcpy (&intid, irq->getBytesNoCopy (), sizeof (intid)); }
++  timer->release ();
++  if (!timerValid || intid < 16 || intid >= 32) { return false; }
++  gTimerPpi = intid;
++
+   IORegistryEntry *soc = IORegistryEntry::fromPath ("/arm-io", gIODTPlane);
+   IORegistryEntry *gic = IORegistryEntry::fromPath ("/arm-io/intc", gIODTPlane);
+   if ((soc == nullptr) || (gic == nullptr)) {
+@@ -207,7 +219,7 @@
+   OSData *compatible = OSDynamicCast (OSData, gic->getProperty ("compatible"));
+   uint64_t bus[3];
+   uint64_t regions[4];
+-  bool valid = (ranges != nullptr) && (ranges->getLength () == sizeof (bus)) &&
++  bool valid = (ranges != nullptr) && (ranges->getLength () >= sizeof (bus)) && (ranges->getLength () % sizeof (bus) == 0) &&
+                (reg != nullptr) && (reg->getLength () == sizeof (regions)) &&
+                (compatible != nullptr) && (compatible->getLength () == 11) &&
+                (memcmp (compatible->getBytesNoCopy (), "arm,gic-v3", 11) == 0);
+@@ -304,7 +316,7 @@
+   for (unsigned offset = 0x400; offset < 0x420; offset += 4) {
+     write32 (sgi, offset, 0x80808080);
+   }
+-  if (!local) { write32 (sgi, 0x100, kSgiPpiEnable); }
++  if (!local) { write32 (sgi, 0x100, timerEnableMask ()); }
+   __asm__ volatile ("dsb sy" ::: "memory");
+   return waitClear (redist, 0, 8);
+ }
+@@ -333,7 +345,7 @@
+   __asm__ volatile ("msr icc_bpr1_el1, %0" :: "r" (value) : "memory");
+   if (!secondary) { gBootAffinity = affinity & 0xff00ffffffULL; }
+   if (!secondary || !gRemoteGic) {
+-    write32 (redist + 0x10000, 0x100, kSgiPpiEnable);
++    write32 (redist + 0x10000, 0x100, timerEnableMask ());
+     write32 (dist, 0, read32 (dist, 0) | 0x12U);
+   }
+   value = 1;
+@@ -565,7 +577,7 @@
+     armcpu_irq_id=static_cast<uint32_t>(id & 0xffffff);
+     if ((id & 0xffffff) >= 1020) { armcpu_irq_phase=0;break; }
+     if(diagnosePower && ++drained>128)panic("ArmCpu: IRQ drain exceeds 128 id=%llx timer=%llu IPI=%llu",id,armcpu_timer_interrupts,armcpu_ipi_interrupts);
+-    if ((id & 0xffffff) == 27) {
++    if ((id & 0xffffff) == gTimerPpi) {
+       armcpu_timer_interrupts = armcpu_timer_interrupts + 1;
+       armcpu_core_timer[logicalId & 7] = armcpu_core_timer[logicalId & 7] + 1;
+       armcpu_irq_phase=2;

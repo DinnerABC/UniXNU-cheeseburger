@@ -1,0 +1,37 @@
+# Transitional format-1 hardware adapter. OS properties come from the fixed
+# official profile; hardware topology remains the qualified R7 ADT until each
+# format-2 binding has passed a semantic comparison.
+[board]
+name = "cheeseburger"
+soc = "MSM8998"
+kit = "cheeseburger"
+example = true
+
+[payload]
+skip_setup_tool = "scripts/seed-data-skip-setup.py"
+skip_setup_args = ["--no-auto-dim"]
+
+[payload.adt]
+chip_id = "124" # Hexadecimal platform UUID input: captured qcom,msm-id 0x124.
+unique_chip_id = "required"
+owned_memory_size = "0x40000000"
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+packed_data_ramdisk = true
+persistent_data = false
+
+[adt.root.string]
+"unixnu,board-id" = "oneplus,cheeseburger"
+
+[adt.chosen.string]
+"unixnu,nvram-policy" = "volatile-software-only"
+
+[adt.defaults.u32]
+sleep-disabled = 1
+"kern.maxvnodes" = 17408 # Current 1GiB bring-up policy; not the larger sheng budget.
+
+# Preserve the board's Home test chord; a touchscreen gesture is not implemented.
+[adt.buttons.strings]
+button-names = ["hold", "menu", "voldown", "volup"]
+
+# No home-button-type override: preserve the donor model default until its enum
+# is qualified; only value 2 (gesture-only) is documented by the common guide.

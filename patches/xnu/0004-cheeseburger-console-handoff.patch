@@ -1,0 +1,77 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -1231,6 +1231,8 @@
+ void
+ vcputc_options(char c, __unused bool poll)
+ {
++ extern boolean_t p8_console_ready(void); extern void p8_console_char(char);
++ if(p8_console_ready()) { p8_console_char(c); return; }
+ 	if (boot_progress_active()) { boot_progress_putc(c); return; }
+ 	if (gc_initialized && gc_enabled) {
+ 		VCPUTC_LOCK_LOCK();
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -158,6 +158,8 @@
+ static void
+ serial_putc_crlf(char c)
+ {
++ extern boolean_t p8_console_ready(void); extern void p8_console_char(char);
++ if(p8_console_ready()) { p8_console_char(c); return; }
+ 	if (c == '\n') {
+ 		uart_putc('\r');
+ 	}
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -567,11 +567,17 @@
+ 	sleep_token_buffer_init();
+ #endif
+ 
++	p21_visible_stage("P21 R11: PE_consistent_debug_inherit enter");
+ 	PE_consistent_debug_inherit();
++	p21_visible_stage("P21 R11: PE_consistent_debug_inherit returned");
+ 
+ 	/* Setup debugging output. */
++	p21_visible_stage("P21 R11: serial_init enter");
+ 	const unsigned int serial_exists = serial_init();
++	p21_visible_stage("P21 R11: serial_init returned");
++	p21_visible_stage("P21 R11: kernel_startup_initialize_upto enter");
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
++	p21_visible_stage("P21 R11: kernel_startup_initialize_upto returned");
+ 	kprintf("kprintf initialized\n");
+ 
+ 	serialmode = 0;
+@@ -612,10 +618,14 @@
+ 		(void)switch_to_serial_console(); /* Switch into serial mode from video console */
+ 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
+ 	}
++	p21_visible_stage("P21 R11: PE_create_console enter");
+ 	PE_create_console();
++	p21_visible_stage("P21 R11: PE_create_console returned");
+ 
+ 	/* setup console output */
++	p21_visible_stage("P21 R11: PE_init_printf enter");
+ 	PE_init_printf(FALSE);
++	p21_visible_stage("P21 R11: PE_init_printf returned");
+ 
+ #if __arm64__
+ #if DEBUG
+@@ -625,7 +635,9 @@
+ 
+ 	cpu_machine_idle_init(TRUE);
+ 
++	p21_visible_stage("P21 R11: PE_init_platform enter");
+ 	PE_init_platform(TRUE, &BootCpuData);
++	p21_visible_stage("P21 R11: PE_init_platform returned");
+ 
+ #if __arm64__
+ 	extern bool cpu_config_correct;
+@@ -641,7 +653,9 @@
+ 
+ #endif
+ 
++	p21_visible_stage("P21 R11: cpu_timebase_init enter");
+ 	cpu_timebase_init(TRUE);
++	p21_visible_stage("P21 R11: cpu_timebase_init returned");
+ 
+ #if KPERF
+ 	/* kptimer_curcpu_up() must be called after cpu_timebase_init */

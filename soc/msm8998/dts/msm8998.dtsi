@@ -1,0 +1,31 @@
+// Captured target topology; only boot core enabled during migration.
+/ {
+ cpus {
+#address-cells = <2>; #size-cells = <0>;
+timebase-frequency = <19200000>;
+ cpu0: cpu@0 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x0>; enable-method = "psci"; status = "okay"; };
+ cpu1: cpu@1 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x1>; enable-method = "psci"; status = "disabled"; };
+ cpu2: cpu@2 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x2>; enable-method = "psci"; status = "disabled"; };
+ cpu3: cpu@3 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x3>; enable-method = "psci"; status = "disabled"; };
+ cpu4: cpu@100 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x100>; enable-method = "psci"; status = "disabled"; };
+ cpu5: cpu@101 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x101>; enable-method = "psci"; status = "disabled"; };
+ cpu6: cpu@102 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x102>; enable-method = "psci"; status = "disabled"; };
+ cpu7: cpu@103 { device_type = "cpu"; compatible = "arm,armv8"; reg = <0x0 0x103>; enable-method = "psci"; status = "disabled"; };
+ };
+ psci { compatible = "arm,psci-1.0"; method = "smc"; };
+ soc {
+#address-cells = <2>; #size-cells = <2>; ranges;
+ gic: interrupt-controller@17a00000 { compatible = "arm,gic-v3"; unixnu,adt-name = "intc";
+#address-cells = <2>; #size-cells = <2>; #interrupt-cells = <3>; interrupt-controller;
+reg = <0 0x17a00000 0 0x10000>, <0 0x17b00000 0 0x100000>; redistributor-stride = <0 0x20000>;
+ };
+ timer { compatible = "arm,armv8-timer"; unixnu,adt-name = "timer"; clock-frequency = <19200000>; p8,timer-intid = <19>; };
+ ufs@1da4000 { compatible = "qcom,ufshc"; unixnu,adt-name = "ufshc@1da4000";
+ reg = <0 0x1da4000 0 0x2500>; p8,spi-intid = <297>; p8,hc-physical = <0 0x1da4000>;
+ clock-names = "core_clk", "bus_aggr_clk", "iface_clk", "core_clk_unipro", "core_clk_ice", "ref_clk", "tx_lane0_sync_clk", "rx_lane0_sync_clk", "rx_lane1_sync_clk";
+ phy-names = "ufsphy";
+ p8,msm8998-direct-dma = <1>; p8,read-only; p8,warm-link-only; lanes-per-direction = <2>;
+ };
+ ufs-phy@1da7000 { compatible = "qcom,ufs-phy-qmp-v3"; unixnu,adt-name = "ufsphy@1da7000"; reg = <0 0x1da7000 0 0xda8>; };
+ };
+};

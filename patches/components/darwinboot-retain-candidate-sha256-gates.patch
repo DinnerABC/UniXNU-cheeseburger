@@ -1,0 +1,35 @@
+--- a/DarwinBootPkg/Driver/DarwinBoot.c
++++ b/DarwinBootPkg/Driver/DarwinBoot.c
+@@ -3,6 +3,8 @@
+ #include <Guid/FileInfo.h>
+ #include <Library/BaseLib.h>
+ #include <Library/BaseMemoryLib.h>
++#include <Library/BaseCryptLib.h>
++#include "P9Expected.h"
+ #include <Library/DebugLib.h>
+ #include <Library/MemoryAllocationLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+@@ -539,6 +541,11 @@
+   if (EFI_ERROR (Status)) { return Status; }
+   Status = ReadFile (Root, Request->KernelPath, SIZE_128MB, &Image, &ImageSize);
+   if (EFI_ERROR (Status)) { goto Fail; }
++  {
++    UINT8 Hash[32];
++    if (ImageSize != P9KernelBytes || !Sha256HashAll(Image,ImageSize,Hash) || CompareMem(Hash,P9KernelHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
++    Print(L"P21 official Kernel SHA256 PASS bytes=%lu\r\n",(UINT64)ImageSize);
++  }
+   Status = ParseKernel (Image, ImageSize, &Kernel);
+   if (EFI_ERROR (Status)) { goto Fail; }
+   Length = StrSize (Request->KernelPath);
+@@ -548,6 +555,11 @@
+   StrCatS (TreePath, Length / sizeof (CHAR16) + 11, L".adt");
+   Status = ReadFile (Root, TreePath, SIZE_16MB, &Tree, &TreeSize);
+   if (EFI_ERROR (Status)) { goto Fail; }
++  {
++    UINT8 Hash[32];
++    if (TreeSize != P9AdtBytes || !Sha256HashAll(Tree,TreeSize,Hash) || CompareMem(Hash,P9AdtHash,32)!=0) { Status=EFI_SECURITY_VIOLATION; goto Fail; }
++    Print(L"P21 official Adt SHA256 PASS bytes=%lu\r\n",(UINT64)TreeSize);
++  }
+   Offset = 0;
+   RamdiskOffset = MAX_UINTN;
+   TrustCacheOffset = MAX_UINTN;

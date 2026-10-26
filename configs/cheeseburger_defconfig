@@ -1,4 +1,24 @@
-# Parseable P1 research config, not a qualified MSM8998 XNU configuration.
-# TODO: qualify platform/CPU archives against MSM8998 evidence.
-# TODO: qualify interrupt, power, UFS and display drivers independently.
-# No sheng driver flags, archive paths, UUIDs or hardware addresses.
+# Official profile migration: configuration resolution only until board guard
+# and all per-component recipes/ABI checks are complete.
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+# Namespaced crypto support is compiled; CRYPTO_BOOTSTRAP=prelinked disables
+# source registration in prng_random. Original pthread remains exclusive.
+# CONFIG_XNU_SOURCE_PTHREAD is not set
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
+
+# Real APFS root; the mockfs executable fixture requires source pthread.
+# CONFIG_XNU_SOURCE_MOCKFS is not set
+
+# Unencrypted ephemeral Data uses the qualified original crypto/storage classes;
+# no unqualified AES hardware service or mockfs fixture is selected.
+# CONFIG_XNU_NATIVE_AES is not set
+CONFIG_XNU_EXTRA_CFLAGS="-Wno-reserved-identifier -Wno-pre-c11-compat -Wno-missing-designated-field-initializers -Wno-suggest-override -Wno-unnecessary-virtual-specifier -Wno-suggest-destructor-override -Wno-ms-bitfield-padding -I{tree}/kits/cheeseburger"
+
+# MSM8998 observed UNDEF on MSR PAN; use ARMv8.0 paths throughout.
+# CONFIG_XNU_NATIVE_PAN is not set
+# Never access the BCM build template panic address on MSM8998.
+CONFIG_XNU_DT_PANIC_REGION=y

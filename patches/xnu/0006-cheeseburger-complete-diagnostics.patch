@@ -1,0 +1,74 @@
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -1,3 +1,4 @@
++#include <BoardRuntime/IOKitMatchTrace.h>
+ /*
+  * Copyright (c) 1998-2019 Apple Inc. All rights reserved.
+  *
+@@ -2585,6 +2586,7 @@
+ 		ret = kIOReturnNoDevice;
+ 	}
+ 
++	p21_match_next(iterator,obj,ret);
+ 	return ret;
+ }
+ 
+@@ -2714,7 +2716,9 @@
+ 
+ 	if ((dict = OSDynamicCast( OSDictionary, obj))) {
+ 		IOTaskRegistryCompatibilityMatching(current_task(), dict);
++		uint64_t diag_seq = p21_match_begin(dict,"multi");
+ 		*existing = IOUserIterator::withIterator(IOService::getMatchingServices( dict ));
++		p21_match_end(diag_seq,kIOReturnSuccess,*existing);
+ 		kr = kIOReturnSuccess;
+ 	} else {
+ 		kr = kIOReturnBadArgument;
+@@ -2797,8 +2801,10 @@
+ 
+ 	if ((dict = OSDynamicCast( OSDictionary, obj))) {
+ 		IOTaskRegistryCompatibilityMatching(current_task(), dict);
++		uint64_t diag_seq = p21_match_begin(dict,"single");
+ 		*service = IOService::copyMatchingService( dict );
+ 		kr = *service ? kIOReturnSuccess : kIOReturnNotFound;
++		p21_match_end(diag_seq,kr,*service);
+ 	} else {
+ 		kr = kIOReturnBadArgument;
+ 	}
+@@ -2877,6 +2883,7 @@
+ 	OSObject *                  obj;
+ 	OSDictionary *              dict;
+ 	IOReturn                    err;
++	uint64_t diag_seq = 0;
+ 	natural_t                   userMsgType;
+ 
+ 	if (main_port != main_device_port) {
+@@ -2902,6 +2909,7 @@
+ 			continue;
+ 		}
+ 		IOTaskRegistryCompatibilityMatching(current_task(), dict);
++		diag_seq = p21_match_begin(dict,notification_type);
+ 
+ 		if ((sym == gIOPublishNotification)
+ 		    || (sym == gIOFirstPublishNotification)) {
+@@ -2952,6 +2960,7 @@
+ 		obj->release();
+ 	}
+ 
++	p21_match_end(diag_seq,err,userNotify);
+ 	return err;
+ }
+ 
+--- a/config/MASTER
++++ b/config/MASTER
+@@ -283,9 +283,9 @@
+ # configurable kernel message buffer size
+ #
+ options   CONFIG_MSG_BSIZE_REL=16384		# <msgb_small>
+-options   CONFIG_MSG_BSIZE_DEV=131072		# <msgb_small>
++options   CONFIG_MSG_BSIZE_DEV=1048576		# <msgb_small>
+ options   CONFIG_MSG_BSIZE_REL=131072		# <msgb_large>
+-options   CONFIG_MSG_BSIZE_DEV=131072		# <msgb_large>
++options   CONFIG_MSG_BSIZE_DEV=1048576		# <msgb_large>
+ options   CONFIG_MSG_BSIZE=CONFIG_MSG_BSIZE_REL	# <!development,debug>
+ options   CONFIG_MSG_BSIZE=CONFIG_MSG_BSIZE_DEV	# <development,debug>
+ 

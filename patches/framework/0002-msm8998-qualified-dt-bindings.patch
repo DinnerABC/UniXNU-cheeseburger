@@ -1,0 +1,17 @@
+--- a/scripts/unixnu/devicetree.py
++++ b/scripts/unixnu/devicetree.py
+@@ -202,10 +202,10 @@
+     return base, top - base
+ 
+ 
+-STRINGS = {'compatible', 'device_type', 'reg-names', 'interrupt-names', 'clock-names', 'method'}
+-U32 = {'phandle', 'linux,phandle', '#interrupt-cells', '#iommu-cells', '#clock-cells', 'clock-frequency', 'timebase-frequency'}
+-U64 = {'redistributor-stride'}
+-FLAGS = {'interrupt-controller', 'dma-coherent'}
++STRINGS = {'compatible', 'device_type', 'reg-names', 'interrupt-names', 'clock-names', 'phy-names', 'method'}
++U32 = {'phandle', 'linux,phandle', '#interrupt-cells', '#iommu-cells', '#clock-cells', 'clock-frequency', 'timebase-frequency', 'p8,timer-intid', 'p8,spi-intid', 'p8,msm8998-direct-dma', 'lanes-per-direction'}
++U64 = {'redistributor-stride', 'p8,hc-physical'}
++FLAGS = {'interrupt-controller', 'dma-coherent', 'p8,read-only', 'p8,warm-link-only'}
+ REFERENCES = {'interrupt-parent': None, 'iommus': '#iommu-cells', 'clocks': '#clock-cells'}
+ 
+ 

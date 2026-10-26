@@ -67,8 +67,18 @@ static const OSMetaClass *lookup(const char *s) {
 }
 bool CheeseburgerPlatformPower::start(IOService *provider) {
  if(ready||!provider||!provider->metaCast("IOPlatformExpertDevice"))return false;
- OSData *model=OSDynamicCast(OSData,provider->getProperty("model"));
- if(!model||model->getLength()!=9||memcmp(model->getBytesNoCopy(),"OnePlus5",9))return false;
+ // The OS profile owns model (iPad7,1); board matching must survive that identity.
+ // A present marker is authoritative. Only legacy ADTs may fall back to model.
+ OSObject *boardProperty=provider->getProperty("unixnu,board-id");
+ if(boardProperty){
+  OSData *board=OSDynamicCast(OSData,boardProperty);
+  static const char boardId[]="oneplus,cheeseburger";
+  if(!board||board->getLength()!=sizeof(boardId)||
+     memcmp(board->getBytesNoCopy(),boardId,sizeof(boardId)))return false;
+ }else{
+  OSData *model=OSDynamicCast(OSData,provider->getProperty("model"));
+  if(!model||model->getLength()!=9||memcmp(model->getBytesNoCopy(),"OnePlus5",9))return false;
+ }
  if(!IOService::start(provider))return false;
  setProperty("IOClass","CheeseburgerPlatformPower");
  setProperty("IOMatchCategory","CheeseburgerPlatformPower");

@@ -1,0 +1,6 @@
+schema_version = 2
+[soc]
+name = "MSM8998"
+description = "Local MSM8998 migration inputs; hardware execution uses the separately qualified board adapter"
+[components]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink"]

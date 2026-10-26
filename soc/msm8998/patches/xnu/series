@@ -1,0 +1,3 @@
+# Migration inventory only. MSM8998 ArmCpu/GIC transport changes are currently
+# recorded in out/p8/platform and must be exported and checked before this
+# local SoC profile can replace the qualified runtime archive.

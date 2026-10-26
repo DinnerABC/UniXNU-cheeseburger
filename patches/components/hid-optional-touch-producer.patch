@@ -1,0 +1,63 @@
+--- a/NativeHidInput.cpp
++++ b/NativeHidInput.cpp
+@@ -1,6 +1,9 @@
+ // SPDX-License-Identifier: BSD-2-Clause-Patent
+ // Explicit offline keyboard/consumer input source. Uses the unchanged original
+ // HID parser and event dispatch; no user-client entitlement is substituted.
++#ifndef UNIXNU_HID_TOUCH_SOURCE
++#define UNIXNU_HID_TOUCH_SOURCE 1
++#endif
+ #include "OriginalHidDeviceABI.h"
+ #include <IOKit/IOBufferMemoryDescriptor.h>
+ #include <IOKit/IOWorkLoop.h>
+@@ -153,6 +156,7 @@
+         return kIOReturnSuccess;
+     }
+     void touchSend() {
++#if UNIXNU_HID_TOUCH_SOURCE
+         NativeHidInput *self=this;
+         if(!self->hasEventDriverCached())return;
+         uint32_t before=native_touch_seq;
+@@ -203,7 +207,10 @@
+         OSSafeReleaseNULL(buffer);
+         native_hid_input_observed(6,result);
+         native_touch_hid_reports=native_touch_hid_reports+1;
+-    }
++    
++#endif
++    }
++
+     // The button driver's thread calls buttonsNotify on every change of the pressed set.
+     static void buttonsNotify(void *context,uint32_t mask) {
+         NativeHidInput *self=static_cast<NativeHidInput *>(context);
+@@ -283,6 +290,10 @@
+         return *out?kIOReturnSuccess:kIOReturnNoMemory;
+     }
+     bool start(IOService *provider) override {
++#if !UNIXNU_HID_TOUCH_SOURCE
++        unsigned unsupportedTouch=0;
++        if(touchOnly || (PE_parse_boot_argn("sheng-touch-hid",&unsupportedTouch,sizeof(unsupportedTouch)) && unsupportedTouch))return false;
++#endif
+         inputLoop=IOWorkLoop::workLoop();if(!inputLoop)return false;
+         // Request the normal generic HID event personality for this owned
+         // keyboard. This is a matching property, not a client entitlement.
+@@ -300,7 +311,9 @@
+             OSSafeReleaseNULL(timer);IOHIDDevice::stop(provider);return false;
+         }
+         if(touchOnly||touchEnabled) {
++            #if UNIXNU_HID_TOUCH_SOURCE
+             if(&native_touch_set_sink)native_touch_set_sink(&NativeHidInput::touchNotify,this);
++#endif
+         }
+         if(!touchOnly && &native_buttons_set_sink)native_buttons_set_sink(&NativeHidInput::buttonsNotify,this);
+         setProperty("OfflineInputProbe",true);
+@@ -308,7 +321,9 @@
+         timer->setTimeoutMS(1000);return true;
+     }
+     void stop(IOService *provider) override {
++#if UNIXNU_HID_TOUCH_SOURCE
+         if((touchOnly||touchEnabled) && &native_touch_set_sink)native_touch_set_sink(nullptr,nullptr);
++#endif
+         if(!touchOnly && &native_buttons_set_sink)native_buttons_set_sink(nullptr,nullptr);
+         if(timer){timer->cancelTimeout();inputLoop->removeEventSource(timer);OSSafeReleaseNULL(timer);}
+         IOHIDDevice::stop(provider);

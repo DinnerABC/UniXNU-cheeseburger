@@ -1,0 +1,191 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -726,6 +726,10 @@
+ 	vm_commpage_text_init();
+ 
+ #if CONFIG_MACF
++	extern void cheeseburger_ufs_register(void),native_ram_block_register(void),cheeseburger_pmgr_startup(void);
++	kernel_bootstrap_log("cheeseburger_ufs_register"); cheeseburger_ufs_register();
++	kernel_bootstrap_log("native_ram_block_register"); native_ram_block_register();
++	kernel_bootstrap_log("cheeseburger_pmgr_startup"); cheeseburger_pmgr_startup();
+ 	kernel_bootstrap_log("mac_policy_initmach");
+ 	mac_policy_initmach();
+ #if CONFIG_VNGUARD
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -34,6 +34,9 @@
+ 
+ const char * gIOKernelConfigTables =
+     "("
++    "{'IOClass'='NativeRamBlock';'IOMatchCategory'='NativeRamBlock';'IOProviderClass'='IOResources';'IOResourceMatch'='UniXNUOwnerData';'IOProbeScore'=1000:32;},"
++    "{'IOClass'='CheeseburgerPlatformPower';'IOMatchCategory'='CheeseburgerPlatformPower';'IONameMatch'='device-tree';'IOProbeScore'=6000:32;'IOProviderClass'='IOPlatformExpertDevice';},"
++    "{'IOClass'='IOBlockStorageDriver';'IOPropertyMatch'={'device-type'='Generic';};'IOProviderClass'='IOBlockStorageDevice';},{'Content Mask'='GUID_partition_scheme';'IOClass'='IOGUIDPartitionScheme';'IOMatchCategory'='IOStorage';'IOProbeScore'=4000:32;'IOPropertyMatch'={'Whole'=.true.;};'IOProviderClass'='IOMedia';},{'Content Mask'='FDisk_partition_scheme';'Content Table'={'0x01'='DOS_FAT_12';'0x04'='DOS_FAT_16_S';'0x06'='DOS_FAT_16';'0x07'='Windows_NTFS';'0x0B'='DOS_FAT_32';'0x0C'='Windows_FAT_32';'0x0E'='Windows_FAT_16';'0x14'='DOS_FAT_16_S_Hidden';'0x16'='DOS_FAT_16_Hidden';'0x42'='Windows_LDM';'0x82'='Linux_Swap';'0x83'='Linux';'0x8E'='Linux_LVM';'0xA5'='FreeBSD';'0xA6'='OpenBSD';'0xA7'='Apple_Rhapsody_UFS';'0xA8'='Apple_UFS';'0xA9'='NetBSD';'0xAB'='Apple_Boot';'0xAE'='Apple_Encrypted';'0xAF'='Apple_HFS';'0xFD'='Linux_RAID';};'IOClass'='IOFDiskPartitionScheme';'IOMatchCategory'='IOStorage';'IOProbeScore'=3000:32;'IOPropertyMatch'={'Whole'=.true.;};'IOProviderClass'='IOMedia';},{'IOClass'='IOMediaBSDClient';'IOMatchCategory'='IOMediaBSDClient';'IOProbeScore'=30000:32;'IOProviderClass'='IOMedia';'IOResourceMatch'='IOBSD';},{'IOClass'='NativeUfs';'IOProviderClass'='IOPlatformDevice';'IONameMatch'='qcom,ufshc';'IOProbeScore'=1000:32;},"
+     "   {"
+     "     'IOClass'         = ArmCpu;"
+     "     'IOProviderClass' = IOPlatformDevice;"
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1,3 +1,8 @@
++#undef XNU_OWNER_ROOT_AUDIT
++#define XNU_OWNER_ROOT_AUDIT 1
++#undef XNU_OWNER_ROOT_TRUST
++#define XNU_OWNER_ROOT_TRUST 1
++#include <BoardRuntime/RootDecision.h>
+ #include <kern/boot_progress.h>
+ /*
+  * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
+@@ -1076,7 +1081,10 @@
+ 				vnode_t device_vnode = vfs_devvp(root_mount);
+ 				dev_t device = device_vnode ? vnode_specrdev(device_vnode) : NODEV;
+ 				int readonly = (vfs_flags(root_mount) & MNT_RDONLY) != 0;
+-				int owner = readonly && device_vnode && native_verified_block_root_authorized(device);
++				extern volatile unsigned native_verified_block_root_media_matches;
++                int verified = readonly && device_vnode && device == rootdev && native_verified_block_root_authorized(device);
++                int owner = p14RootDecision(readonly,(uint32_t)device,(uint32_t)rootdev,(uint32_t)NODEV,
++                    native_verified_block_root_media_matches,verified);
+ 				if (device_vnode) vnode_put(device_vnode);
+ 				native_owner_root_mount_device = device;
+ 				native_owner_root_selected_device = rootdev;
+@@ -1306,6 +1314,7 @@
+ 	 */
+ 	extern void native_legacy_display_late_probe(void);
+ 	native_legacy_display_late_probe();
++	extern void p20_observer_start(void); p20_observer_start();
+ #endif
+ 	return result;
+ }
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1,3 +1,19 @@
++#undef XNU_NATIVE_RAM_BLOCK
++#define XNU_NATIVE_RAM_BLOCK 1
++#undef XNU_OWNER_DATA_MOUNT
++#define XNU_OWNER_DATA_MOUNT 1
++#undef XNU_OWNER_DATA_VOLUME_UUID
++#define XNU_OWNER_DATA_VOLUME_UUID "D2420479-F58E-44C5-AB79-1815EC32C686"
++#undef XNU_OWNER_BOOT_MANIFEST
++#define XNU_OWNER_BOOT_MANIFEST 1
++#undef XNU_OWNER_CACHE_MOUNT
++#define XNU_OWNER_CACHE_MOUNT 1
++#undef XNU_OWNER_CACHE_STARTUP
++#define XNU_OWNER_CACHE_STARTUP 1
++#undef XNU_OWNER_CRYPTEX_FILES
++#define XNU_OWNER_CRYPTEX_FILES 0
++#undef XNU_OWNER_UNION_SYSTEMOS
++#define XNU_OWNER_UNION_SYSTEMOS 1
+ #include <kern/boot_progress.h>
+ /*
+  * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
+@@ -7020,7 +7036,7 @@
+ #if !DEVELOPMENT && !DEBUG
+ #error The offline owner cache mount is a development instrument
+ #endif
+-extern int native_verified_block_volume_device(const char *, dev_t *, char *, size_t);
++extern int native_p15_verified_block_volume_device(const char *, dev_t *, char *, size_t);
+ #if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
+ extern int native_owner_publish_boot_manifest(dev_t, const char *, dev_t, const char *);
+ #endif
+@@ -7028,7 +7044,7 @@
+ extern void commpage_update_dyld_flags(uint64_t);
+ volatile uint64_t native_owner_cache_dyld_flags = 0;
+ #endif
+-extern int native_verified_block_root_authorized(dev_t);
++extern int native_p15_verified_block_root_authorized(dev_t);
+ volatile int native_owner_cache_stage = 0;
+ volatile int native_owner_cache_status = -1;
+ volatile int native_owner_cache_mount_status = -1;
+@@ -7098,10 +7114,10 @@
+ #endif
+ 	if (device_vnode) vnode_put(device_vnode);
+ 	root_authorized = (vfs_flags(root_mount) & MNT_RDONLY) && root_device != NODEV &&
+-	    native_verified_block_root_authorized(root_device);
++	    native_p15_verified_block_root_authorized(root_device);
+ 	if (!root_authorized) goto done;
+ 	native_owner_cache_stage = 1;
+-	if (!native_verified_block_volume_device(volume, &selected, device_path,
++	if (!native_p15_verified_block_volume_device(volume, &selected, device_path,
+ 	    sizeof(device_path))) goto done;
+ 	strlcpy(native_owner_cache_device_path, device_path, sizeof(native_owner_cache_device_path));
+ 	native_owner_cache_selected_device = selected;
+@@ -7136,7 +7152,7 @@
+ 	    vnode_mountedhere(original_os_root) == cache_mount && rootvnode == mounted_root;
+ 	native_owner_cache_native_union = native_union;
+ 	cache_authorized = readonly && actual == selected &&
+-	    !strcmp(vfs_statfs(cache_mount)->f_fstypename, "apfs") && native_verified_block_root_authorized(actual);
++	    !strcmp(vfs_statfs(cache_mount)->f_fstypename, "apfs") && native_p15_verified_block_root_authorized(actual);
+ #if defined(XNU_OWNER_UNION_SYSTEMOS) && XNU_OWNER_UNION_SYSTEMOS
+ 	cache_authorized = cache_authorized && native_union;
+ #endif
+@@ -7155,7 +7171,7 @@
+ 	native_owner_cache_stage = 6;
+ done:
+ 	if (mounted_root) vnode_put(mounted_root);
+-	int root_recheck = root_authorized && native_verified_block_root_authorized(root_device);
++	int root_recheck = root_authorized && native_p15_verified_block_root_authorized(root_device);
+ 	native_owner_cache_root_recheck = root_recheck;
+ 	if (!root_recheck) error = EAUTH;
+ #if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
+@@ -8033,6 +8049,9 @@
+ #endif
+ #if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
+ 	boot_progress_stage("Data mount enter");
++	extern int native_ram_block_activate(const char *);
++	int activation_error = native_ram_block_activate(XNU_OWNER_DATA_VOLUME_UUID);
++	if (activation_error) panic("owner Data activation failed: %d",activation_error);
+ 	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
+ 	boot_progress_stage("Data mount returned");
+ 	if (data_error) panic("offline scratch Data mount failed: %d", data_error);
+@@ -8042,6 +8061,12 @@
+ 	int policy_error=sheng_boot_watchdog_policy(p, (uint64_t)scratch_addr);
+ 	if (policy_error) panic("sheng watchdog launch policy failed: %d", policy_error);
+ 	boot_progress_stage("temporary watchdog launch policy ready");
+ #endif
++	if (!data_error) {
++		extern int cheeseburger_boot_watchdog_policy(void *,uint64_t);
++		int policy_error=cheeseburger_boot_watchdog_policy(p,(uint64_t)scratch_addr);
++		if (policy_error) printf("cheeseburger watchdog policy refused: %d\n",policy_error);
++	}
++
+ #endif
+ #if CONFIG_MEMORYSTATUS
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1368,6 +1368,9 @@
+ {
+ 	os_reason_t exit_reason = OS_REASON_NULL;
+ 	kern_return_t kr = KERN_SUCCESS;
++	extern void p20_abort_payload(unsigned,uint64_t,user_addr_t,unsigned,user_addr_t,uint64_t,unsigned);
++	p20_abort_payload(reason_namespace,reason_code,payload,payload_size,reason_string,reason_flags,internal_flags);
++
+ 
+ 	if (internal_flags & OS_REASON_IFLAG_USER_FAULT) {
+ 		uint32_t old_value = atomic_load_explicit(&p->p_user_faults,
+@@ -1902,6 +1905,10 @@
+ 	    p->p_exit_reason ? p->p_exit_reason->osr_namespace : 0,
+ 	    p->p_exit_reason ? p->p_exit_reason->osr_code : 0);
+ 
++	extern void p20_process_exit(int,const char *,int,unsigned,uint64_t);
++	p20_process_exit(proc_getpid(p),p->p_name,rv,
++	    p->p_exit_reason ? p->p_exit_reason->osr_namespace : 0,
++	    p->p_exit_reason ? p->p_exit_reason->osr_code : 0);
+ 	if (p->p_crash_behavior != 0 || p == initproc) {
+ 		proc_handle_critical_exit(p, rv);
+ 	}
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1231,6 +1231,7 @@
+ 	mach_msg_type_number_t     numcodes  = 2;
+ 
+ 	boot_progress_user_breakpoint(state, esr);
++	extern void p21_user_breakpoint(void *,unsigned); p21_user_breakpoint(state,esr);
+ #if __has_feature(ptrauth_calls)
+ 	if (ESR_EC(esr) == ESR_EC_BRK_AARCH64 &&
+ 	    brk_comment_is_ptrauth(ISS_BRK_COMMENT(esr))) {
+@@ -1675,6 +1676,7 @@
+ #endif /* __has_feature(ptrauth_calls) */
+ 
+ 	boot_progress_user_abort(state, esr, fault_addr);
++	extern void p21_user_abort(void *,unsigned,uint64_t); p21_user_abort(state,esr,fault_addr);
+ 	if (user_fault_in_self_restrict_mode(thread) &&
+ 	    task_is_jit_exception_fatal(get_threadtask(thread))) {
+ 		extern int exit_with_jit_exception(proc_t p);

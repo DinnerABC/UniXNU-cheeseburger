@@ -1,17 +1,59 @@
-# P1 research skeleton. Incomplete-board guard is intentional.
+# Official format-2 migration in progress; the guard is deliberate until the
+# board driver recipes, memory handoff and firmware adapter are all qualified.
+schema_version = 2
+
 [board]
 name = "cheeseburger"
 soc = "MSM8998"
-description = "OnePlus 5 — P1 build research"
+soc_source = "msm8998"
+os_profile = "ipados-17.7.11-21H461"
+description = "OnePlus 5; official workflow migration with preserved P21 runtime evidence"
 kit = "cheeseburger"
 example = true
 
+[components]
+include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState", "VerifiedRoot", "RamBlock"]
+
 [kernel]
 defconfig = "cheeseburger_defconfig"
-# TODO: qualify archives, prelink policy and original kernelcache hash.
-# TODO: select IPSW identity independently; do not inherit sheng identifiers.
-# TODO: implement an adapter for the existing edk2-msm8998 firmware.
-# TODO: validate RAM, reserved regions, CPU/GIC/PSCI, ADT and Trust Cache policy.
-# TODO: validate Android header/DTB against owner-provided stock boot evidence.
-# TODO: obtain exact userdata GPT geometry and volume UUIDs read-only.
-# Unknown sections are absent. Do not add zero addresses or fabricated hashes.
+config_fragments = ["arch:configs/common.config", "soc:configs/msm8998.config", "os:configs/ipados.config"]
+patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
+archives = ["build-corecrypto-14.py", "build-corecrypto-14.py --namespace", "component:ArmDTPlatform", "component:ArmCpu", "component:RamBlock", "component:AppleKeyStoreState", "p21-build-board-runtime.py"]
+# Explicit source recipes; no old archive/object substitution.
+# Architecture recipes are inherited for inspection. The board archive plan
+# is not qualified; example=true prevents this draft from becoming an image.
+
+[device_tree]
+source = "device:dts/cheeseburger.dts"
+include_dirs = ["soc:dts"]
+
+[userdata]
+first_lba = 2441472
+last_lba = 14145279
+lba_bytes = 4096
+windows = [{name="OS", component="OS"}, {name="SystemOS", component="Cryptex1,SystemOS"}]
+
+[payload]
+volume = "CHEESEBURGR"
+size_mib = 192
+loader = "firmware"
+title = "OnePlus 5 official adaptation (guarded)"
+# Qualified board runtime switches; display registration requires its family load gate.
+kernel_args = ["-v", "keepsyms=1", "cpus=1", "debug=0x8", "sheng-log=1", "-enable_kprintf_spam", "startup_debug=0", "cheeseburger-disable-watchdogd=1", "p20-observe=1", "offline-key-events=1", "sheng-aks=1", "sheng-aks-sls=3", "offline-hid-input=1", "offline-hid-home=1", "cheeseburger-buttons=1", "cheeseburger-home-chord=1", "sheng-vsync=60", "sheng-vsync-fixed=1", "offline-legacy-unit-scale=1", "offline-mobile-graphics-load=1", "offline-legacy-register=1", "offline-legacy-phase=4", "offline-legacy-gop=1", "offline-legacy-pm=1", "offline-legacy-validate=1", "offline-legacy-transfer=1", "offline-legacy-cpu-present=1"]
+skip_setup_tool = "scripts/seed-data-skip-setup.py"
+skip_setup_args = ["--no-auto-dim"]
+
+[payload.adt]
+chip_id = "124"
+unique_chip_id = "required"
+owned_memory_size = "0x40000000"
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+packed_data_ramdisk = true
+persistent_data = false
+
+[adt.root.string]
+"unixnu,board-id" = "oneplus,cheeseburger"
+
+[adt.defaults.u32]
+sleep-disabled = 1
+"kern.maxvnodes" = 17408

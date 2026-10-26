@@ -1,0 +1,8 @@
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -1,3 +1,5 @@
++#undef XNU_OWNER_BOOT_MANIFEST
++#define XNU_OWNER_BOOT_MANIFEST 1
+ /*
+  * Copyright (c) 1998-2021 Apple Inc. All rights reserved.
+  *

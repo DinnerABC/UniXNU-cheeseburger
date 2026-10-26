@@ -1,2 +1,3 @@
-# No device-specific feeds are qualified in P1.
-# Generic upstream sources are pinned by the selected UniXNU feeds.toml.
+# Published source pins come from the fixed official component catalog.
+# MSM8998 support is local/unpublished and is recorded as a local override;
+# never invent a remote commit to make a status report appear pinned.
