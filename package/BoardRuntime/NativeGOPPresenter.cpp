@@ -87,7 +87,8 @@ bool NativeGOPPresenter::start(IOService *provider) {
        video.v_rowBytes<video.v_width*4 || video.v_rowBytes>UINT64_MAX/video.v_height)return false;
     // The hand-off presenter is attached away from the display subsystem's node (the original display code enumerates that node's children),
     // so the framebuffer memory comes from the node it names instead of its provider.
-    mapping=(memorySource?memorySource:provider)->mapDeviceMemoryWithIndex(0,kIOMapInhibitCache);
+    // Match the console and legacy scanout aliases: Normal Inner/Outer Non-Cacheable.
+    mapping=(memorySource?memorySource:provider)->mapDeviceMemoryWithIndex(0,kIOMapWriteCombineCache);
     if(!mapping || !mapping->getVirtualAddress() || mapping->getPhysicalAddress()!=video.v_baseAddr ||
        mapping->getLength()!=video.v_rowBytes*video.v_height)return false;
     gate=IOLockAlloc();if(!gate)return false;

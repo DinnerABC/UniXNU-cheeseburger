@@ -1,0 +1,11 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -2860,7 +2860,7 @@
+ 			gc_acquired = TRUE;
+ 		} else {
+ 			if (makeMapping) {
+-#if HAS_UCNORMAL_MEM
++#if HAS_UCNORMAL_MEM || ARM64_BOARD_CONFIG_BCM2837
+ 				/*
+ 				 * Framebuffers would normally use VM_WIMG_RT, which
+ 				 * io_map doesn't support.  However this buffer is set up

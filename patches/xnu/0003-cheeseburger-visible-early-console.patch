@@ -77,8 +77,8 @@
 +	lsr x15, x9, #12
 +	and x15, x15, #511
 +	add x15, x14, x15, lsl #3
-+	// Target CACHE_ATTRINDX_DISABLE (Device-nGnRnE), AF, OuterShareable, PXN/UXN.
-+	MOV64 x18, (0x0060000000000603 | (CACHE_ATTRINDX_DISABLE << 2))
++	// Normal Inner/Outer Non-Cacheable, AF, OuterShareable, PXN/UXN.
++	MOV64 x18, (0x0060000000000603 | (CACHE_ATTRINDX_WRITECOMB << 2))
 +	orr x18, x18, x9
 +	str x18, [x15]
 +	add x9, x9, #4096
@@ -103,7 +103,7 @@
   */
 +/* P8 persistent, allocation-free single-boot framebuffer console.
 + * No storage/firmware writes, no reset, no execution checkpoints. Uses the
-+ * proven ml_io_map VA after arm_vm_init, and XNU's existing ISO bitmap font.
++ * proven ml_io_map_wcomb VA after arm_vm_init, and XNU's existing ISO bitmap font.
 + * cpus=1 target; concurrent IRQ text may interleave. RAM ring is not claimed
 + * recoverable across reboot; hardware reset can destroy this evidence.
 + */
@@ -190,7 +190,7 @@
 + p6_diag_record[16]=0; /* Do not use the physical alias during VM replacement. */
  	arm_vm_init(xmaxmem, args);
 + if(p21_fb_phys && p21_fb_bytes && p21_fb_bytes<=0x1000000ULL) {
-+  p6_diag_record[16]=(uint64_t)ml_io_map((vm_offset_t)p21_fb_phys,(vm_size_t)p21_fb_bytes);
++  p6_diag_record[16]=(uint64_t)ml_io_map_wcomb((vm_offset_t)p21_fb_phys,(vm_size_t)p21_fb_bytes);
 +  p6_diag_record[29]=p21_fb_phys;
 + }
 + p21_visible_stage("P21 R9: arm_vm_init returned; visible console mapped");

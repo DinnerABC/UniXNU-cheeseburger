@@ -2,7 +2,7 @@
 
 UniXNU device repository for the **OnePlus 5** (cheeseburger, Qualcomm MSM8998 / Snapdragon 835).
 
-**The original iPadOS interface now appears on hardware.** P21-UP1 reaches a screen showing the time with CPU rendering. Native touch and multicore candidates are under development; their hardware results remain unconfirmed.
+**The original iPadOS interface now appears on hardware.** P21-UP1 reaches a screen showing the time with CPU rendering. P22-R6 logs confirm eight CPUs online and successful display transfers. Native touch remains under development.
 
 This is an independent device port built on [UniXNU](https://github.com/UniXNU/UniXNU). The current system is iPadOS 17.7.11 (21H461), with XNU 10063.141.1.
 
@@ -16,7 +16,7 @@ This is an independent device port built on [UniXNU](https://github.com/UniXNU/U
 | Component | State |
 | --- | --- |
 | UEFI / DarwinBoot | Boots XNU through the device's UEFI firmware |
-| CPU / memory | Known-good single-CPU / 1 GiB baseline; eight-core SMP candidate unvalidated |
+| CPU / memory | Eight CPUs online with per-core timer activity in P22-R6; 1 GiB boot window |
 | Storage / root | UFS reads, authenticated owner root and SystemOS mounting |
 | Data | Writable, volatile APFS RAM Data; resets to its seed on reboot |
 | Display | Original iPadOS interface visible on the physical screen; CPU presentation |
@@ -31,6 +31,8 @@ This is an independent device port built on [UniXNU](https://github.com/UniXNU/U
 The current UI milestone is based on the device owner's confirmation of the original screen showing the time. Full Setup/Home interaction and stability are still being brought up. Runtime details and image identities belong in [the boot comparison](docs/P21_UPSTREAM_BOOT_COMPARISON.md), rather than this page.
 
 The next task is a userdata-only iOS migration with the boot stack and diagnostics preserved. See the [current handoff](docs/P22_HANDOFF.md) including the next-agent prompt.
+
+[P22-R6/R7 notes](docs/P22_R6_STATUS.md) record the PSCI fix and Normal non-cacheable framebuffer candidate. R7 has been temporarily booted; its display performance is not yet validated.
 
 ## Build
 

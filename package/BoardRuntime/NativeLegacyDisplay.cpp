@@ -369,7 +369,7 @@ public:
         uint64_t copyStart;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(copyStart));
         uint64_t stored=UINT64_MAX;
         {
-            // Store only what changed since the previous frame (the scanout memory is slow device memory).
+            // Store only what changed since the previous frame in Normal non-cacheable scanout memory.
             uint64_t need=(uint64_t)width*height*4;
             // Differential copy is opt-in (sheng-fb-diff=1): on hardware it reads the whole source every frame and was not faster
             // than the plain copy (143-285 ms per swap either way), and the first boots with it were followed by an unresponsive
@@ -531,7 +531,8 @@ public:
            !video.v_width || !video.v_height || video.v_depth!=32 || video.v_rotate ||
            video.v_width>16384 || video.v_height>16384 || video.v_rowBytes<video.v_width*4 ||
            video.v_rowBytes>UINT64_MAX/video.v_height)return false;
-        IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapInhibitCache);
+        // ARM64 write-combine maps to Normal Inner/Outer Non-Cacheable, not Device.
+        IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapWriteCombineCache);
         if(!mapping)return false;
         bool valid=mapping->getVirtualAddress() && mapping->getPhysicalAddress()==video.v_baseAddr &&
                    mapping->getLength()==video.v_rowBytes*video.v_height;
