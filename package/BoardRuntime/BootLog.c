@@ -152,6 +152,11 @@ extern volatile uint32_t native_legacy_stage;
 #include "OfficialLogReports.inc"
 extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
+extern volatile uint64_t cb_touch[28];
+extern volatile uint32_t armcpu_smp_running,armcpu_core_timer[8],armcpu_core_sgi[8],armcpu_smp_step[8],armcpu_smp_fail[8],armcpu_smp_mpidr[8];
+extern volatile int32_t armcpu_smp_psci_rc[8];
+extern volatile uint32_t native_touch_hid_reports;
+extern uint32_t processor_avail_count;
 #include "PlatformLogReports.inc"
 static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  size_t at=0;char head[96];snprintf(head,sizeof(head),"#slot %u t=%us tag=cheeseburger-P21",slot,now);at=put(out,at,cap,head,sizeof(head));
@@ -159,6 +164,13 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  snprintf(head,sizeof(head),"SWAP check=%llu reject=%llu why=%llu transfer=%llu rc=%llx",p20_swap_stats[0],p20_swap_stats[2],p20_swap_stats[3],p20_swap_stats[7],p20_swap_stats[11]);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"WATCHDOG policy requested=%d status=%d applied=%d",cheeseburger_watchdog_policy_requested,cheeseburger_watchdog_policy_status,cheeseburger_watchdog_policy_applied);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"UP1 policy requested=%d status=%d written=%d jobs=watchdogd/identityservicesd/locationd",cheeseburger_upstream_policy_requested,cheeseburger_upstream_policy_status,cheeseburger_upstream_policy_applied);at=put(out,at,cap,head,sizeof(head));
+ for(unsigned cpu=0;cpu<8;++cpu){char core[144];snprintf(core,sizeof core,"CPU%u mpidr=%x step=%u fail=%u PSCI=%d timer=%u IPI=%u online=%u",cpu,armcpu_smp_mpidr[cpu],armcpu_smp_step[cpu],armcpu_smp_fail[cpu],armcpu_smp_psci_rc[cpu],armcpu_core_timer[cpu],armcpu_core_sgi[cpu],processor_avail_count);at=put(out,at,cap,core,sizeof core);}
+ if(cb_touch[0]) {
+  char touch[160];
+  snprintf(touch,sizeof touch,"TOUCH stage=%llu error=%lld i2c=%llu/%llu F01=%llx F12=%llx frames=%llu contacts=%llu publish=%llu HID=%u",cb_touch[0],(int64_t)cb_touch[5],cb_touch[1],cb_touch[2],cb_touch[3],cb_touch[4],cb_touch[24],cb_touch[6],cb_touch[7],native_touch_hid_reports);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH range=%llux%llu objects=%llu data=%llx/%llu irq=%llu polls=%llu mode=%llu raw=%llx mapped=%llx",cb_touch[8],cb_touch[9],cb_touch[20],cb_touch[21],cb_touch[22],cb_touch[10],cb_touch[11],cb_touch[23],cb_touch[25],cb_touch[26]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH hw=%llx clock=%llx reset=%llx gpio=%llx/%llx status=%llx errors=%llx op=%llx",cb_touch[12],cb_touch[13],cb_touch[14],cb_touch[15],cb_touch[16],cb_touch[17],cb_touch[18],cb_touch[19]);at=put(out,at,cap,touch,sizeof touch);
+ }
  at=put(out,at,cap,"[display-clients-live]",32);
  char clients[6][91],aks[2][91];p21_client_rows(clients);p21_aks_rows(aks);
  for(unsigned i=0;i<6;++i)if(clients[i][0])at=put(out,at,cap,clients[i],91);

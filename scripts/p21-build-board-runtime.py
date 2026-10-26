@@ -33,9 +33,9 @@ def compile(src,name=None,flags=(),late=False):
  if late:
   transformed=O/(name+'.late.o');run(['/opt/homebrew/opt/llvm/bin/llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_'+src.name,obj,transformed],name+'-late');obj=transformed
  compiled.append(obj);return obj
-cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
+cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
 late={'NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','NativeLegacyDisplay','NativeGOPPresenter','NativeHidInput','NativeKeyStoreEvents'}
-for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=0'] if n=='NativeHidInput' else [],late=n in late)
+for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=1'] if n=='NativeHidInput' else [],late=n in late)
 for n in ['BootWatchdogPolicy','no-store-provider','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe']:compile(S/(n+'.c'))
 subprocess.run([sys.executable,R/'scripts/p21-select-official-log-reports.py',*compiled],check=True)
 compile(S/'BootLog.c')
@@ -57,7 +57,7 @@ obj=O/'original-bindings.o';run(['xcrun','clang','-target','arm64-apple-ios17.0'
 # Recompile the unchanged signed policy inputs: never regenerate keys/manifests.
 policy=R/'out/p12/policies/inputs.S';obj=O/'verified-policy.o';run(['xcrun','clang','-target','arm64-apple-ios17.0','-c',policy,'-o',obj],'verified-policy');compiled.append(obj)
 archive=O/'libCheeseburgerRuntime.a';archive.unlink(missing_ok=True);run(['xcrun','ar','rcs',archive,*compiled],'archive')
-(O/'commands.json').write_text(json.dumps(commands,indent=2)+'\n');(O/'result.json').write_text(json.dumps({'result':'BOARD_RUNTIME_SOURCE_BUILD_PASS','objects':len(compiled),'archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'old_objects_reused':False,'touch_producer':'not selected; no QEMU TouchState binary','hardware_tested':False},indent=2)+'\n');dest=T/'build/native-legacy-display';dest.mkdir(parents=True,exist_ok=True)
+(O/'commands.json').write_text(json.dumps(commands,indent=2)+'\n');(O/'result.json').write_text(json.dumps({'result':'BOARD_RUNTIME_SOURCE_BUILD_PASS','objects':len(compiled),'archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'old_objects_reused':False,'touch_producer':'CheeseburgerTouch QUP5/RMI4 F12; opt-in, hardware unverified','hardware_tested':False},indent=2)+'\n');dest=T/'build/native-legacy-display';dest.mkdir(parents=True,exist_ok=True)
 shutil.copy2(archive,dest/'libNativeLegacyDisplay.late.a')
 report={'archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'source_sha256':{'kits/cheeseburger/'+str(Path(x['source']).relative_to('package')):x['source_sha256'] for x in commands if x['source'].startswith('package/')},'objects_rebuilt':len(compiled),'old_objects_reused':False}
 (dest/'build-report.json').write_text(json.dumps(report,indent=2)+'\n')

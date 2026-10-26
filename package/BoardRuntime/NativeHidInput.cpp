@@ -141,8 +141,8 @@ class NativeHidInput : public IOHIDDevice {
     int prevIds[TOUCH_FINGERS]={-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
     int prevX[TOUCH_FINGERS]={},prevY[TOUCH_FINGERS]={};
     static unsigned transformCoordinate(int value,int maximum) {
-        if(value<0)value=0;if(value>=maximum)value=maximum-1;
-        return (unsigned)((long long)value*32767/(maximum-1));
+        if(value<0)value=0;if(value>maximum)value=maximum;
+        return (unsigned)((long long)value*32767/maximum);
     }
     // One finger set to the event driver. The touch thread (kits/sheng/TouchProbe.cpp) calls touchNotify after it publishes a frame; there is no timer
     // watching the seqlock any more (it woke the work loop every 8 ms for nothing).
@@ -168,12 +168,12 @@ class NativeHidInput : public IOHIDDevice {
         __asm__ volatile("dmb ish":::"memory");
         if(native_touch_seq!=before)return;      // torn read: retry on the next tick
         self->lastSeq=before;
-        // Sizes follow the axis maxima of the touch core: 30480 long, 20320 short, mapped to the same 0..32767 range.
+        // Board producer publishes coherent coordinates in the HID logical range.
         unsigned char report[1+TOUCH_FINGERS*6+1]={3};
         unsigned slot=0;
         int nextIds[TOUCH_FINGERS],nextX[TOUCH_FINGERS],nextY[TOUCH_FINGERS];
         for(unsigned i=0;i<count && slot<TOUCH_FINGERS;++i,++slot) {
-            unsigned x=transformCoordinate(xs[i],30480),y=transformCoordinate(ys[i],20320);
+            unsigned x=transformCoordinate(xs[i],32767),y=transformCoordinate(ys[i],32767);
             unsigned char *f=report+1+slot*6;
             f[0]=3;f[1]=(unsigned char)(ids[i]&0xff);f[2]=(unsigned char)x;f[3]=(unsigned char)(x>>8);f[4]=(unsigned char)y;f[5]=(unsigned char)(y>>8);   // tip, valid
             nextIds[slot]=ids[i];nextX[slot]=(int)x;nextY[slot]=(int)y;
@@ -273,8 +273,8 @@ class NativeHidInput : public IOHIDDevice {
 public:
     void setTouchOnly() {touchOnly=true;}
     IOWorkLoop *getWorkLoop() const override {return inputLoop;}
-    OSString *newTransportString() const override {return OSString::withCString(touchOnly?"SPI":"Virtual");}
-    OSString *newProductString() const override {return OSString::withCString(touchOnly?"Offline touch digitizer":"Offline HID input probe");}
+    OSString *newTransportString() const override {return OSString::withCString(touchOnly?"I2C":"Virtual");}
+    OSString *newProductString() const override {return OSString::withCString(touchOnly?"Synaptics S3320 Touch Screen":"Offline HID input probe");}
     IOReturn newReportDescriptor(IOMemoryDescriptor **out) const override {
         if(!out)return kIOReturnBadArgument;
         unsigned char combined[sizeof(descriptor)+sizeof(touchDescriptor)];

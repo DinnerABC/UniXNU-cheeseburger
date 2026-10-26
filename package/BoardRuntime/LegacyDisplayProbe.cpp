@@ -531,9 +531,11 @@ extern void sheng_wifi_probe(void);
 extern void sheng_buttons_probe(void);
 extern void sheng_backlight_probe(void);
 extern "C" void cheeseburger_buttons_probe(void);
+extern "C" void cheeseburger_touch_probe(void);
 void native_legacy_display_late_probe(void) {
     native_hid_input_probe();
     cheeseburger_buttons_probe();
+    cheeseburger_touch_probe();
     native_keystore_probe();
     /* Unselected board peripheral; no MSM8998 provider qualified. */
     /* Unselected board peripheral; no MSM8998 provider qualified. */

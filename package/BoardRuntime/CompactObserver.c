@@ -24,7 +24,11 @@ extern volatile uint64_t p20_registry_seen;
 extern volatile int native_legacy_meta_status;
 extern volatile uint64_t p20_client_pid, p20_client_last_status, p20_client_attempts;
 extern volatile uint64_t p20_swap_stats[12];
-extern volatile uint64_t cb_keys[13];
+extern volatile uint64_t cb_keys[13],cb_touch[28];
+extern volatile uint32_t armcpu_smp_running,armcpu_core_timer[8],armcpu_core_sgi[8],armcpu_smp_step[8],armcpu_smp_fail[8];
+extern volatile int32_t armcpu_smp_psci_rc[8];
+extern volatile uint32_t native_touch_hid_reports;
+extern uint32_t processor_avail_count;
 extern volatile unsigned native_keyevents_stage,native_aks_opens,native_aks_calls;
 extern volatile int native_keyevents_status;
 extern uint32_t native_aks_lock_state(void);
@@ -76,7 +80,8 @@ static void line(unsigned row, const char *text) {
     if (render_valid[row] && !strcmp(rendered[row], shown)) return;
     for (unsigned gy = 0; gy < 24; ++gy) {
         bool irq = ml_set_interrupts_enabled(false);
-        if (__atomic_load_n(&p20_scanout_state, __ATOMIC_ACQUIRE) || p20_scanout_owned()) {
+        unsigned expected=0;
+        if (!__atomic_compare_exchange_n(&p20_scanout_state,&expected,2,0,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)) {
             ml_set_interrupts_enabled(irq);
             return;
         }
@@ -89,6 +94,7 @@ static void line(unsigned row, const char *text) {
                 out[col * 12 + gx] = (bits & (1U << (gx * 8 / 12))) ? 0xff00ffff : 0xff000000;
         }
         __asm__ volatile("dsb sy" ::: "memory");
+        __atomic_store_n(&p20_scanout_state,0,__ATOMIC_RELEASE);
         ml_set_interrupts_enabled(irq);
     }
     memcpy(rendered[row], shown, sizeof(shown));
@@ -124,7 +130,7 @@ static void monitor(void *arg, wait_result_t result) {
 
         memset(pending_rows, 0, sizeof(pending_rows));
         char b[120];
-        snprintf(b, sizeof(b), "P21 R17D1 obs=%us procs=%d pass=%u age=%us busy=%u", now, nprocs,
+        snprintf(b, sizeof(b), "P22 R2 SMP obs=%us procs=%d pass=%u age=%us busy=%u", now, nprocs,
                  boot_process_passes, now - process_changed, boot_process_busy); stage(0, b);
         snprintf(b, sizeof(b), "MEM %lluMiB free=%u wire=%u active=%u inactive=%u",
                  max_mem >> 20, vm_page_free_count, vm_page_wire_count,
@@ -141,7 +147,7 @@ static void monitor(void *arg, wait_result_t result) {
                  p20_swap_stats[7], p20_swap_stats[11]); stage(5, b);
         snprintf(b,sizeof(b),"HID stage=%u load=%x match=%x reports=%u/%x",native_hid_stage,native_hid_load_status,native_hid_input_results[3],native_hid_input_events[4],native_hid_input_results[4]);stage(6,b);
         snprintf(b,sizeof(b),"KEY stage=%lld raw=%06llx edges=%llu sent=%llu err=%llu",cb_keys[0],cb_keys[4],cb_keys[6],cb_keys[7],cb_keys[3]);stage(7,b);
-        stage(8,"FIRST SPRINGBOARD FAILURE (retained; not overwritten by restart)");
+        snprintf(b,sizeof(b),"CPU online=%u steps=%u/%u/%u/%u/%u/%u/%u",processor_avail_count,armcpu_smp_step[1],armcpu_smp_step[2],armcpu_smp_step[3],armcpu_smp_step[4],armcpu_smp_step[5],armcpu_smp_step[6],armcpu_smp_step[7]);stage(8,b);
         for(unsigned i=0;i<6;++i)stage(9+i,p20_ui_rows[12+i]);
         stage(15,"FIRST WATCHDOGD FAILURE (retained)");
         for(unsigned i=0;i<6;++i)stage(16+i,p20_ui_rows[18+i]);
@@ -149,6 +155,11 @@ static void monitor(void *arg, wait_result_t result) {
         for(unsigned i=0;i<6;++i)stage(23+i,p20_ui_rows[6+i]);
         stage(29,p20_exit_rows[0]);stage(30,p20_exit_rows[3]);stage(31,p20_exit_rows[4]);
         snprintf(b,sizeof(b),"PERSIST state=%u rounds=%u errors=%u / 32MiB / sync+readback",boot_log_state,boot_log_rounds,boot_log_errors);stage(32,b);
+
+        if(cb_touch[0]) {
+            snprintf(b,sizeof(b),"TOUCH st=%lld err=%lld frames=%llu active=%llu HID=%u",cb_touch[0],cb_touch[5],cb_touch[24],cb_touch[6],native_touch_hid_reports);stage(33,b);
+            snprintf(b,sizeof(b),"I2C ok/err=%llu/%llu range=%llux%llu poll/irq=%llu/%llu",cb_touch[1],cb_touch[2],cb_touch[8],cb_touch[9],cb_touch[11],cb_touch[10]);stage(34,b);
+        }
 
         unsigned generation=__atomic_load_n(&p21_scanout_generation,__ATOMIC_ACQUIRE);
         if(generation!=rendered_generation){memset(render_valid,0,sizeof(render_valid));rendered_generation=generation;}

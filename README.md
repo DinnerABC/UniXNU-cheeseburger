@@ -2,7 +2,7 @@
 
 UniXNU device repository for the **OnePlus 5** (cheeseburger, Qualcomm MSM8998 / Snapdragon 835).
 
-**The original iPadOS interface now appears on hardware.** P21-UP1 reaches a screen showing the time with CPU rendering. Touch input is the next priority.
+**The original iPadOS interface now appears on hardware.** P21-UP1 reaches a screen showing the time with CPU rendering. Native touch and multicore candidates are under development; their hardware results remain unconfirmed.
 
 This is an independent device port built on [UniXNU](https://github.com/UniXNU/UniXNU). The current system is iPadOS 17.7.11 (21H461), with XNU 10063.141.1.
 
@@ -16,11 +16,11 @@ This is an independent device port built on [UniXNU](https://github.com/UniXNU/U
 | Component | State |
 | --- | --- |
 | UEFI / DarwinBoot | Boots XNU through the device's UEFI firmware |
-| CPU / memory | Single-CPU bring-up with a 1 GiB kernel memory window |
+| CPU / memory | Known-good single-CPU / 1 GiB baseline; eight-core SMP candidate unvalidated |
 | Storage / root | UFS reads, authenticated owner root and SystemOS mounting |
 | Data | Writable, volatile APFS RAM Data; resets to its seed on reboot |
 | Display | Original iPadOS interface visible on the physical screen; CPU presentation |
-| Touch | Not working yet; controller and transport adaptation pending |
+| Touch | Native QUP5 / Synaptics RMI4 / HID integrated; physical input not yet validated |
 | Buttons | Power / volume input and a volume-button Home chord; partial support |
 | GPU | No Adreno 540 or Metal acceleration |
 | KeyStore | Development-only non-key state/event compatibility; no SEP-backed protection |
@@ -29,6 +29,8 @@ This is an independent device port built on [UniXNU](https://github.com/UniXNU/U
 | Power management | Partial; deep suspend and complete charging support are not validated |
 
 The current UI milestone is based on the device owner's confirmation of the original screen showing the time. Full Setup/Home interaction and stability are still being brought up. Runtime details and image identities belong in [the boot comparison](docs/P21_UPSTREAM_BOOT_COMPARISON.md), rather than this page.
+
+The next task is a userdata-only iOS migration with the boot stack and diagnostics preserved. See the [current handoff](docs/P22_HANDOFF.md) including the next-agent prompt.
 
 ## Build
 

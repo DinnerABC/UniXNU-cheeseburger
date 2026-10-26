@@ -1,0 +1,14 @@
+--- a/ArmCpu.cpp
++++ b/ArmCpu.cpp
+@@ -425,8 +425,10 @@
+   gRemoteGic = remote != 0;
+   armcpu_smp_requested = gSmpWanted ? 1 : 0;
+   unsigned cpuCount = static_cast<unsigned> (ml_get_max_cpu_number ()) + 1;
++  // The shared controller is boot-CPU-only; secondaries use direct handlers.
++  const unsigned controllerCpuCount = gSmpWanted ? 1U : cpuCount;
+   controller = new IOCPUInterruptController;
+-  if ((controller == nullptr) || (controller->initCPUInterruptController (cpuCount, 1) != kIOReturnSuccess)) {
++  if ((controller == nullptr) || (controller->initCPUInterruptController (controllerCpuCount, 1) != kIOReturnSuccess)) {
+     panic ("ArmCpu: CPU interrupt controller allocation failed");
+   }
+   controller->registerCPUInterruptController ();

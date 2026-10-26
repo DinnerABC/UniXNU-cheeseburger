@@ -200,3 +200,15 @@ void native_hid_input_probe(void) {
     native_hid_stage=3;native_hid_checkpoint();
 }
 }
+
+// Called from the bounded native touch worker only after F01/F12 qualification.
+extern "C" int cheeseburger_touch_hid_start(void) {
+ if(native_hid_stage!=3 || native_hid_load_status || native_hid_input_meta_status || native_hid_class_sizes[4]!=208)return -61;
+ OSDictionary *match=IOService::serviceMatching("IOHIDResource");
+ IOService *provider=match?IOService::waitForMatchingService(match,1000000000ULL):nullptr;
+ IOService *touch=provider?native_hid_touch_allocate():nullptr;
+ bool valid=touch && touch->metaCast("IOHIDDevice") && touch->init();
+ bool attached=valid && touch->attach(provider);bool started=attached && touch->start(provider);
+ if(!started){if(attached)touch->detach(provider);OSSafeReleaseNULL(touch);}
+ OSSafeReleaseNULL(provider);OSSafeReleaseNULL(match);return started?0:-62;
+}

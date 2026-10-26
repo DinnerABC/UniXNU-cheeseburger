@@ -22,13 +22,14 @@ void boot_progress_cancel_scanout(void);
 unsigned p20_scanout_owned(void) {
  return __atomic_load_n(&p20_scanout_state,__ATOMIC_ACQUIRE)!=0;
 }
-// The upstream renderer calls this before touching scanout. With cpus=1 this
-// prevents subsequent diagnostic writes; no surface/format/result is changed.
+// Cross-core reservation: 0 idle, 1 OS copy, 2 one diagnostic scanline.
+// Keep the rendering algorithm and validation unchanged.
 int boot_progress_prepare_scanout(void) {
  boolean_t irq=ml_set_interrupts_enabled(FALSE);
- if(__atomic_load_n(&p20_scanout_state,__ATOMIC_ACQUIRE)) {ml_set_interrupts_enabled(irq);return 0;}
+ unsigned expected=0;
+ if(!__atomic_compare_exchange_n(&p20_scanout_state,&expected,1,0,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)) {ml_set_interrupts_enabled(irq);return 0;}
  p21_copy_owner=current_thread();
- __atomic_store_n(&p20_scanout_state,1,__ATOMIC_RELEASE);
+
  ml_set_interrupts_enabled(irq);return 1;
 }
 void p21_scanout_complete(void);

@@ -49,3 +49,17 @@ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
 CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
+
+
+P22 native touch additions
+--------------------------
+package/BoardRuntime/CheeseburgerTouch.cpp and SynapticsRMI4.h are
+GPL-2.0-only, not covered by the BSD notice above. They adapt definitions
+and protocol algorithms from Linux commit
+6b4b543fa18757297ac756a6fe6e64f506b7844a. See GPL-2.0-only.txt.
+Relevant upstream notices:
+Copyright (c) 2009-2013, 2016-2018, The Linux Foundation. All rights reserved.
+Copyright (c) 2014, Sony Mobile Communications AB.
+Copyright (c) 2011-2016 Synaptics Incorporated.
+Copyright (c) 2011 Unixphere.
+Other component files retain their own upstream notices/licenses.
