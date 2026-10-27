@@ -200,8 +200,8 @@ static void describe(unsigned index, IOService *media)
 
 // UUID inputs below are copied from existing signed policy/source and seed reports,
 // never from a photograph. Presence is observation, not a boot acceptance rule.
-static const char *wanted[3]={"04769D26-2CA0-4825-B443-E2E5F88300F2",
- "8846FE78-2910-4297-AF97-D59BB6F8FC16","D2420479-F58E-44C5-AB79-1815EC32C686"};
+static const char *wanted[3]={"E652776C-E75D-4712-850F-AB4D81C3D836",
+ "6B06A0EF-7B90-4C3B-B25A-D30E696BAE3C","D2420479-F58E-44C5-AB79-1815EC32C686"};
 static char summaries[3][112];
 static void sample(unsigned index, uint64_t elapsed_ms, bool full)
 {

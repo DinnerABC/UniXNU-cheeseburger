@@ -1,0 +1,229 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -623,6 +623,94 @@
+ 	// the early debugger rather than corrupting memory or forging a map.
+ 	b Lbootstrap_tables_exhausted
+ Lbootstrap_tables_ready:
++// P21 R9 visible early console: restore qualified bounded board framebuffer map.
++// P7: map only page-rounded BootArgs framebuffer; no stack or calls.
++// x2 is last allocated bootstrap page. All pool pages were zeroed above.
++	adrp x8, EXT(p6_diag_record)@page
++	add x8, x8, EXT(p6_diag_record)@pageoff
++	ldr x9, [x20, #0x28]
++	cbz x9, Lp21_fb_guard_failed
++	tst x9, #4095
++	b.ne Lp21_fb_guard_failed
++	ldr x10, [x20, #0x50]
++	cmp x10, #32
++	b.ne Lp21_fb_guard_failed
++	ldr x10, [x20, #0x38]
++	cbz x10, Lp21_fb_guard_failed
++	cmp x10, #16, lsl #12
++	b.hi Lp21_fb_guard_failed
++	str x10, [x8, #208]
++	ldr x11, [x20, #0x48]
++	cmp x11, #300
++	b.lo Lp21_fb_guard_failed
++	cmp x11, #4096
++	b.hi Lp21_fb_guard_failed
++	mul x10, x10, x11
++	add x10, x10, #4095
++	and x10, x10, #0xfffffffffffff000
++	MOV64 x12, 0x1000000
++	cmp x10, x12
++	b.hi Lp21_fb_guard_failed
++	add x11, x9, x10
++	cmp x11, x9
++	b.ls Lp21_fb_guard_failed
++	lsr x12, x11, #38
++	cbnz x12, Lp21_fb_guard_failed
++	sub x12, x11, #1
++	eor x12, x12, x9
++	lsr x12, x12, #30
++	cbnz x12, Lp21_fb_guard_failed // one L1 slot only
++	add x12, x23, x24
++	cmp x9, x12
++	b.hs 81f
++	cmp x11, x23
++	b.hi Lp21_fb_guard_failed // refuse overlap with owned RAM window
++81:
++	lsr x12, x9, #30
++	and x12, x12, #255
++	add x12, x25, x12, lsl #3
++	ldr x13, [x12]
++	cbnz x13, Lp21_fb_guard_failed // do not overwrite an existing RAM mapping
++	add x17, x25, #(BOOTSTRAP_TABLE_BYTES >> 12), lsl #12
++	add x16, x2, #4096
++	cmp x16, x17
++	b.hs Lp21_fb_guard_failed
++	mov x13, x16
++	orr x14, x13, #3
++	str x14, [x12]
++	str x10, [x8, #136]
++	mov x7, x9
++82:
++	lsr x12, x9, #21
++	and x12, x12, #511
++	add x12, x13, x12, lsl #3
++	ldr x14, [x12]
++	cbnz x14, 83f
++	add x16, x16, #4096
++	cmp x16, x17
++	b.hs Lp21_fb_guard_failed
++	orr x14, x16, #3
++	str x14, [x12]
++83:
++	and x14, x14, #0x0000fffffffff000
++	lsr x15, x9, #12
++	and x15, x15, #511
++	add x15, x14, x15, lsl #3
++	// Normal Inner/Outer Non-Cacheable, AF, OuterShareable, PXN/UXN.
++	MOV64 x18, (0x0060000000000603 | (CACHE_ATTRINDX_WRITECOMB << 2))
++	orr x18, x18, x9
++	str x18, [x15]
++	add x9, x9, #4096
++	cmp x9, x11
++	b.lo 82b
++	str x7, [x8, #128] // publish only after complete mapping
++	str x7, [x8, #232] // valid framebuffer mapping before VM replacement
++	dsb sy
++
++	b Lp21_fb_guard_done
++Lp21_fb_guard_failed:
++	b Lp21_fb_guard_failed
++Lp21_fb_guard_done:
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -511,9 +511,50 @@ console_resume()
+  * @param str The string of characters to print.
+  * @param size The number of characters in `str` to print.
+  */
++/* P8 persistent, allocation-free single-boot framebuffer console.
++ * No storage/firmware writes, no reset, no execution checkpoints. Uses the
++ * proven ml_io_map_wcomb VA after arm_vm_init, and XNU's existing ISO bitmap font.
++ * cpus=1 target; concurrent IRQ text may interleave. RAM ring is not claimed
++ * recoverable across reboot; hardware reset can destroy this evidence.
++ */
++extern volatile uint64_t p6_diag_record[];
++extern unsigned char iso_font[];
++char p8_console_ring[32768];
++volatile unsigned int p8_console_count;
++static unsigned int p8_col, p8_row;
++boolean_t p8_console_ready(void) {
++ return p6_diag_record[16] && p6_diag_record[29] &&
++  p6_diag_record[26] == 4320 && p6_diag_record[17] >= 4320*1920;
++}
++void p8_console_char(char ch) {
++ unsigned int pos=__atomic_fetch_add(&p8_console_count,1,__ATOMIC_RELAXED);
++ p8_console_ring[pos%sizeof(p8_console_ring)]=ch;
++ if(ch=='\r'){p8_col=0;return;}
++ if(ch=='\n'){p8_col=0;p8_row++;return;}
++ if((unsigned char)ch<32)return;
++ if(p8_col>=67){p8_col=0;p8_row++;}
++ volatile uint32_t *fb=(volatile uint32_t*)(uintptr_t)p6_diag_record[16];
++ if(p8_row>=60||pos==0){
++  for(unsigned int i=0;i<1080*1920;i++)fb[i]=0xff000000;
++  p8_row=0;
++ }
++ unsigned int x=p8_col*16,y=p8_row*32;
++ for(unsigned int gy=0;gy<16;gy++){
++  unsigned char bits=iso_font[(unsigned char)ch*16+gy];
++  for(unsigned int gx=0;gx<8;gx++){
++   uint32_t color=bits&(1U<<gx)?0xffffffff:0xff000000;
++   unsigned int at=(y+gy*2)*1080+x+gx*2;
++   fb[at]=color;fb[at+1]=color;fb[at+1080]=color;fb[at+1081]=color;
++  }
++ }
++ p8_col++;
++ __asm__ volatile("dsb sy":::"memory");
++}
++
+ void
+ console_write(char *str, int size)
+ {
++ if (p8_console_ready()) { for (int i=0;i<size;i++) p8_console_char(str[i]); return; }
+ 	assert(str != NULL);
+ 
+ 	char *write_ptr = NULL;
+@@ -592,6 +633,7 @@ console_write(char *str, int size)
+ void
+ console_write_unbuffered(char c)
+ {
++ if (p8_console_ready()) { p8_console_char(c); return; }
+ 	_cnputc(c, true);
+ }
+ 
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -342,6 +342,12 @@
+  *		Function:		Runs on the boot CPU, once, on entry from iBoot.
+  */
+ 
++
++/* P21 R9 board diagnostic checkpoints; no reset or storage writes. */
++extern volatile uint64_t p6_diag_record[];
++extern void p8_console_char(char);
++static void p21_visible_stage(const char *s) { while (*s) p8_console_char(*s++); p8_console_char('\n'); }
++
+ __startup_func
+ void
+ arm_init(
+@@ -369,7 +375,9 @@
+ 	BootCpuData.jop_key = ml_default_jop_pid();
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
++	p21_visible_stage("P21 R9: MMU on, arm_init reached; PE_init_platform enter");
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	p21_visible_stage("P21 R9: PE_init_platform returned");
+ 	boot_progress_init();
+ 
+ #if __arm64__
+@@ -532,7 +540,15 @@
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
+ 	boot_progress_stage("arm_vm_init enter");
++	p21_visible_stage("P21 R9: arm_vm_init enter");
++ uint64_t p21_fb_phys=p6_diag_record[16],p21_fb_bytes=p6_diag_record[17];
++ p6_diag_record[16]=0; /* Do not use the physical alias during VM replacement. */
+ 	arm_vm_init(xmaxmem, args);
++ if(p21_fb_phys && p21_fb_bytes && p21_fb_bytes<=0x1000000ULL) {
++  p6_diag_record[16]=(uint64_t)ml_io_map_wcomb((vm_offset_t)p21_fb_phys,(vm_size_t)p21_fb_bytes);
++  p6_diag_record[29]=p21_fb_phys;
++ }
++ p21_visible_stage("P21 R9: arm_vm_init returned; visible console mapped");
+ 	boot_progress_stage("arm_vm_init returned");
+ 
+ 	if (debug_boot_arg) {
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -173,6 +173,8 @@
+ void
+ serial_putc(char c)
+ {
++ extern boolean_t p8_console_ready(void); extern void p8_console_char(char);
++ if(p8_console_ready()) { p8_console_char(c); return; }
+ 	uart_putc(c);
+ }
+ 
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -346,7 +346,15 @@
+ /* P21 R9 board diagnostic checkpoints; no reset or storage writes. */
+ extern volatile uint64_t p6_diag_record[];
+ extern void p8_console_char(char);
+-static void p21_visible_stage(const char *s) { while (*s) p8_console_char(*s++); p8_console_char('\n'); }
++struct { unsigned height,width,depth,rowbytes; uint64_t base; } boot_progress_panic_vinfo;
++extern boolean_t p8_console_ready(void);
++static void p21_visible_stage(const char *s) {
++ if(!p8_console_ready()) return;
++ boot_progress_panic_vinfo.height=1920; boot_progress_panic_vinfo.width=1080;
++ boot_progress_panic_vinfo.depth=32; boot_progress_panic_vinfo.rowbytes=4320;
++ boot_progress_panic_vinfo.base=p6_diag_record[16];
++ while (*s) p8_console_char(*s++); p8_console_char('\n');
++}
+ 
+ __startup_func
+ void

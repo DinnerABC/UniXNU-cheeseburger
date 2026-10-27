@@ -18,7 +18,7 @@ include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "GopFramebuffe
 defconfig = "cheeseburger_defconfig"
 config_fragments = ["arch:configs/common.config", "soc:configs/msm8998.config", "os:configs/ipados.config"]
 patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
-archives = ["build-corecrypto-14.py", "build-corecrypto-14.py --namespace", "component:ArmDTPlatform", "component:ArmCpu", "component:RamBlock", "component:AppleKeyStoreState", "p21-build-board-runtime.py"]
+archives = ["build-corecrypto-14.py", "build-corecrypto-14.py --namespace", "component:ArmDTPlatform", "component:ArmCpu", "component:RamBlock", "component:AppleKeyStoreState", "p23-build-board-runtime.py"]
 # Explicit source recipes; no old archive/object substitution.
 # Architecture recipes are inherited for inspection. The board archive plan
 # is not qualified; example=true prevents this draft from becoming an image.

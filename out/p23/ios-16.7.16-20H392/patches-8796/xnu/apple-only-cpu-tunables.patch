@@ -1,0 +1,27 @@
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index e5336e5..a9a6121 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -33,7 +33,9 @@
+ #include <mach_assert.h>
+ #include <machine/asm.h>
+ #include "assym.s"
++#if defined(APPLE_ARM64_ARCH_FAMILY)
+ #include <arm64/tunables/tunables.s>
++#endif
+ #include <arm64/exception_asm.h>
+ 
+ #if __ARM_KERNEL_PROTECT__
+@@ -775,9 +777,12 @@ common_start:
+ #endif  // APPLE_ARM64_ARCH_FAMILY
+ 
+ 	// Read MIDR before start of per-SoC tunables
++
++#if defined(APPLE_ARM64_ARCH_FAMILY)
+ 	mrs x12, MIDR_EL1
+ 
+ 	APPLY_TUNABLES x12, x13, x14
++#endif
+ 
+ 
+ #if HAS_CLUSTER

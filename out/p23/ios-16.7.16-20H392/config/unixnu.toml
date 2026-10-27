@@ -1,0 +1,19 @@
+version = 1
+[boot]
+timeout = 8
+default = "xnu"
+[ui]
+title = "P23 Stage C iOS16.7.16 8CPU 1GiB"
+[kits]
+autoload = false
+[[entry]]
+id = "xnu"
+title = "MSM8998 XNU (temporary RAM boot)"
+type = "xnu"
+path = "/kernel.macho"
+args = "cheeseburger-upstream-userland=1 cheeseburger-touch=1 -v keepsyms=1 cpus=8 sheng-smp=1 armcpu-self-ipi=1 debug=0x8 sheng-log=1 launchd_unsecure_cache=1 -enable_kprintf_spam startup_debug=0 cheeseburger-disable-watchdogd=1 p20-observe=1 p21-iokit-trace=1 kextlog=0xfff offline-key-events=1 sheng-aks=1 sheng-aks-sls=3 offline-hid-input=1 offline-hid-home=1 cheeseburger-buttons=1 cheeseburger-home-chord=1 sheng-vsync=60 sheng-vsync-fixed=1 fajita-display-logical=1125x2436 fajita-display-ppi=458 fajita-fb-wc=1 offline-legacy-unit-scale=3 offline-mobile-graphics-load=1 offline-legacy-register=1 offline-legacy-phase=4 offline-legacy-gop=1 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1"
+[[entry]]
+id = "exit"
+title = "Return to firmware"
+type = "action"
+action = "exit"

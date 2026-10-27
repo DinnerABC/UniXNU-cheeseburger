@@ -77,7 +77,7 @@ static int verifiedVolumeQuery(dev_t device, const char *expectedUUID, uint8_t *
 
 extern "C" int native_verified_block_root_authorized(dev_t device)
 {
-  return verifiedVolumeQuery(device, "04769D26-2CA0-4825-B443-E2E5F88300F2", nullptr);
+  return verifiedVolumeQuery(device, "E652776C-E75D-4712-850F-AB4D81C3D836", nullptr);
 }
 
 extern "C" int native_verified_block_manifest_sha384(dev_t device, const char *uuid, uint8_t digest[48])

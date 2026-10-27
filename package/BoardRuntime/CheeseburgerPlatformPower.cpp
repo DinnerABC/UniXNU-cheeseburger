@@ -40,7 +40,12 @@ public:
  void updateCPUIdle(UInt64*) override { unavailable(176); }
  uint32_t readAon() override {
   uint32_t value=ApplePMGR::readAon();
+#if defined(UNIXNU_BOARD_ABI_20H392) && UNIXNU_BOARD_ABI_20H392
+  // 20H392 readAon is an empty body (0x5681de0: ret), so the original returns
+  // the caller's x0 (this) rather than the 21H461 -1 sentinel: no value gate.
+#else
   if(value!=0xffffffffU)panic("P11: original unsupported AON contract changed");
+#endif
   __sync_fetch_and_add(&p11_pmgr_reads,1);
   IOLog("P11 PMGR compat READ unsupported=%x caller=%p (not hardware)\n",value,__builtin_return_address(0));
   return value;
@@ -48,7 +53,12 @@ public:
  void writeAon(uint64_t value) override {
   // The unchanged target's unsupported sentinel OR 4 remains the sentinel.
   // No successful security latch, persistent state or hardware write is asserted.
+#if defined(UNIXNU_BOARD_ABI_20H392) && UNIXNU_BOARD_ABI_20H392
+  // 20H392 writeAon is an empty body (0x5681de4: ret): the original drops the
+  // request without latching anything, so no request-value gate is applied.
+#else
   if(value!=0xffffffffULL)panic("P11 PMGR: unsupported AON request %llx",value);
+#endif
   ApplePMGR::writeAon(value);
   __sync_fetch_and_add(&p11_pmgr_writes,1);
   IOLog("P11 PMGR compat WRITE request=%llx caller=%p (original no-hardware semantics)\n",value,__builtin_return_address(0));
@@ -134,7 +144,7 @@ extern "C" void cheeseburger_pmgr_startup(void) {
  if(ready)return;
  if(OSKextLoadKextWithIdentifier("com.apple.driver.ApplePMGR"))panic("P11 PMGR: original dependency not loaded");
  auto parent=lookup("ApplePMGR");
- if(!parent||parent!=&ApplePMGR::gMetaClass||parent->getClassSize()!=0x4b8a8)panic("P11 PMGR: original base ABI mismatch");
+ if(!parent||parent!=&ApplePMGR::gMetaClass||parent->getClassSize()!=sizeof(ApplePMGR))panic("P11 PMGR: original base ABI mismatch");
  if(!classReady){
   void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
   if(!handle)panic("P11 PMGR: preModLoad failed");

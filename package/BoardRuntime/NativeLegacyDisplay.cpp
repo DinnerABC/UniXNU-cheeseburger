@@ -1,8 +1,38 @@
 #include "NativeLegacyRequest.h"
+#include "NativeLegacyScale.h"
+#include "FajitaDisplayLogical.h"
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Reuse the unchanged original generic framebuffer implementation. Unknown
 // backend leaves stop; this class is not yet a published system display.
 #include "OriginalLegacyFramebufferABI.h"
+// Object and request offsets that the original producer/consumer code reads differ between the
+// 21H461 and 20H392 display drivers. Each value below was taken from the matching donor's own
+// instructions, never inferred from the other version.
+#if defined(UNIXNU_BOARD_ABI_20H392) && UNIXNU_BOARD_ABI_20H392
+// Request layout proven from the 20H392 donor: surfaces[4] at +0x888 (indexed load at
+// 0x5c1390c, per-element reads at 0x5c13b78/0x5c13bbc/0x5c13c00); source rectangles are
+// 4 x 16 bytes at +0x11 (0x5c1a704/0x5c1a714) and destinations at +0x51 (0x5c1a7bc/0x5c1a7cc);
+// +0x318 is the updated-layer mask, +0x31c the disabled mask, +0x320 the background colour
+// (copied to display+0x146c when bit 31 is set, 0x5c10514-0x5c10538); +0x32c is the mode flag
+// the donor validator branches on (0x5c1ee74: zero selects the single-layer path); display
+// width/height are copied to +0x330/+0x334 (0x5c14ccc-0x5c14ce0). The donor reads neither
+// +0x324 nor +0x328 in any validation path, so they are not used as gates here.
+#define UNIXNU_ABI_VSYNC_CLIENT_HEAD 4992U
+#define UNIXNU_ABI_STATE_SETTER_SLOT 336U
+#define UNIXNU_ABI_REQUEST_SURFACES 2184U
+#define UNIXNU_ABI_REQUEST_MODE 812U
+#define UNIXNU_ABI_REQUEST_OPTIONS_FIRST 812U
+#define UNIXNU_ABI_REQUEST_OPTIONS_LAST 812U
+#define UNIXNU_ABI_20H392 1
+#else
+#define UNIXNU_ABI_VSYNC_CLIENT_HEAD 5592U
+#define UNIXNU_ABI_STATE_SETTER_SLOT 354U
+#define UNIXNU_ABI_REQUEST_SURFACES 2624U
+#define UNIXNU_ABI_REQUEST_MODE 812U
+#define UNIXNU_ABI_REQUEST_OPTIONS_FIRST 804U
+#define UNIXNU_ABI_REQUEST_OPTIONS_LAST 812U
+#define UNIXNU_ABI_20H392 0
+#endif
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOWorkLoop.h>
@@ -37,8 +67,6 @@ extern "C" void native_legacy_retirement_observed(IOService *);
 // client reports the GPU copy done (native_legacy_gpu_complete). A refused offer or a failed copy uses the CPU copy below and is counted.
 extern "C" bool native_legacy_gpu_offer(void *display,IOMemoryDescriptor *,uint64_t stride,uint32_t width,uint32_t height);
 extern "C" void native_legacy_gpu_fallback_observed(int status);
-// Swaps retired when the GPU client took the frame (before its copy finished), and copies that then failed after such a retirement.
-extern "C" {volatile uint64_t native_legacy_early_retires,native_legacy_early_failures;}
 // Display refresh tick (boot-arg sheng-vsync=<Hz>, 0 or absent: off). The original family sends the compositor's vsync message (type 5)
 // through native_legacy_vsync_notify, the unchanged original sender, but only a platform subclass calls it from the panel's vblank and
 // that subclass is not part of this port: without it the render server never saw a vsync. The GOP scanout has no vblank interrupt, so a
@@ -49,18 +77,104 @@ extern "C" void native_legacy_vsync_notify(void *display,uint64_t timestamp,uint
 extern "C" bool native_legacy_set_refresh_properties(void *display);
 extern "C" void native_legacy_vsync_observed(unsigned event,unsigned hz);
 extern "C" uint64_t mach_continuous_time(void);
+// 21H461 exposes a 64-bit allocation accessor at surface+0x90. The 20H392 surface
+// has only a 32-bit field there (the donor reads it as a dimension at 0x5c159c0),
+// so the real allocation bound is the surface's memory descriptor length.
+static inline uint64_t nativeSurfaceAllocation(OSObject *surface,IOMemoryDescriptor *memory) {
+#if UNIXNU_ABI_20H392
+    (void)surface;return memory?memory->getLength():0;
+#else
+    (void)memory;return native_legacy_surface_allocation(surface);
+#endif
+}
 // 32-bit BGRA, plain ('BGRA') or in Apple's lossless-compressed spelling ('&BGA', one plane): the GPU that renders the surface here writes plain rows
 // either way (no compression is implemented), so the bytes are the same.
 static inline bool nativeBgra(uint32_t format,uint32_t planes) {
     return (format==0x42475241 && !planes) || (format==0x26424741 && planes<=1);
 }
-extern "C" {volatile uint64_t p21_scale_count=0,p21_scale_ticks=0,p21_scale_stride=0;}
-extern "C" void p21_swap_debug_observed(bool,unsigned,const void *,const void *);
+// Differential copy is opt-in (sheng-fb-diff=1), see the copy below.
+static bool diffCopyEnabled() {
+    static int enabled=-1;
+    if(enabled<0){unsigned v=0;PE_parse_boot_argn("sheng-fb-diff",&v,sizeof v);enabled=(v==1);}
+    return enabled;
+}
+// fajita: the logical display (FajitaDisplayLogical.h). Written once in startHardware, read by touch.
+volatile struct fajita_display_logical fajita_display_logical;
+// fajita-display-logical=<W>x<H>: the size userland is told. 0 when absent or malformed.
+static bool fajitaLogicalSize(uint32_t *width,uint32_t *height) {
+    char text[32]={};
+    if(!PE_parse_boot_argn("fajita-display-logical",text,sizeof(text)-1))return false;
+    uint64_t value[2]={0,0};unsigned part=0;const char *c=text;
+    for(;;++c) {
+        if(*c>='0' && *c<='9'){value[part]=value[part]*10+(uint64_t)(*c-'0');if(value[part]>16384)return false;continue;}
+        if((*c=='x' || *c=='X') && part==0 && c!=text){++part;continue;}
+        break;
+    }
+    if(*c || part!=1 || !value[0] || !value[1])return false;
+    *width=(uint32_t)value[0];*height=(uint32_t)value[1];return true;
+}
 class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
     OSDeclareDefaultStructors(NativeLegacyDisplay)
     IOMemoryMap *bootMapping=nullptr;
+    // fajita: the real scanout size, and with fajita-display-logical the scaling of each logical frame onto it. Every size userland
+    // sees (the original dimension fields at +5808/+5812, hence the IOMFB properties, modes and swap validation) is the logical one.
+    uint32_t panelWidth=0,panelHeight=0;
+    bool logical=false,letterboxValid=false;
+    native_legacy_scale_map scaleMap={};
+    uint32_t *scaleTables=nullptr;size_t scaleTableBytes=0;
+    uint32_t *scaleLine=nullptr;size_t scaleLineBytes=0;
+    void releaseScale() {
+        if(scaleTables)IOFree(scaleTables,scaleTableBytes);
+        if(scaleLine)IOFreeAligned(scaleLine,scaleLineBytes);
+        scaleTables=nullptr;scaleLine=nullptr;scaleTableBytes=scaleLineBytes=0;scaleMap={};logical=false;letterboxValid=false;
+    }
+    bool planScale(uint32_t lw,uint32_t lh,uint32_t pw,uint32_t ph) {
+        releaseScale();
+        native_legacy_scale_map m={};m.lw=lw;m.lh=lh;m.pw=pw;m.ph=ph;
+        if(!native_legacy_scale_fit(lw,lh,pw,ph,&m.ox,&m.oy,&m.ow,&m.oh))return false;
+        size_t entries=2*(size_t)m.ow+2*(size_t)m.oh;
+        scaleTableBytes=entries*sizeof(uint32_t);scaleTables=static_cast<uint32_t *>(IOMalloc(scaleTableBytes));
+        scaleLineBytes=(size_t)m.ow*4;scaleLine=static_cast<uint32_t *>(IOMallocAligned(scaleLineBytes,64));
+        if(!scaleTables || !scaleLine){releaseScale();return false;}
+        m.col0=scaleTables;m.col1=m.col0+m.ow;m.row0=m.col1+m.ow;m.row1=m.row0+m.oh;
+        native_legacy_scale_taps(m.col0,m.col1,m.ow,lw,4);
+        native_legacy_scale_taps(m.row0,m.row1,m.oh,lh,1);
+        scaleMap=m;logical=true;letterboxValid=false;return true;
+    }
+    // One logical frame onto the panel: the letterbox once (until something else paints the whole panel), then the image rectangle,
+    // with the differential store of sheng-fb-diff=1 against a shadow of the scaled image. Bytes stored, or UINT64_MAX.
+    uint64_t scaledCopy(uint64_t rowBytes,const void *source,uint64_t sourceBytes,uint64_t sourceStride) {
+        volatile void *panel=reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress());
+        const uint64_t panelBytes=bootMapping->getLength();
+        if(!letterboxValid) {
+            if(!native_legacy_scale_letterbox(panel,panelBytes,rowBytes,&scaleMap,0xff000000U))return UINT64_MAX;
+            letterboxValid=true;
+        }
+        void *useShadow=nullptr;
+        const uint64_t need=(uint64_t)scaleMap.ow*scaleMap.oh*4;
+        if(diffCopyEnabled()) {
+            if(!shadow && need<=(64ull<<20)){shadow=IOMallocAligned((vm_size_t)need,16384);if(shadow){shadowBytes=need;shadowValid=false;}}
+            if(shadow && shadowBytes>=need)useShadow=shadow;
+        }
+        const uint64_t stored=native_legacy_scale_copy(panel,panelBytes,rowBytes,source,sourceBytes,sourceStride,&scaleMap,scaleLine,
+            useShadow,useShadow && shadowValid);
+        shadowValid=useShadow && stored!=UINT64_MAX;
+        return stored;
+    }
+    void publishLogical() {
+        volatile struct fajita_display_logical &out=fajita_display_logical;
+        out.valid=0;__asm__ volatile("dmb ish" ::: "memory");
+        if(logical) {
+            out.logical_width=scaleMap.lw;out.logical_height=scaleMap.lh;
+            out.image_x=scaleMap.ox;out.image_y=scaleMap.oy;out.image_width=scaleMap.ow;out.image_height=scaleMap.oh;
+        } else {
+            out.logical_width=panelWidth;out.logical_height=panelHeight;
+            out.image_x=0;out.image_y=0;out.image_width=panelWidth;out.image_height=panelHeight;
+        }
+        out.panel_width=panelWidth;out.panel_height=panelHeight;
+        __asm__ volatile("dmb ish" ::: "memory");out.valid=1;
+    }
     uint32_t scanBudget=32;
-    unsigned char *scaleRow=nullptr; uint64_t scaleRowBytes=0;
     void *shadow=nullptr;uint64_t shadowBytes=0;bool shadowValid=false;
     bool primary=false;
     bool logicalPM=false;
@@ -83,8 +197,6 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
     const OriginalLegacySwapRequest *gpuRequest=nullptr;
     uint64_t gpuLength=0;
     bool gpuBypass=false;
-    // The swap of the frame the GPU client is copying already retired (boot-arg sheng-early-retire, default 1).
-    bool gpuRetired=false;
     // The refresh tick runs on the family's work loop, the loop of the command gate that registers and removes the vsync clients, so the
     // client queue at +5592 never changes while the sender walks it.
     IOTimerEventSource *vsyncTimer=nullptr;
@@ -92,7 +204,7 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
     unsigned vsyncHz=0;
     bool vsyncArmed=false;
     bool vsyncWanted() const {
-        const void *head=nullptr;memcpy(&head,reinterpret_cast<const unsigned char *>(this)+5592,sizeof(head));return head;
+        const void *head=nullptr;memcpy(&head,reinterpret_cast<const unsigned char *>(this)+UNIXNU_ABI_VSYNC_CLIENT_HEAD,sizeof(head));return head;
     }
     // Selector 72's registration of a vsync client ends in kickSwapQueue (slot 290), which arms the tick; the tick stops by itself once
     // the last client is removed.
@@ -144,10 +256,12 @@ public:
         };
         if(loop)loop->runAction(action,this,&args);else finishGpuSwap(status);
     }
-    void free() override {if(scaleRow){IOFreeAligned(scaleRow,(vm_size_t)scaleRowBytes);scaleRow=nullptr;}stopVsync();if(logicalPM){PMstop();logicalPM=false;}primary=false;OSSafeReleaseNULL(bootMapping);IOMobileFramebufferLegacy::free();}
+    void free() override {releaseScale();fajita_display_logical.valid=0;
+        if(shadow){IOFreeAligned(shadow,(vm_size_t)shadowBytes);shadow=nullptr;shadowBytes=0;}
+        stopVsync();if(logicalPM){PMstop();logicalPM=false;}primary=false;OSSafeReleaseNULL(bootMapping);IOMobileFramebufferLegacy::free();}
     void stop(IOService *provider) override {
         stopVsync();
-        transferred=false;for(auto &entry: validated)entry=nullptr;gpuRequest=nullptr;gpuRetired=false;
+        transferred=false;for(auto &entry: validated)entry=nullptr;gpuRequest=nullptr;
         if(logicalPM){PMstop();logicalPM=false;}
         primary=false;IOMobileFramebufferLegacy::stop(provider);OSSafeReleaseNULL(bootMapping);
     }
@@ -158,7 +272,7 @@ public:
     void announcePoweredByFirmware() {
         struct StateRequest {uint32_t skipRequested,requested,skipPowered,powered;uint8_t changed;uint8_t pad[11];} request={1,0,0,1,1,{}};
         typedef int (*Setter)(void *,StateRequest *,bool);
-        Setter setter=reinterpret_cast<Setter *>(*reinterpret_cast<void **>(this))[354];
+        Setter setter=reinterpret_cast<Setter *>(*reinterpret_cast<void **>(this))[UNIXNU_ABI_STATE_SETTER_SLOT];
         setter(this,&request,false);
     }
     bool start(IOService *provider) override {
@@ -210,17 +324,14 @@ public:
     // The render server paces its display timer by the minimum refresh interval in IOMFBDisplayRefresh (int-209: no vsync client ever
     // registered, frames came every 16.7 ms), and the generic slot 301 fixes it at 1/60 s. With sheng-vsync=<Hz> it reports the panel's
     // own rate instead; the maximum interval and the step keep the original values. Words in 32.32 seconds, then their mach times.
-    // The original maximum interval is 1/24 s (int-240), which offers the render server a 24 to sheng-vsync Hz range. The panel has no
-    // variable refresh, so sheng-vsync-fixed=1 reports the maximum interval equal to the minimum: one fixed rate.
     bool getRefreshAttributes(uint64_t *words,bool fixed) override {
         if(!IOMobileFramebufferLegacy::getRefreshAttributes(words,fixed) || !words)return false;
         unsigned hz=0;PE_parse_boot_argn("sheng-vsync",&hz,sizeof(hz));
         if(hz<=60 || hz>240)return true;
-        unsigned locked=0;PE_parse_boot_argn("sheng-vsync-fixed",&locked,sizeof(locked));
         const uint64_t interval=(1ull<<32)/hz;
         uint64_t machTime=0;nanoseconds_to_absolutetime(interval*1000000000ull>>32,&machTime);
         words[0]=interval;words[1]=machTime;
-        if(fixed || locked==1){words[2]=interval;words[3]=machTime;}
+        if(fixed){words[2]=interval;words[3]=machTime;}
         native_legacy_vsync_observed(5,hz);
         return true;
     }
@@ -252,11 +363,12 @@ public:
         // The separate original software-renderer experiment uses completed
         // synchronous CPU surfaces, with no GPU or display fence fabricated.
         OSObject *surface=nullptr;
-        memcpy(&surface,reinterpret_cast<const unsigned char *>(request)+2624,sizeof(surface));
+        memcpy(&surface,reinterpret_cast<const unsigned char *>(request)+UNIXNU_ABI_REQUEST_SURFACES,sizeof(surface));
         if(!surface) {
             // Validated blank swap (all layers disabled over black): solid-fill the actual GOP.
             PE_Video blank={};
-            uint32_t bw=0,bh=0;getDisplayDimensions(&bw,&bh);
+            // The panel, whole: with a logical display this also blackens the letterbox.
+            uint32_t bw=panelWidth,bh=panelHeight;
             uint64_t blankLength=(uint64_t)bw*bh*4;
             if(PE_current_console(&blank) || blank.v_baseAddr!=bootMapping->getPhysicalAddress() ||
                blank.v_width!=bw || blank.v_height!=bh || blank.v_depth!=32 || blank.v_rotate ||
@@ -269,7 +381,7 @@ public:
                 native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
             }
             __asm__ volatile("dsb sy" ::: "memory");
-            shadowValid=false;
+            shadowValid=false;letterboxValid=true;
             transferred=true;
             native_legacy_frame_observed(1,0,0,0,0,0);
             {const uint32_t colors[4]={0xff000000U,0,0,0};const uint64_t counts[4]={(uint64_t)bw*bh,0,0,0};native_legacy_frame_colors_observed(colors,counts,0);}
@@ -283,72 +395,49 @@ public:
         uint32_t width=0,height=0;getDisplayDimensions(&width,&height);
         uint64_t length=(uint64_t)width*height*4;
         uint64_t sourceStride=native_legacy_surface_stride(surface);
-        uint64_t allocation=native_legacy_surface_allocation(surface);
+        uint64_t allocation=nativeSurfaceAllocation(surface,memory);
         if(!memory || !memory->metaCast("IOMemoryDescriptor") || !native_legacy_surface_bounds(width,height,sourceStride,allocation,memory->getLength()) ||
            native_legacy_surface_width(surface)<width || native_legacy_surface_height(surface)<height ||
            !nativeBgra(native_legacy_surface_format(surface),native_legacy_surface_planes(surface)) ||
            PE_current_console(&video) || video.v_baseAddr!=bootMapping->getPhysicalAddress() ||
-           video.v_width!=width || video.v_height!=height || video.v_depth!=32 || video.v_rotate ||
-           !native_legacy_surface_bounds(width,height,video.v_rowBytes,bootMapping->getLength(),bootMapping->getLength())) {
+           video.v_width!=panelWidth || video.v_height!=panelHeight || video.v_depth!=32 || video.v_rotate ||
+           (!logical && (width!=panelWidth || height!=panelHeight)) ||
+           !native_legacy_surface_bounds(panelWidth,panelHeight,video.v_rowBytes,bootMapping->getLength(),bootMapping->getLength())) {
             native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;
-        }
-        uint32_t sourceWidth=0,sourceHeight=0;
-        if(!p21_scale_geometry(reinterpret_cast<const unsigned char *>(request),width,height,&sourceWidth,&sourceHeight)) {
-            native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
-        }
-        if(sourceWidth!=width || sourceHeight!=height) {
-            // Revalidate source extent independently of physical scanout. No GPU offer for resampling.
-            const unsigned char *rb=reinterpret_cast<const unsigned char *>(request);
-            uint32_t opts[5];memcpy(opts,rb+804,sizeof(opts));
-            if(opts[0] || opts[1] || opts[2] || opts[3]!=width || opts[4]!=height ||
-               native_legacy_surface_format(surface)!=0x42475241U || native_legacy_surface_planes(surface) ||
-               native_legacy_surface_width(surface)<sourceWidth || native_legacy_surface_height(surface)<sourceHeight ||
-               !native_legacy_surface_bounds(sourceWidth,sourceHeight,sourceStride,allocation,memory->getLength())) {
-                native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
-            }
-            uint64_t rowNeed=(uint64_t)width*4;
-            if(!scaleRow){scaleRow=(unsigned char *)IOMallocAligned((vm_size_t)rowNeed,16);if(scaleRow)scaleRowBytes=rowNeed;}
-            IOMemoryMap *source=memory->map(kIOMapAnywhere|kIOMapReadOnly);
-            if(!scaleRow || scaleRowBytes<rowNeed || !source || !source->getVirtualAddress() || source->getLength()<allocation) {
-                OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnNoMemory,request,0);return;
-            }
-            if(!native_legacy_prepare_scanout()){OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;}
-            uint64_t begin;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(begin));
-            bool copied=p21_scale_pixels(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
-                bootMapping->getLength(),video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),
-                source->getLength(),sourceStride,sourceWidth,sourceHeight,width,height,scaleRow,scaleRowBytes);
-            __asm__ volatile("dsb sy" ::: "memory");
-            uint64_t end;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(end));
-            if(copied){native_legacy_copy_timing_observed(end-begin,length);p21_scale_ticks=end-begin;p21_scale_stride=sourceStride;++p21_scale_count;}
-            OSSafeReleaseNULL(source);shadowValid=false;
-            if(!copied){native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;}
-            static unsigned scaleLogs=0;if(scaleLogs<3){++scaleLogs;IOLog("P21 SCALE %ux%u -> %ux%u stride=%llu ticks=%llu\n",sourceWidth,sourceHeight,width,height,sourceStride,end-begin);}
-            transferred=true;native_legacy_transfer_observed(kIOReturnSuccess,request,length);finishTransfer(request);return;
         }
         // The diagnostic renderer repaints the page over the scanout until it is told the system owns the display; the GPU path needs that as much
         // as the CPU copy (int-093: accepted swaps were GPU-copied under a page that kept drawing).
         if(!gpuBypass) {
             if(!native_legacy_prepare_scanout()) {native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;}
         }
-        if(!gpuBypass && native_legacy_gpu_offer(this,memory,sourceStride,width,height)) {
+        // The GPU presenter copies one to one: a logical display is always scaled by the CPU below.
+        if(!gpuBypass && !logical && native_legacy_gpu_offer(this,memory,sourceStride,width,height)) {
             // The GPU writes the scanout memory behind the CPU's back: the differential copy's picture of it is stale from now on.
             native_legacy_swap_stage(1);
-            shadowValid=false;gpuRequest=request;gpuLength=length;transferred=true;
-            // The compositor renders the next frame only after this swap retires, so retiring at the end of the copy serialized render and
-            // copy (int-243: about 4.4 ms render then about 3 ms copy per frame). Retire now: the presenter holds its own reference to this
-            // frame's memory, the previous frame's copy has finished (transferred held this one back), and the next swap still waits for
-            // the copy because transferred stays set until finishGpuSwap.
-            unsigned early=1;PE_parse_boot_argn("sheng-early-retire",&early,sizeof(early));
-            if(early==1 && retireSwap(request,true)) {
-                gpuRetired=true;native_legacy_early_retires=native_legacy_early_retires+1;
-            }
-            return;
+            shadowValid=false;gpuRequest=request;gpuLength=length;transferred=true;return;
         }
-        IOMemoryMap *source=memory->map(kIOMapAnywhere|kIOMapReadOnly);
+        // fajita-fb-src-cached=1: read the surface through a cacheable mapping. Its default cache mode is the creator's (CoreAnimation
+        // asks for write-combined surfaces), and the copy reads every source pixel (the scaled copy several times): uncached reads.
+        // The lines are cleaned and invalidated first, so nothing cached from an earlier frame is copied.
+        static int srcCached=-1;
+        if(srcCached<0){unsigned v=0;PE_parse_boot_argn("fajita-fb-src-cached",&v,sizeof v);srcCached=v==1;}
+        IOMemoryMap *source=memory->map(kIOMapAnywhere|kIOMapReadOnly|(srcCached?kIOMapCopybackCache:0));
         if(!source || !source->getVirtualAddress() || source->getLength()<allocation) {
             OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnNoMemory,request,0);return;
         }
-        if(!native_legacy_copy_layout(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
+        if(srcCached) {
+            uint64_t ctr;__asm__ volatile("mrs %0, ctr_el0":"=r"(ctr));
+            const uintptr_t line=(uintptr_t)4<<((ctr>>16)&15);
+            uintptr_t at=(uintptr_t)source->getVirtualAddress()&~(line-1);
+            const uintptr_t end=(uintptr_t)source->getVirtualAddress()+(uintptr_t)allocation;
+            for(;at<end;at+=line)__asm__ volatile("dc civac, %0"::"r"(at):"memory");
+            __asm__ volatile("dsb sy" ::: "memory");
+        }
+        if(logical ? !native_legacy_scale_destination(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
+            bootMapping->getLength(),video.v_rowBytes,&scaleMap) ||
+            !native_legacy_surface_bounds(width,height,sourceStride,source->getLength(),source->getLength()) ||
+            scaleMap.lw!=width || scaleMap.lh!=height :
+            !native_legacy_copy_layout(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
             bootMapping->getLength(),video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),
             source->getLength(),sourceStride,width,height)) {
             OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
@@ -368,14 +457,18 @@ public:
         }
         uint64_t copyStart;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(copyStart));
         uint64_t stored=UINT64_MAX;
-        {
-            // Store only what changed since the previous frame in Normal non-cacheable scanout memory.
+        if(logical) {
+            stored=scaledCopy(video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),source->getLength(),sourceStride);
+            if(stored==UINT64_MAX) {
+                OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
+            }
+        } else {
+            // Store only what changed since the previous frame (the scanout memory is slow device memory).
             uint64_t need=(uint64_t)width*height*4;
             // Differential copy is opt-in (sheng-fb-diff=1): on hardware it reads the whole source every frame and was not faster
             // than the plain copy (143-285 ms per swap either way), and the first boots with it were followed by an unresponsive
             // lock screen that disappeared with the plain copy (int-005).
-            static int diffOff=-1;
-            if(diffOff<0){unsigned v=0;PE_parse_boot_argn("sheng-fb-diff",&v,sizeof v);diffOff=(v!=1);}
+            const bool diffOff=!diffCopyEnabled();
             if(!diffOff && !shadow && need<=(64ull<<20)){shadow=IOMallocAligned((vm_size_t)need,16384);if(shadow){shadowBytes=need;shadowValid=false;}}
             if(!diffOff && shadow && shadowBytes>=need)
                 stored=native_legacy_copy_diff(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
@@ -403,14 +496,6 @@ public:
         const OriginalLegacySwapRequest *request=gpuRequest;
         if(!request)return;
         gpuRequest=nullptr;
-        if(gpuRetired) {
-            // The swap retired when the client took it; its copy ending only releases the next frame. A failed copy loses this frame
-            // (the next one takes the CPU copy).
-            gpuRetired=false;
-            if(status==0)native_legacy_transfer_observed(kIOReturnSuccess,request,gpuLength);
-            else {native_legacy_early_failures=native_legacy_early_failures+1;native_legacy_gpu_fallback_observed(status);gpuBypass=true;}
-            transferred=false;kickSwapQueue();return;
-        }
         if(status==0) {
             native_legacy_transfer_observed(kIOReturnSuccess,request,gpuLength);
             finishTransfer(request,true);return;
@@ -418,27 +503,28 @@ public:
         native_legacy_gpu_fallback_observed(status);
         transferred=false;gpuBypass=true;kickSwapQueue();
     }
-    // Hands the pending head to the unchanged family's completion. Leaves transferred alone: the callers decide when the next frame may go.
-    bool retireSwap(const OriginalLegacySwapRequest *request,bool force) {
+    // Separately gated retirement after a real scanout store, shared by copied and blank frames.
+    void finishTransfer(const OriginalLegacySwapRequest *request,bool force=false) {
         unsigned retire=0,cpuPresent=0;
         PE_parse_boot_argn("offline-legacy-retire",&retire,sizeof(retire));
         PE_parse_boot_argn("offline-legacy-cpu-present",&cpuPresent,sizeof(cpuPresent));
-        if(!(retire==1 || cpuPresent==1 || force))return false;
-        if(!activateOnlyPendingSwap(request))return false;
-        removeValidated(request);
-        IOMobileFramebufferLegacy::completeCurrentSwap();
-        native_legacy_retirement_observed(this);
-        return true;
-    }
-    // Separately gated retirement after a real scanout store, shared by copied and blank frames.
-    void finishTransfer(const OriginalLegacySwapRequest *request,bool force=false) {
-        // Only after the real copy and store barrier: select the actual pending head and let the unchanged family release it and wake
-        // waiters. This reports memory scanout completion, not a panel vblank or hardware fence.
-        if(!retireSwap(request,force))return;
-        // The unchanged family has retired this generation and released its current reference. Permit the next independently validated
-        // single pending frame. Keep the latch set while completion can reenter this method, and whenever retirement remains disabled.
-        transferred=false;
-        kickSwapQueue();
+        if(retire==1 || cpuPresent==1 || force) {
+            // Only after the real copy and store barrier: select the actual
+            // pending head and let the unchanged family release it and wake
+            // waiters. This reports memory scanout completion, not a panel
+            // vblank or hardware fence. Producer completion must precede
+            // submission; this does not implement asynchronous GPU sync.
+            if(!activateOnlyPendingSwap(request))return;
+            removeValidated(request);
+            IOMobileFramebufferLegacy::completeCurrentSwap();
+            native_legacy_retirement_observed(this);
+            // The unchanged family has retired this generation and released
+            // its current reference. Permit the next independently validated
+            // single pending frame. Keep the latch set while completion can
+            // reenter this method, and whenever retirement remains disabled.
+            transferred=false;
+            kickSwapQueue();
+        }
     }
     IOReturn collectCompletionReports(uint32_t,void *,uint32_t *count,uint32_t) override {
         // The original completion helper passes null optional outputs and
@@ -456,47 +542,47 @@ public:
         OSObject *surface=nullptr;unsigned reason=1;bool accepted=false;
         unsigned enabled=0;PE_parse_boot_argn("offline-legacy-validate",&enabled,sizeof(enabled));
         if(enabled==1 && logicalPM && primary && bootMapping && request) {
-            reason=2;OSObject *surfaces[4]={};memcpy(surfaces,bytes+2624,sizeof(surfaces));surface=surfaces[0];
+            reason=2;OSObject *surfaces[4]={};memcpy(surfaces,bytes+UNIXNU_ABI_REQUEST_SURFACES,sizeof(surfaces));surface=surfaces[0];
             uint32_t width=0,height=0;getDisplayDimensions(&width,&height);
             if(surface && surface->metaCast("IOSurface") && !surfaces[1] && !surfaces[2] && !surfaces[3] &&
                native_legacy_single_layer_state(word(792),word(796),word(800))) {
                 reason=3;bool rectangles=true;
-                uint32_t sourceWidth=0,sourceHeight=0;
-                rectangles=p21_scale_geometry(bytes,width,height,&sourceWidth,&sourceHeight);
-                const bool scaled=sourceWidth!=width || sourceHeight!=height;
-                bool options=true;for(unsigned offset=804;offset<=812;offset+=4)options=options && word(offset)==0;
+                const unsigned rectOffsets[]={17,81};
+                for(unsigned offset: rectOffsets) {
+                    uint32_t rect[4]={};memcpy(rect,bytes+offset,sizeof(rect));
+                    rectangles=rectangles && rect[0]==0 && rect[1]==0 && rect[2]==width && rect[3]==height;
+                }
+                bool options=true;for(unsigned offset=UNIXNU_ABI_REQUEST_OPTIONS_FIRST;offset<=UNIXNU_ABI_REQUEST_OPTIONS_LAST;offset+=4)options=options && word(offset)==0;
                 if(width && height && rectangles && options && word(816)==width && word(820)==height) {
                     reason=4;
                     IOMemoryDescriptor *memory=native_legacy_surface_descriptor(surface);
                     // A surface larger than the display (rows or lines padded to the GPU's alignment) is accepted: only the visible rectangle,
                     // which the request's rectangles already name as the whole display, is copied.
-                    if(native_legacy_surface_width(surface)>=sourceWidth && native_legacy_surface_height(surface)>=sourceHeight &&
-                       (!scaled || native_legacy_surface_format(surface)==0x42475241U) &&
+                    if(native_legacy_surface_width(surface)>=width && native_legacy_surface_height(surface)>=height &&
                        nativeBgra(native_legacy_surface_format(surface),native_legacy_surface_planes(surface)) &&
                        memory && memory->metaCast("IOMemoryDescriptor") &&
-                       native_legacy_surface_bounds(sourceWidth,sourceHeight,native_legacy_surface_stride(surface),
-                           native_legacy_surface_allocation(surface),memory->getLength())) {
+                       native_legacy_surface_bounds(width,height,native_legacy_surface_stride(surface),
+                           nativeSurfaceAllocation(surface,memory),memory->getLength())) {
                         reason=0;accepted=true;
                     } else {
                         native_legacy_surface_rejected(native_legacy_surface_width(surface),native_legacy_surface_height(surface),
                             native_legacy_surface_format(surface),native_legacy_surface_planes(surface),native_legacy_surface_stride(surface),
-                            native_legacy_surface_allocation(surface),memory?memory->getLength():0);
+                            nativeSurfaceAllocation(surface,memory),memory?memory->getLength():0);
                     }
                 }
             }
         }
         if(!accepted && reason==2 && !surface && enabled==1) {
             // No surface in any slot and every updated layer disabled over black: present a blank screen.
-            OSObject *none[4]={};memcpy(none,bytes+2624,sizeof(none));
+            OSObject *none[4]={};memcpy(none,bytes+UNIXNU_ABI_REQUEST_SURFACES,sizeof(none));
             uint32_t width=0,height=0;getDisplayDimensions(&width,&height);
-            bool options=true;for(unsigned offset=804;offset<=812;offset+=4)options=options && word(offset)==0;
+            bool options=true;for(unsigned offset=UNIXNU_ABI_REQUEST_OPTIONS_FIRST;offset<=UNIXNU_ABI_REQUEST_OPTIONS_LAST;offset+=4)options=options && word(offset)==0;
             if(!none[0] && !none[1] && !none[2] && !none[3] && width && height && options &&
                word(816)==width && word(820)==height && native_legacy_blank_state(word(792),word(796),word(800))) {
                 reason=5;accepted=true;
             }
         }
         if(accepted)addValidated(request);else removeValidated(request);
-        p21_swap_debug_observed(accepted,reason,this,request);
         native_legacy_swap_validation_observed(accepted,reason,request,surface);return accepted;
     }
     // The original slot-188 caller passes a uint32_t output and consumes an
@@ -506,7 +592,12 @@ public:
         if(!pitch)return kIOReturnBadArgument;
         *pitch=0;IOService *provider=getProvider();if(!provider)return kIOReturnNotReady;
         OSObject *property=provider->getProperty("dot-pitch");
-        if(!property)return kIOReturnNotFound;
+        if(!property) {
+            // fajita-display-ppi=<N>: the pixel density of the logical display (iPad7,1: 264), for a provider without dot-pitch.
+            unsigned ppi=0;PE_parse_boot_argn("fajita-display-ppi",&ppi,sizeof(ppi));
+            if(ppi && ppi<=2000){*pitch=ppi;return kIOReturnSuccess;}
+            return kIOReturnNotFound;
+        }
         OSData *data=OSDynamicCast(OSData,property);
         if(!data || data->getLength()!=sizeof(*pitch))return kIOReturnBadArgument;
         memcpy(pitch,data->getBytesNoCopy(),sizeof(*pitch));return kIOReturnSuccess;
@@ -531,23 +622,44 @@ public:
            !video.v_width || !video.v_height || video.v_depth!=32 || video.v_rotate ||
            video.v_width>16384 || video.v_height>16384 || video.v_rowBytes<video.v_width*4 ||
            video.v_rowBytes>UINT64_MAX/video.v_height)return false;
-        // ARM64 write-combine maps to Normal Inner/Outer Non-Cacheable, not Device.
+        // The boot framebuffer is always Normal Inner/Outer Non-Cacheable (MAIR_WRITECOMB via kIOMapWriteCombineCache), matching the early
+        // page-table alias and the ml_io_map_wcomb console/observer alias; no Device alias remains. Writes stay gathered so the per-frame
+        // CPU copy does not dominate (kIOMapInhibitCache made it ~59% of all CPU samples in backboardd). Each copy still ends with dsb sy
+        // before the swap completes.
         IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapWriteCombineCache);
         if(!mapping)return false;
         bool valid=mapping->getVirtualAddress() && mapping->getPhysicalAddress()==video.v_baseAddr &&
                    mapping->getLength()==video.v_rowBytes*video.v_height;
         if(valid) {
-            installBootDimensions((uint32_t)video.v_width,(uint32_t)video.v_height);
+            panelWidth=(uint32_t)video.v_width;panelHeight=(uint32_t)video.v_height;
+            // fajita-display-logical=<W>x<H>: the original family reports W x H everywhere; frames are scaled onto the panel.
+            uint32_t reportWidth=panelWidth,reportHeight=panelHeight,lw=0,lh=0;
+            releaseScale();
+            if(fajitaLogicalSize(&lw,&lh) && (lw!=panelWidth || lh!=panelHeight) && planScale(lw,lh,panelWidth,panelHeight)) {
+                reportWidth=lw;reportHeight=lh;
+            }
+            installBootDimensions(reportWidth,reportHeight);
             uint32_t width=0,height=0;getDisplayDimensions(&width,&height);
-            valid=width==video.v_width && height==video.v_height;
+            valid=width==reportWidth && height==reportHeight;
             if(valid) {
                 OSSafeReleaseNULL(bootMapping);bootMapping=mapping;mapping=nullptr;primary=video.v_display==1;
-                valid=native_legacy_gop_mapping_observed(this,bootMapping,width,height);
+                // The mapping observer (and its display-scale policy) checks the panel against the console: it gets the panel size.
+                valid=native_legacy_gop_mapping_observed(this,bootMapping,panelWidth,panelHeight);
+                if(valid)publishLogical();
             }
         }
         OSSafeReleaseNULL(mapping);return valid;
     }
 #define LEAF(n) __attribute__((noreturn,noinline)) void opaque##n() override { native_legacy_backend_guard(n,this,__builtin_return_address(0)); }
+#if UNIXNU_ABI_20H392
+    LEAF(211)
+    LEAF(242)
+    LEAF(243)
+    LEAF(292)
+    LEAF(293)
+    LEAF(322)
+    LEAF(329)
+#else
     LEAF(211)
     LEAF(245)
     LEAF(246)
@@ -555,6 +667,7 @@ public:
     LEAF(307)
     LEAF(338)
     LEAF(345)
+#endif
 #undef LEAF
 };
 OSDefineMetaClassAndStructors(NativeLegacyDisplay,IOMobileFramebufferLegacy)

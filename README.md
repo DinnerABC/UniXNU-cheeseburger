@@ -2,9 +2,9 @@
 
 UniXNU device repository for the **OnePlus 5** (cheeseburger, Qualcomm MSM8998 / Snapdragon 835).
 
-**The original iPadOS interface now appears on hardware.** P21-UP1 reaches a screen showing the time with CPU rendering. P22-R6 logs confirm eight CPUs online and successful display transfers. Native touch remains under development.
+**The main branch tracks the experimental iOS 16.7.16 (20H392) port.** Its first candidate has been temporarily booted; the runtime outcome has not yet been confirmed. The earlier iPadOS interface appeared on hardware in P21-UP1 and is retained on the `ipados-17.7.11` branch.
 
-This is an independent device port built on [UniXNU](https://github.com/UniXNU/UniXNU). The current system is iPadOS 17.7.11 (21H461), with XNU 10063.141.1.
+This is an independent device port built on [UniXNU](https://github.com/UniXNU/UniXNU). The current candidate uses iPhone iOS 16.7.16 (20H392), an XNU 8796 source build, and original 20H392 components. The earlier iPadOS reference uses 17.7.11 (21H461).
 
 - [UniXNU documentation](https://unixnu.com)
 - [Porting guide](https://unixnu.com/porting/)
@@ -19,7 +19,7 @@ This is an independent device port built on [UniXNU](https://github.com/UniXNU/U
 | CPU / memory | Eight CPUs online with per-core timer activity in P22-R6; 1 GiB boot window |
 | Storage / root | UFS reads, authenticated owner root and SystemOS mounting |
 | Data | Writable, volatile APFS RAM Data; resets to its seed on reboot |
-| Display | Original iPadOS interface visible on the physical screen; CPU presentation |
+| Display | CPU presentation; iPadOS was visible on hardware, iOS 16 candidate not yet confirmed |
 | Touch | Native QUP5 / Synaptics RMI4 / HID integrated; physical input not yet validated |
 | Buttons | Power / volume input and a volume-button Home chord; partial support |
 | GPU | No Adreno 540 or Metal acceleration |
@@ -30,7 +30,7 @@ This is an independent device port built on [UniXNU](https://github.com/UniXNU/U
 
 The current UI milestone is based on the device owner's confirmation of the original screen showing the time. Full Setup/Home interaction and stability are still being brought up. Runtime details and image identities belong in [the boot comparison](docs/P21_UPSTREAM_BOOT_COMPARISON.md), rather than this page.
 
-The next task is a userdata-only iOS migration with the boot stack and diagnostics preserved. See the [current handoff](docs/P22_HANDOFF.md) including the next-agent prompt.
+For the iOS 16.7.16 candidate and its first-boot evidence, see [Stage C status](docs/P23_STAGE_C_STATUS.md).
 
 [P22-R6/R7 notes](docs/P22_R6_STATUS.md) record the PSCI fix and Normal non-cacheable framebuffer candidate. R7 has been temporarily booted; its display performance is not yet validated.
 
