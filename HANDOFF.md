@@ -196,3 +196,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
   - 两者用户线程数都只有 1 且 WAIT；P21 基线同一阶段 keybagd 有 3 线程、logd 8 线程。
 - **推断**：launchd 在同步执行 keybag/usermanagerd boot task 时无法应答 bootstrap 查询，导致 daemon 在第一次 os_trace 初始化时永久等待；`logd_helper` 在 121 s 还出现“3 秒 45057 次唤醒”的忙等，单核调度饥饿会放大该问题。
 - **logfix46**：启用真正的 SMP（`sheng-smp=1 armcpu-self-ipi=1`，从参数中去掉 `offline-hid-input=1` 以保持 494 字节），验证 7 核 online、`cpu_signal failed` 是否消失、以及 keybagd 是否仍卡在 logd bootstrap。
+
+## 2026-10-29：SMP 验证与 launchd/logd 栈（logfix46–47）
+
+- **SMP 已验证（logfix46）**：参数 `sheng-smp=1 armcpu-self-ipi=1` 后 8 核全部 online（CPU7 mpidr=103 step=7），`cpu_signal failed` 为 0，`sig=5` 仍为 0，无内核 panic，倒计时 354 s 正常回 Recovery。结论：多核本身可用，不是用户会话卡住的原因。
+- **卡住仍在**：用户态在约 139.5 s 后静默，`DISPLAY clients=0 frames=0`；keybagd/usermanagerd 各只有 1 线程且 WAIT；本轮 logd 也只有 1–3 线程且全部 WAIT（P21 基线 logd 有 8 线程）。
+- **logfix47**：把栈采样目标从 keybagd/usermanagerd 换成 **launchd(index 0→role K)** 与 **logd(index 14→role U)**，用于确认是否是 launchd 在 boot task 期间无法应答 bootstrap，导致所有 daemon 在 os_log/os_trace 初始化时永久等待。
