@@ -162,3 +162,17 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - **探针修复**：logfix33 的 fault 探针在追加 `base/dyldslide` 后发生 `capacity-n` 下溢，导致 logfix34 没有 `FIRST UI FAULT` 输出；已改为局部缓冲 + 剩余空间检查（logfix35 起）。
 - **待解决**：MKB 断言的根因（无系统 keybag / AKS 缺失 / 服务注册），需要不依赖 `-apfs_shared_datavolume` 的路径；以及 keybag 相关 daemon 的 sig=5 潮。
 - **候选索引**：logfix33 `52ccdc76…`（probe 首版，越界）；logfix34 `bbf62f0f…`（AKS 入窗，仍 sig=5，无 FAULT 输出）；logfix35 `b2568888…`（`-apfs_shared_datavolume`，无日志、未倒计时，已弃）；logfix36 `480e2c2e…`（回退参数 + 探针修复，待验证）。
+
+## 2026-10-29：复位链根因与加固（logfix39）
+
+- **为什么 logfix35/37 没自动重启**：
+  - logfix35 加了 `-apfs_shared_datavolume`，内核在日志线程/PMGR 之前就停住（窗口哈希不变，倒计时未执行），约 386 s 后靠硬件看门狗回 Recovery。该参数与 owner/scratch Data 布局不兼容，已弃用。
+  - logfix37（恢复了 `p20-observe=1` 但删掉了 `sheng-log=1`）：持久日志写入器根本没启动（窗口哈希不变），因此监视器读不到新日志；同时子代理审计确认 348.6 s 发生 panic，而 `cpus=1` 使 panic 把唯一 CPU 停在 hold/park，看门狗线程再也不会被调度，永远无法倒计时复位。
+- **结构性缺陷（子代理审计，已确认）**：`board_panic_reset` 的 PSCI 仍被 `#if 0` 屏蔽 → panic 必然永久停机；`cpus=1` 下倒计时线程与 panic 共用唯一 CPU；倒计时还要求 `boot_log_commits` 与 BCB 已 arm，日志一坏就不复位；复位前还会写 UFS note（`rawWrite4k` 可能阻塞）。另有 0–49.7 s（PMGR 起来前）与 `cheeseburger_pmgr_startup` 内 parse/PE 赋值前后的无复位窗口。
+- **修复（logfix39）**：
+  1. `board_panic_reset` 恢复 PSCI：保留 `cheeseburger-panic-hold` 的现场停留，hold 结束后循环发 SYSTEM_RESET；不再写 UFS note。
+  2. 倒计时不再因日志/BCB 缺失而 return（仅打控制台提示），且去掉了复位前的 UFS note。
+  3. `cheeseburger_unattended_reset_start` 成功启动线程后才置 `started`；并在 `bsd_init` 的 `p20_observer_start` 旁提前调用一次（PMGR 未起时也能有倒计时）。
+  4. 新增 `scripts/unattended/preboot-gate.py`：启动前直接检查打包镜像里的参数（<500 字节、必须含 `cheeseburger-unattended-reset`、`cheeseburger-panic-hold`、`sheng-log=1`）、内核符号、panic 路径必须含 PSCI、倒计时代码不得依赖 log/BCB、payload/kernel pin 与固件 pin 日志一致。logfix39 已通过：`PREBOOT_GATE_PASS`。
+- **仍存在的限制**：PMGR 启动前（约 0–50 s）的 panic 没有内核内复位路径；`cpus=1` 时 panic hold 期间写不出持久日志（只能看屏幕）。
+- **候选**：logfix38 `480e2c2e…`（复位链修复的第一版，未启动）；logfix39 `af8e8e24…`、内核 `d3b1bcdd…`、固件 `b1f40440…`（本轮验证）。

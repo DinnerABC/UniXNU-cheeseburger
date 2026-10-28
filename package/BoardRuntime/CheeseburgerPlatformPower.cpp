@@ -163,18 +163,24 @@ extern "C" uint32_t board_panic_hold_seconds=0;
 static volatile bool cb_panic_parked=false;
 extern "C" void board_panic_reset(void) {
  __atomic_store_n(&cb_panic_parked,true,__ATOMIC_RELEASE);
- unattended_console_line("CB panic: reset disabled; stopped for inspection\n");
-#if 0 /* Temporarily suspended for panic-screen inspection. */
- cb_reset_note("RESET board_panic_reset");
- uint64_t rc=cb_psci(0x84000009UL,0); /* PSCI SYSTEM_RESET */
- { char line[64]; int n=snprintf(line,sizeof line,"CB panic reset: SYSTEM_RESET returned %llx\n",rc); for(int i=0;i<n;i++) p8_console_char(line[i]); }
-#endif
- for (;;) __asm__ volatile("wfe");
+ /* The ML hold already kept this screen for cheeseburger-panic-hold seconds.
+  * A parked CPU is unrecoverable when cpus=1 (the countdown thread would never
+  * run again), so every panic ends in PSCI from here. The note is skipped:
+  * rawWrite4k can block on a storage lock the panic may have left held. */
+ unattended_console_line("CB panic: hold done; SYSTEM_RESET\n");
+ for (;;) {
+  uint64_t rc=cb_psci(0x84000009UL,0); /* PSCI SYSTEM_RESET */
+  char line[64]; int n=snprintf(line,sizeof line,"CB panic reset: SYSTEM_RESET returned %llx\n",rc);
+  for(int i=0;i<n;i++) p8_console_char(line[i]);
+  for (volatile unsigned spin=0; spin<1000000; ++spin) __asm__ volatile("yield");
+ }
 }
 static int cb_halt_restart(unsigned int type) {
  /* Only restart requests reset the SoC; halts and diagnostics keep their normal path. */
  if (type!=kPERestartCPU && type!=kPEPanicRestartCPU && type!=kPEPanicRestartCPUNoCallouts) return 0;
- { char n[96]; snprintf(n,sizeof n,"RESET halt_restart type=%u",type); cb_reset_note(n); }
+ /* No UFS note here: rawWrite4k can block behind an unhealthy or held storage
+  * lock, which would strand every reset path before PSCI. The console line
+  * below is the only evidence this code may leave. */
  if (cb_freq && cb_boot_ticks && cb_total_seconds) {
   uint64_t now=0,elapsed=0;
   do {
@@ -213,21 +219,22 @@ static void unattended_reset_thread(void *, wait_result_t) {
   unattended_console_line("CB watchdog: panic parked; countdown reset\n");
  }
  if (!__atomic_load_n(&boot_log_commits,__ATOMIC_ACQUIRE) || cheeseburger_recovery_armed!=1) {
-  unattended_console_line("CB watchdog: reset skipped; log or Recovery BCB unavailable\n");
-  return;
+  /* Reset anyway: a missing log writer or BCB must never turn into a parked
+   * device. Without the BCB the next pass may land in the normal system
+   * instead of Recovery, which is still recoverable by the operator. */
+  unattended_console_line("CB watchdog: no log/BCB; countdown reset\n");
  }
  unattended_console_line("CB watchdog: PSCI SYSTEM_RESET\n");
- cb_reset_note("RESET watchdog fire");
  cb_halt_restart(kPEPanicRestartCPU);
 }
 volatile unsigned cheeseburger_unattended_remaining = 0;
 
 extern "C" void cheeseburger_unattended_reset_start(void) {
- static bool started=false;if(started)return;started=true;
+ static bool started=false;if(started)return;
  int seconds=0;
  if(!PE_parse_boot_argn("cheeseburger-unattended-reset",&seconds,sizeof seconds)||seconds<=0)return;
  thread_t thread=nullptr;
- if(kernel_thread_start(unattended_reset_thread,nullptr,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+ if(kernel_thread_start(unattended_reset_thread,nullptr,&thread)==KERN_SUCCESS){started=true;thread_deallocate(thread);}
 }
 extern "C" void cheeseburger_pmgr_startup(void) {
  if(ready)return;
