@@ -57,7 +57,7 @@ static int capture(proc_t p,void *arg) {
  if(index==2 || index==4 || index==1)p21_wait_capture(task,index==1?2:(index==4),proc_pid(p));
  /* Blocked-boot sampling: the keybag/user session chain; role letters K and U. */
  if(index==6)p21_wait_capture(task,4,proc_pid(p));
- if(index==14)p21_wait_capture(task,3,proc_pid(p));
+ if(index==13)p21_wait_capture(task,3,proc_pid(p));
  snprintf(capture_rows[index],120,"%.15s p%d threads=%u RUN=%u WAIT=%u busy=%u",name,proc_pid(p),total,running,waiting,busy);
  capture_seen=capture_seen+1;return PROC_RETURNED;
 }

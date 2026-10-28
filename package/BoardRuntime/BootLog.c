@@ -132,7 +132,7 @@ static size_t put(char *out, size_t at, size_t cap, const char *text, size_t max
 extern volatile uint64_t p20_observer[32],p20_registry_seen,p20_display_clients,p20_display_frames,p20_swap_stats[12];
 extern volatile int native_legacy_meta_status;
 extern volatile int cheeseburger_watchdog_policy_requested,cheeseburger_watchdog_policy_status,cheeseburger_watchdog_policy_applied;
-extern char p21_wait_rows[360][91];
+extern char p21_wait_rows[600][91];
 extern char p20_ui_rows[24][91],p20_exit_rows[5][120],boot_process_rows[24][120];
 extern char p8_console_ring[32768];extern volatile unsigned p8_console_count;
 extern void p21_client_rows(char rows[6][91]),p21_aks_rows(char rows[2][91]),p21_vsync_row(char *,unsigned);
@@ -181,7 +181,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  at=put(out,at,cap,"[exits]",16);for(unsigned i=0;i<5;++i)at=put(out,at,cap,p20_exit_rows[i],120);
  at=put(out,at,cap,"[processes]",16);for(unsigned i=0;i<24;++i)at=put(out,at,cap,boot_process_rows[i],120);
  at=put(out,at,cap,"[ui-thread-stacks-live-bounded-24x16]",48);
- for(unsigned i=0;i<360;++i)if(p21_wait_rows[i][0])at=put(out,at,cap,p21_wait_rows[i],91);
+ for(unsigned i=0;i<600;++i)if(p21_wait_rows[i][0])at=put(out,at,cap,p21_wait_rows[i],91);
  at=put(out,at,cap,"[iokit-service-matching]",32);
  p21_match_dump(match_report,sizeof match_report);at=put_report(out,at,cap,match_report,sizeof match_report);
  at=put(out,at,cap,"[official-component-reports]",32);

@@ -18,7 +18,7 @@ extern volatile unsigned p21_scanout_generation;
 static unsigned rendered_generation;
 extern void p20_display_snapshot(void);
 extern void p21_client_rows(char rows[6][91]),p21_aks_rows(char rows[2][91]),p21_vsync_row(char *,unsigned);
-extern char p21_wait_rows[240][91];
+extern char p21_wait_rows[600][91];
 extern volatile uint64_t p20_display_frames, p20_display_errors, p20_display_clients;
 extern volatile uint64_t p20_registry_seen;
 extern volatile int native_legacy_meta_status;
