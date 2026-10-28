@@ -167,7 +167,7 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 
 - **为什么 logfix35/37 没自动重启**：
   - logfix35 加了 `-apfs_shared_datavolume`，内核在日志线程/PMGR 之前就停住（窗口哈希不变，倒计时未执行），约 386 s 后靠硬件看门狗回 Recovery。该参数与 owner/scratch Data 布局不兼容，已弃用。
-  - logfix37（恢复了 `p20-observe=1` 但删掉了 `sheng-log=1`）：持久日志写入器根本没启动（窗口哈希不变），因此监视器读不到新日志；同时子代理审计确认 348.6 s 发生 panic，而 `cpus=1` 使 panic 把唯一 CPU 停在 hold/park，看门狗线程再也不会被调度，永远无法倒计时复位。
+  - logfix37（恢复了 `p20-observe=1` 但删掉了 `sheng-log=1`）：持久日志写入器根本没启动，`20261028T180511Z` 与 logfix36 的 `175149Z` 窗口哈希、boot_id、rounds 完全相同（零写入）。**348.6 s 的 panic 记录属于 logfix36（175149Z）而不是 37**；`cpus=1` 下该 panic 把唯一 CPU 停在 hold/park，看门狗线程再也不会被调度，永远无法倒计时复位。
 - **结构性缺陷（子代理审计，已确认）**：`board_panic_reset` 的 PSCI 仍被 `#if 0` 屏蔽 → panic 必然永久停机；`cpus=1` 下倒计时线程与 panic 共用唯一 CPU；倒计时还要求 `boot_log_commits` 与 BCB 已 arm，日志一坏就不复位；复位前还会写 UFS note（`rawWrite4k` 可能阻塞）。另有 0–49.7 s（PMGR 起来前）与 `cheeseburger_pmgr_startup` 内 parse/PE 赋值前后的无复位窗口。
 - **修复（logfix39）**：
   1. `board_panic_reset` 恢复 PSCI：保留 `cheeseburger-panic-hold` 的现场停留，hold 结束后循环发 SYSTEM_RESET；不再写 UFS note。
@@ -175,4 +175,6 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
   3. `cheeseburger_unattended_reset_start` 成功启动线程后才置 `started`；并在 `bsd_init` 的 `p20_observer_start` 旁提前调用一次（PMGR 未起时也能有倒计时）。
   4. 新增 `scripts/unattended/preboot-gate.py`：启动前直接检查打包镜像里的参数（<500 字节、必须含 `cheeseburger-unattended-reset`、`cheeseburger-panic-hold`、`sheng-log=1`）、内核符号、panic 路径必须含 PSCI、倒计时代码不得依赖 log/BCB、payload/kernel pin 与固件 pin 日志一致。logfix39 已通过：`PREBOOT_GATE_PASS`。
 - **仍存在的限制**：PMGR 启动前（约 0–50 s）的 panic 没有内核内复位路径；`cpus=1` 时 panic hold 期间写不出持久日志（只能看屏幕）。
-- **候选**：logfix38 `480e2c2e…`（复位链修复的第一版，未启动）；logfix39 `af8e8e24…`、内核 `d3b1bcdd…`、固件 `b1f40440…`（本轮验证）。
+- **候选**：logfix38 `5919a6dd…`（复位链修复的第一版，未启动；HANDOFF 早前误写为 480e2c2e）；logfix39 `af8e8e24…`、内核 `d3b1bcdd…`、固件 `b1f40440…`（20261028T182442Z：无内核 panic，SpringBoard 断言在 `FBSDisplayMode _initWithWidth:…validityCheck:+0x244`，倒计时 355 s 正常回 Recovery——只验证了倒计时路径，panic→PSCI 尚未被实机触发）；logfix40 `825013c8…`（`cpus=8`）；logfix41 `9ffd0b50…`（按 P21 基线去掉 `fajita-display-logical`，恢复 `validate/cpu-present/unit-scale=1`）。
+
+- **证据更正（子代理审计）**：logfix33 目录内镜像的 ramdisk 与 manifest/固件 pin 不是同一组（`52ccdc76…` 镜像内 payload `255d37e5…`，manifest/固件却是 `efe05eee…`），且缺 `check-firmware-pins.log`，不能作为可复现候选；33–38 均缺 pins 日志，39/40/41 已保存。日志索引补充：`out/p21/persistent-logs/20261028T182442Z`（logfix39，boot `0x3a12cd3b`，60 rounds，无内核 panic）。
