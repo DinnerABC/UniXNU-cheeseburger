@@ -1,7 +1,7 @@
 // Bounded named UI exit diagnostics; original exit disposition is unchanged.
 static const char *ui_names[4]={"PreBoard","backboardd","SpringBoard","watchdogd"};
 static unsigned ui_gate,ui_exits[4],ui_details[4],ui_abort_seen[4];
-static char ui_abort[4][270],ui_fault[4][270];
+static char ui_abort[4][420],ui_fault[4][420];
 char p20_ui_rows[24][91];
 static int ui_slot(const char *name){for(int i=0;i<4;++i)if(name&&!strcmp(name,ui_names[i]))return i;return -1;}
 static void p20_ui_abort_payload(const char *name,unsigned ns,uint64_t code,uint64_t reason) {

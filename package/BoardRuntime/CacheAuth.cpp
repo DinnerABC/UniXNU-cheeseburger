@@ -42,11 +42,11 @@ static int verifiedVolumeQuery(dev_t device, const char *expectedUUID, uint8_t *
   matching->release();
   if (!iterator) return 0;
   bool authenticated = false;
-  unsigned matches = 0, depth = 0;
+  unsigned matches = 0, authenticatedMatches = 0, depth = 0;
   while (OSObject *object = iterator->getNextObject()) {
     IOService *media = OSDynamicCast(IOService, object);
     if (!media) continue;
-    if (++matches != 1) { authenticated = false; break; }
+    ++matches;
     OSString *uuid = OSDynamicCast(OSString, media->getProperty("UUID"));
     if (!uuid || uuid->getLength() != 36 ||
         (expectedUUID && strcmp(expectedUUID, uuid->getCStringNoCopy()))) continue;
@@ -61,6 +61,7 @@ static int verifiedVolumeQuery(dev_t device, const char *expectedUUID, uint8_t *
         char wrong[37];strlcpy(wrong,uuid->getCStringNoCopy(),sizeof(wrong));wrong[0] ^= 1;
         native_p15_verified_block_wrong_uuid_refused = native_ufs_block_authenticates(provider,wrong,nullptr)==0;
         authenticated = authenticated && native_p15_verified_block_wrong_uuid_refused;
+        if (authenticated) ++authenticatedMatches;
         break;
       }
     }
@@ -68,7 +69,10 @@ static int verifiedVolumeQuery(dev_t device, const char *expectedUUID, uint8_t *
   iterator->release();
   native_p15_verified_block_root_media_matches = matches;
   native_p15_verified_block_root_provider_depth = depth;
-  if (!authenticated || matches != 1) {
+  if (!authenticated || authenticatedMatches != 1) {
+    IOLog("CacheAuth: query uuid=%s matches=%u auth=%u depth=%u uuids_match=%u wrong_refused=%u\n",
+          expectedUUID ? expectedUUID : "<any>", matches, authenticatedMatches, depth,
+          native_p15_verified_block_root_uuid_match, native_p15_verified_block_wrong_uuid_refused);
     if (manifestDigest) bzero(manifestDigest, SHA384_DIGEST_LENGTH);
     return 0;
   }
@@ -88,11 +92,15 @@ extern "C" int native_p15_verified_block_manifest_sha384(dev_t device, const cha
   return verifiedVolumeQuery(device, uuid, digest);
 }
 
+volatile unsigned p15_volume_matches=0,p15_volume_authenticated=0;
+char p15_volume_uuid[37]={};
 extern "C" int native_p15_verified_block_volume_device(const char *uuid, dev_t *device, char *path, size_t size)
 {
   if (!uuid || !device || !path || size < 6 || strlen(uuid) != 36) return 0;
   *device = NODEV;
   path[0] = 0;
+  strlcpy(p15_volume_uuid,uuid,sizeof(p15_volume_uuid));
+  p15_volume_matches=0;p15_volume_authenticated=0;
   OSDictionary *matching = IOService::serviceMatching("IOMedia");
   OSDictionary *properties = OSDictionary::withCapacity(1);
   OSString *wanted = OSString::withCString(uuid);
@@ -102,33 +110,56 @@ extern "C" int native_p15_verified_block_volume_device(const char *uuid, dev_t *
   }
   bool ready = properties->setObject("UUID", wanted) && matching->setObject("IOPropertyMatch", properties);
   wanted->release(); properties->release();
-  OSIterator *iterator = ready ? IOService::getMatchingServices(matching) : nullptr;
-  matching->release();
-  if (!iterator) return 0;
-  unsigned matches = 0;
-  bool authenticated = false;
-  dev_t candidate = NODEV;
-  char candidatePath[64] = {};
-  while (OSObject *object = iterator->getNextObject()) {
-    IOService *media = OSDynamicCast(IOService, object);
-    if (!media) continue;
-    if (++matches != 1) { authenticated = false; break; }
-    OSString *identity = OSDynamicCast(OSString, media->getProperty("UUID"));
-    OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
-    OSNumber *mjr = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
-    OSNumber *mnr = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
-    if (!identity || strcmp(identity->getCStringNoCopy(), uuid) || !name || !mjr || !mnr ||
-        !name->getLength() || name->getLength() >= sizeof(candidatePath) - 6 || name->getLength() >= size - 6 ||
-        mjr->unsigned64BitValue() > 255 || mnr->unsigned64BitValue() > 0xffffff) continue;
-    candidate = static_cast<dev_t>(makedev(mjr->unsigned32BitValue(), mnr->unsigned32BitValue()));
-    if (!native_p15_verified_block_root_authorized(candidate)) continue;
-    snprintf(candidatePath, sizeof(candidatePath), "/dev/%s", name->getCStringNoCopy());
-    authenticated = true;
+  if (!ready) { matching->release(); return 0; }
+  /* The APFS volume media for the SystemOS window is registered asynchronously and can be
+   * re-registered while the root OS container mounts. Observed at 60.204 s: the window media
+   * is "ready"; at 60.290 s the same UUID match returns no service yet. Retry before
+   * declaring the volume absent instead of failing the owner mount on that race. */
+  unsigned tries = 0;
+  dev_t found = NODEV;
+  char foundPath[64] = {};
+  for (tries = 1; tries <= 60 && found == NODEV; ++tries) {
+    OSIterator *iterator = IOService::getMatchingServices(matching);
+    if (iterator) {
+      unsigned matches = 0, authenticatedMatches = 0;
+      bool authenticated = false;
+      dev_t candidate = NODEV;
+      char candidatePath[64] = {};
+      while (OSObject *object = iterator->getNextObject()) {
+        IOService *media = OSDynamicCast(IOService, object);
+        if (!media) continue;
+        ++matches;
+        OSString *identity = OSDynamicCast(OSString, media->getProperty("UUID"));
+        OSString *name = OSDynamicCast(OSString, media->getProperty(kIOBSDNameKey));
+        OSNumber *mjr = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMajorKey));
+        OSNumber *mnr = OSDynamicCast(OSNumber, media->getProperty(kIOBSDMinorKey));
+        if (!identity || strcmp(identity->getCStringNoCopy(), uuid) || !name || !mjr || !mnr ||
+            !name->getLength() || name->getLength() >= sizeof(candidatePath) - 6 || name->getLength() >= size - 6 ||
+            mjr->unsigned64BitValue() > 255 || mnr->unsigned64BitValue() > 0xffffff) continue;
+        candidate = static_cast<dev_t>(makedev(mjr->unsigned32BitValue(), mnr->unsigned32BitValue()));
+        if (!native_p15_verified_block_root_authorized(candidate)) continue;
+        snprintf(candidatePath, sizeof(candidatePath), "/dev/%s", name->getCStringNoCopy());
+        authenticated = true;
+        ++authenticatedMatches;
+      }
+      iterator->release();
+      p15_volume_matches = matches;
+      p15_volume_authenticated = authenticatedMatches;
+      if (authenticated && authenticatedMatches == 1) {
+        found = candidate;
+        strlcpy(foundPath, candidatePath, sizeof(foundPath));
+      }
+    }
+    if (found == NODEV && tries < 60) IOSleep(50);
   }
-  iterator->release();
-  if (!authenticated || matches != 1) return 0;
-  *device = candidate;
-  strlcpy(path, candidatePath, size);
+  matching->release();
+  if (found == NODEV) {
+    IOLog("CacheAuth: volume uuid=%s absent after %u tries matches=%u auth=%u\n",
+          uuid, tries - 1, p15_volume_matches, p15_volume_authenticated);
+    return 0;
+  }
+  *device = found;
+  strlcpy(path, foundPath, size);
   return 1;
 }
 

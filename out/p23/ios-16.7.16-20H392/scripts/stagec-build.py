@@ -84,6 +84,15 @@ def host_source_compat():
     """
     import re
     work = TREE / '.cache/xnu-work'
+    debug = work / 'osfmk/kern/debug.c'
+    debug_text = debug.read_text()
+    marker = '\t\t\tprintf("panic(cpu %d caller 0x%lx): %s\\n", cpu_number(), panic_caller, board_panic_msg);'
+    call = ('\n\t\t\textern void boot_log_panic_flush_text(const char *) __attribute__((weak_import));'
+            '\n\t\t\tif (&boot_log_panic_flush_text) boot_log_panic_flush_text(board_panic_msg);')
+    if 'boot_log_panic_flush_text(board_panic_msg)' not in debug_text:
+        if marker not in debug_text:
+            raise SystemExit('board panic capture anchor missing')
+        debug.write_text(debug_text.replace(marker, marker + call, 1))
     header = work / 'bsd/sys/uio_internal.h'
     text = header.read_text()
     typedef = 'typedef char __attribute__((aligned(_Alignof(union iovecs)))) uio_stackbuf_t;'

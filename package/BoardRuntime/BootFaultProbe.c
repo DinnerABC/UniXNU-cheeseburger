@@ -68,6 +68,34 @@ void boot_progress_exit_fault(int pid,unsigned signal,char *out,unsigned long ca
    if(pair[0]<=frame || pair[0]-frame>1048576)break;
    frame=pair[0];
   }
+  // Resolve the PC against the process's own dyld image list instead of trusting the shared-region slide.
+  {
+   struct user64_dyld_all_image_infos info={0};
+   if(!copyin(task_get_all_image_info_addr(current_task()),&info,sizeof(info)) &&
+      info.infoArray && info.infoArrayCount) {
+    uint64_t best=0; char path[96]={0};
+    uint64_t cache_slide=info.version>=12?(uint64_t)info.sharedCacheSlide:0;
+    unsigned limit=info.infoArrayCount<1024?info.infoArrayCount:1024;
+    struct user64_dyld_image_info *array=(struct user64_dyld_image_info *)(uintptr_t)info.infoArray;
+    for(unsigned i=0;i<limit;++i) {
+     struct user64_dyld_image_info image={0};
+     if(copyin((user_addr_t)(uintptr_t)&array[i],&image,sizeof(image)))break;
+     uint64_t addr=(uint64_t)image.imageLoadAddress;
+     if(addr && addr<=f.pc && addr>best) {
+      unsigned long copied=0;best=addr;path[0]=0;
+      if(copyinstr(image.imageFilePath,path,sizeof(path),&copied))path[0]=0;
+     }
+    }
+    if(best)n+=snprintf(out+n,capacity-n," img=%s+0x%llx base=%llx dyldslide=%llx",
+                        path,(unsigned long long)(f.pc-best),(unsigned long long)best,
+                        (unsigned long long)cache_slide);
+   }
+   char message[81]={0}; unsigned long copied=0;
+   if(f.x[0] && !copyinstr(f.x[0],message,sizeof(message),&copied)) {
+    for(unsigned i=0;message[i];++i)if((unsigned char)message[i]<32||(unsigned char)message[i]>126)message[i]='?';
+    if(message[0])n+=snprintf(out+n,capacity-n," msg=%s",message);
+   }
+  }
  }
 }
 

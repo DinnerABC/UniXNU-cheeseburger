@@ -3,6 +3,8 @@
 // ABI/lifetime reference: UniXNU-sheng/package/ShengPlatformPower.cpp (MIT).
 #include "OriginalPMGRABI.h"
 #include <IOKit/IOLib.h>
+#include <kern/thread.h>
+#include <pexpert/pexpert.h>
 #include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <libkern/c++/OSData.h>
@@ -140,8 +142,113 @@ void CheeseburgerPlatformPower::stop(IOService *p) {
  ready=false;IOService::stop(p);
 }
 void CheeseburgerPlatformPower::free() { if(nub)panic("P11 PMGR: free with live nub");IOService::free(); }
+extern "C" volatile unsigned cheeseburger_unattended_remaining;
+extern "C" int native_ufs_log_force_note(const char *) __attribute__((weak_import));
+static void cb_reset_note(const char *text){ if (&native_ufs_log_force_note && text) native_ufs_log_force_note(text); }
+extern "C" volatile unsigned boot_log_commits;
+extern "C" volatile int cheeseburger_recovery_armed;
+extern "C" void p8_console_char(char);
+extern int (*PE_halt_restart)(unsigned int);
+static void unattended_console_line(const char *text);
+static uint64_t cb_psci(uint64_t fid,uint64_t a1) {
+ register uint64_t x0 __asm__("x0")=fid,x1 __asm__("x1")=a1,x2 __asm__("x2")=0,x3 __asm__("x3")=0;
+ __asm__ volatile("smc #0" : "+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3) :: "memory","x4","x5","x6","x7","x8","x9","x10","x11","x12","x13","x14","x15","x16","x17");
+ return x0;
+}
+static uint64_t cb_boot_ticks=0,cb_freq=0;
+static unsigned cb_total_seconds=180;
+/* Panic funnel hold (osfmk/kern/debug.c): keep the other CPUs running so the persistent log
+ * writer commits the panic, then reset. 0 keeps the stock debugger path. */
+extern "C" uint32_t board_panic_hold_seconds=0;
+static volatile bool cb_panic_parked=false;
+extern "C" void board_panic_reset(void) {
+ __atomic_store_n(&cb_panic_parked,true,__ATOMIC_RELEASE);
+ unattended_console_line("CB panic: reset disabled; stopped for inspection\n");
+#if 0 /* Temporarily suspended for panic-screen inspection. */
+ cb_reset_note("RESET board_panic_reset");
+ uint64_t rc=cb_psci(0x84000009UL,0); /* PSCI SYSTEM_RESET */
+ { char line[64]; int n=snprintf(line,sizeof line,"CB panic reset: SYSTEM_RESET returned %llx\n",rc); for(int i=0;i<n;i++) p8_console_char(line[i]); }
+#endif
+ for (;;) __asm__ volatile("wfe");
+}
+static int cb_halt_restart(unsigned int type) {
+ /* Only restart requests reset the SoC; halts and diagnostics keep their normal path. */
+ if (type!=kPERestartCPU && type!=kPEPanicRestartCPU && type!=kPEPanicRestartCPUNoCallouts) return 0;
+ { char n[96]; snprintf(n,sizeof n,"RESET halt_restart type=%u",type); cb_reset_note(n); }
+ if (cb_freq && cb_boot_ticks && cb_total_seconds) {
+  uint64_t now=0,elapsed=0;
+  do {
+   __asm__ volatile("isb; mrs %0,cntpct_el0" : "=r"(now));
+   elapsed=(now-cb_boot_ticks)/cb_freq;
+  } while (elapsed<cb_total_seconds);
+ }
+ uint64_t rc=cb_psci(0x84000009UL,0); /* PSCI SYSTEM_RESET */
+ { char line[80]; int n=snprintf(line,sizeof line,"CB reset: type=%u SYSTEM_RESET returned %llx\n",type,rc); for(int i=0;i<n;i++) p8_console_char(line[i]); }
+ for (;;) __asm__ volatile("wfe");
+}
+static void unattended_console_line(const char *text) {
+ for (; *text; ++text) p8_console_char(*text);
+}
+static void unattended_reset_thread(void *, wait_result_t) {
+ int seconds=0;
+ if(!PE_parse_boot_argn("cheeseburger-unattended-reset",&seconds,sizeof seconds)||seconds<=0){
+  unattended_console_line("CB watchdog: no cheeseburger-unattended-reset arg\n");
+  return;
+ }
+ { char line[48]; snprintf(line,sizeof line,"CB watchdog: %d s\n",seconds); for(int i=0;line[i];++i) p8_console_char(line[i]); }
+ printf("P23 WDT start=%d\n",seconds);
+ for (int left=seconds; left>0; --left) {
+  cheeseburger_unattended_remaining=(unsigned)left;
+  char line[48];
+  int n=snprintf(line,sizeof line,"AUTO RESET in %d s\n",left);
+  for (int i=0;i<n;++i) p8_console_char(line[i]);
+  if (left==seconds || (left%10)==0 || left<=5) { char line[48]; snprintf(line,sizeof line,"CB watchdog: reset in %d s\n",left); for(int i=0;line[i];++i) p8_console_char(line[i]); }
+  if ((left%10)==0 || left<=3) printf("P23 ALIVE left=%d\n",left);
+  IOSleep(1000);
+ }
+ cheeseburger_unattended_remaining=0;
+ if (__atomic_load_n(&cb_panic_parked,__ATOMIC_ACQUIRE)) {
+  /* A panic parks its own CPU for inspection; the countdown remains the only
+   * reset path, so it must still fire instead of skipping the whole boot. */
+  unattended_console_line("CB watchdog: panic parked; countdown reset\n");
+ }
+ if (!__atomic_load_n(&boot_log_commits,__ATOMIC_ACQUIRE) || cheeseburger_recovery_armed!=1) {
+  unattended_console_line("CB watchdog: reset skipped; log or Recovery BCB unavailable\n");
+  return;
+ }
+ unattended_console_line("CB watchdog: PSCI SYSTEM_RESET\n");
+ cb_reset_note("RESET watchdog fire");
+ cb_halt_restart(kPEPanicRestartCPU);
+}
+volatile unsigned cheeseburger_unattended_remaining = 0;
+
+extern "C" void cheeseburger_unattended_reset_start(void) {
+ static bool started=false;if(started)return;started=true;
+ int seconds=0;
+ if(!PE_parse_boot_argn("cheeseburger-unattended-reset",&seconds,sizeof seconds)||seconds<=0)return;
+ thread_t thread=nullptr;
+ if(kernel_thread_start(unattended_reset_thread,nullptr,&thread)==KERN_SUCCESS)thread_deallocate(thread);
+}
 extern "C" void cheeseburger_pmgr_startup(void) {
  if(ready)return;
+ {
+  int seconds=0;
+  if(PE_parse_boot_argn("cheeseburger-unattended-reset",&seconds,sizeof seconds)&&seconds>0)cb_total_seconds=(unsigned)seconds;
+  int hold=0;
+  if(PE_parse_boot_argn("cheeseburger-panic-hold",&hold,sizeof hold)&&hold>0&&hold<=120)board_panic_hold_seconds=(uint32_t)hold;
+  __asm__ volatile("isb; mrs %0,cntpct_el0" : "=r"(cb_boot_ticks));
+  __asm__ volatile("isb; mrs %0,cntfrq_el0" : "=r"(cb_freq));
+ }
+ PE_halt_restart=cb_halt_restart;
+ {
+  uint64_t v=cb_psci(0x84000000UL,0);
+  int64_t feature=(int64_t)cb_psci(0x8400000aUL,0x84000009UL);
+  char line[96]; int n=snprintf(line,sizeof line,"CB reset: psci v%llx reset_feature=%lld\n",v,feature);
+  for(int i=0;i<n;i++) p8_console_char(line[i]);
+ }
+ extern void boot_log_tick(unsigned);
+ boot_log_tick(0);
+ cheeseburger_unattended_reset_start();
  if(OSKextLoadKextWithIdentifier("com.apple.driver.ApplePMGR"))panic("P11 PMGR: original dependency not loaded");
  auto parent=lookup("ApplePMGR");
  if(!parent||parent!=&ApplePMGR::gMetaClass||parent->getClassSize()!=sizeof(ApplePMGR))panic("P11 PMGR: original base ABI mismatch");

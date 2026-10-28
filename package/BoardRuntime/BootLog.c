@@ -195,6 +195,9 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  out[at]=0;return at;
 }
 
+static char panic_text[2048];
+static volatile unsigned panic_text_ready;
+
 // The message buffer, oldest byte first, NUL-padded to LogMsgBlocks blocks; returns the bytes copied.
 static uint32_t copy_msgbuf(uint8_t *out) {
   memset(out, 0, LogMsgBlocks * LogBlock);
@@ -207,20 +210,35 @@ static uint32_t copy_msgbuf(uint8_t *out) {
     char c = m->msg_bufc[(x + i) % size];
     if (c) out[n++] = (uint8_t)c;
   }
+  if (__atomic_load_n(&panic_text_ready,__ATOMIC_ACQUIRE)) {
+    const char prefix[]="\nPANIC CAPTURE: ";
+    for (unsigned i=0;i<sizeof(prefix)-1 && n<LogMsgBlocks*LogBlock;++i) out[n++]=(uint8_t)prefix[i];
+    for (unsigned i=0;panic_text[i] && n<LogMsgBlocks*LogBlock;++i) out[n++]=(uint8_t)panic_text[i];
+    if(n<LogMsgBlocks*LogBlock)out[n++]='\n';
+  }
   return n;
 }
 
+volatile const char *boot_log_open_why = "not started";
+volatile unsigned boot_log_commits;
+volatile int cheeseburger_recovery_armed;
+extern int native_ufs_misc_boot_recovery(void) __attribute__((weak_import));
+static const char *last_why = "";
 static void writer(void *arg, wait_result_t result) {
   (void)arg; (void)result;
   thread_set_thread_name(current_thread(), "boot_log");
   uint64_t first = 0, blocks = 0;
   const char *why = "";
   boot_log_state = 1;
-  // The window exists once NativeUfs has read the root layout; until then the open is refused ("no root layout").
   while (!native_ufs_log_open(&first, &blocks, &why)) {
+    if (strcmp(why, last_why)) {
+      boot_log_open_why = why;
+      last_why = why;
+    }
     if (strcmp(why, "no root layout")) {boot_log_state = 3; return;}
     IOSleep(1000);
   }
+  boot_log_open_why = "ready";
   boot_log_first_lba = first;
   const uint32_t slot_count = (uint32_t)((blocks - LogSlotFirst) / LogSlotBlocks);
   struct boot_log_header h;
@@ -248,18 +266,37 @@ static void writer(void *arg, wait_result_t result) {
     if (ok) ++h.slots_written;
     else ++h.write_errors;
     h.uptime_s = now; h.rounds = ++boot_log_rounds; h.state = boot_log_state;
-    // Every 30 rounds the GPT is read back; any change stops the writer for good.
-    if (&native_ufs_store_gpt_check && !(h.rounds % 30)) h.gpt_last = native_ufs_store_gpt_check();
+    // The GPT is no longer re-read while userland I/O is active; the window was verified at open.
     memset(boot_log_buffer, 0, LogBlock);
     memcpy(boot_log_buffer, &h, sizeof h);
     ok &= native_ufs_log_write(0, 1, boot_log_buffer);
     ok &= native_ufs_log_sync();
-    if (!ok) {boot_log_errors = ++errors;} else {errors = 0;if(h.rounds==1)printf("CB persistent log: first commit synced, boot=%llx\n",h.boot_id);}
+    if (!ok) {boot_log_errors = ++errors;} else {
+      errors = 0;
+      __atomic_add_fetch(&boot_log_commits,1,__ATOMIC_RELEASE);
+      int reset_seconds=0;
+      if (!cheeseburger_recovery_armed && &native_ufs_misc_boot_recovery &&
+          PE_parse_boot_argn("cheeseburger-unattended-reset",&reset_seconds,sizeof reset_seconds) && reset_seconds>0) {
+        cheeseburger_recovery_armed = native_ufs_misc_boot_recovery() ? 1 : -1;
+        printf("CB recovery BCB: %s\n",cheeseburger_recovery_armed==1?"armed":"failed");
+      }
+    }
     if (errors >= LogMaxErrors) {boot_log_state = 3; return;}
     if (h.gpt_last != h.gpt_open) {boot_log_state = 4; return;}
     IOSleep(LogPeriodMs);
   }
 }
+
+// Panic context publishes bounded text only. The ordinary writer owns UFS I/O;
+// calling IOMalloc or taking the UFS lock from panic context can deadlock.
+void boot_log_panic_flush_text(const char *text) {
+  if (!text) return;
+  unsigned i=0;
+  while (i+1<sizeof panic_text && text[i]) { panic_text[i]=text[i]; ++i; }
+  panic_text[i]=0;
+  __atomic_store_n(&panic_text_ready,1,__ATOMIC_RELEASE);
+}
+void boot_log_panic_flush(void) { }
 
 // Called by the board page's monitor once a second; starts the writer the first time when sheng-log=1.
 void boot_log_tick(unsigned now) {

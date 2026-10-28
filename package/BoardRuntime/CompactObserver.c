@@ -41,12 +41,14 @@ extern volatile uint32_t native_legacy_frame_count,native_legacy_frame_kind[32];
 extern volatile uint64_t p21_scale_count,p21_scale_ticks,p21_scale_stride;
 extern volatile int native_owner_cache_native_union, native_owner_cache_status;
 extern volatile int native_owner_cache_readonly, native_owner_cache_authorized;
+extern volatile unsigned cheeseburger_unattended_remaining;
 extern volatile uint64_t native_owner_cache_actual_mount_flags;
 extern int nprocs;
 extern unsigned int vm_page_free_count, vm_page_wire_count, vm_page_active_count, vm_page_inactive_count;
 extern uint64_t max_mem;
 extern void boot_log_tick(unsigned);
 extern volatile uint32_t boot_log_state,boot_log_rounds,boot_log_errors;
+extern volatile const char *boot_log_open_why;
 extern void boot_process_capture(void), boot_process_snapshot(void), p20_exit_snapshot(void), p20_fault_snapshot(void);
 extern char boot_process_rows[24][120], p20_ui_rows[24][91], p20_exit_rows[5][120];
 extern volatile unsigned boot_process_passes, boot_process_busy;
@@ -130,8 +132,9 @@ static void monitor(void *arg, wait_result_t result) {
 
         memset(pending_rows, 0, sizeof(pending_rows));
         char b[120];
-        snprintf(b, sizeof(b), "P22 R2 SMP obs=%us procs=%d pass=%u age=%us busy=%u", now, nprocs,
-                 boot_process_passes, now - process_changed, boot_process_busy); stage(0, b);
+        snprintf(b, sizeof(b), "P22 R2 SMP obs=%us procs=%d pass=%u age=%us busy=%u RESET=%us", now, nprocs,
+                 boot_process_passes, now - process_changed, boot_process_busy,
+                 cheeseburger_unattended_remaining); stage(0, b);
         snprintf(b, sizeof(b), "MEM %lluMiB free=%u wire=%u active=%u inactive=%u",
                  max_mem >> 20, vm_page_free_count, vm_page_wire_count,
                  vm_page_active_count, vm_page_inactive_count); stage(1, b);
@@ -154,7 +157,7 @@ static void monitor(void *arg, wait_result_t result) {
         stage(22,"BACKBOARDD first failure");
         for(unsigned i=0;i<6;++i)stage(23+i,p20_ui_rows[6+i]);
         stage(29,p20_exit_rows[0]);stage(30,p20_exit_rows[3]);stage(31,p20_exit_rows[4]);
-        snprintf(b,sizeof(b),"PERSIST state=%u rounds=%u errors=%u / 32MiB / sync+readback",boot_log_state,boot_log_rounds,boot_log_errors);stage(32,b);
+        snprintf(b,sizeof(b),"PERSIST state=%u rounds=%u errors=%u why=%s / 32MiB",boot_log_state,boot_log_rounds,boot_log_errors,boot_log_open_why?boot_log_open_why:"?");stage(32,b);
 
         if(cb_touch[0]) {
             snprintf(b,sizeof(b),"TOUCH st=%lld err=%lld frames=%llu active=%llu HID=%u",cb_touch[0],cb_touch[5],cb_touch[24],cb_touch[6],native_touch_hid_reports);stage(33,b);

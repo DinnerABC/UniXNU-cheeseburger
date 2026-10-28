@@ -385,14 +385,12 @@ static void interpose(IOUserClient *client,int pid) {
     if(seenClientCount>=kSeenClients)return;
     ClientStat &stat=seenClients[seenClientCount];
     memset(&stat,0,sizeof stat);
-    uintptr_t *vtable=*reinterpret_cast<uintptr_t **>(client);
-    uintptr_t *copy=static_cast<uintptr_t *>(IOMalloc(kVtableSlots*sizeof(uintptr_t)));
-    if(!copy)return;
-    memcpy(copy,vtable,kVtableSlots*sizeof(uintptr_t));
-    stat.object=(uintptr_t)client;stat.pid=pid;proc_name(pid,stat.name,sizeof stat.name);stat.original_external=copy[168];stat.original_register=copy[175];
-    copy[168]=(uintptr_t)&wrappedExternal;copy[175]=(uintptr_t)&wrappedRegister;
+    stat.object=(uintptr_t)client;stat.pid=pid;proc_name(pid,stat.name,sizeof stat.name);
     ++seenClientCount;
-    *reinterpret_cast<uintptr_t **>(client)=copy;
+    // The vptr stays the original one. The previous heap copy of the vtable was
+    // installed into the client object and survived it: once the client was
+    // freed, IOKit still reached this dangling vtable and aborted in
+    // OSMetaClassBase::safeMetaCast from iokit_remove_connect_reference.
 }
 // The display object's state words the original wait selector tests (offsets 5832..5864, as dwords), for the log.
 extern "C" unsigned native_legacy_state_words(char *out,unsigned cap) {
@@ -429,7 +427,10 @@ extern "C" unsigned native_legacy_clients_dump(char *out,unsigned cap) {
 void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
     if(client && !status)interpose(client,native_legacy_client_pid);
     native_legacy_client_status=status;native_legacy_client_object=(uintptr_t)client;
-    if(client)strlcpy(native_legacy_client_class,client->getMetaClass()->getClassName(),sizeof(native_legacy_client_class));
+    if(client) {
+        strlcpy(native_legacy_client_class,client->getMetaClass()->getClassName(),sizeof(native_legacy_client_class));
+        printf("P23 DISP client obj=%p meta=%s retain=%u\n",client,native_legacy_client_class,(unsigned)client->getRetainCount());
+    }
     native_legacy_client_checkpoint();
 }
 __attribute__((noinline)) bool native_legacy_gop_mapping_observed(IOService *object,IOMemoryMap *mapping,uint32_t width,uint32_t height) {
@@ -482,6 +483,7 @@ __attribute__((noinline)) bool native_legacy_gop_mapping_observed(IOService *obj
 }
 __attribute__((noreturn,noinline)) void native_legacy_backend_guard(unsigned slot,void *object,void *caller) {
     native_legacy_guard_slot=slot;native_legacy_guard_object=(uintptr_t)object;native_legacy_guard_caller=(uintptr_t)caller;
+    printf("P23 DISP GUARD slot=%u caller=%llx\n",slot,(unsigned long long)(uintptr_t)caller);
     panic("NativeLegacyDisplay: leaf=%u caller=%llx stage=%u PM=%u swap=%u/%u copy=%08x bytes=%llu retire=%u handoff=%u/%u",
       slot,(uint64_t)(uintptr_t)caller,native_legacy_stage,native_legacy_pm_stage,
       native_legacy_swap_validation_result,native_legacy_swap_validation_reason,
@@ -498,21 +500,25 @@ void native_legacy_display_probe(void) {
     // Restore its OSKext lifecycle prerequisite before registering subclasses.
     native_legacy_stage=1;
     kern_return_t familyStatus=OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");
+    IOLog("P23 DISP: family load status=%d\n",(int)familyStatus);
     if(familyStatus){native_legacy_meta_status=familyStatus;native_legacy_display_checkpoint();return;}
     void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    IOLog("P23 DISP: preModLoad handle=%p\n",handle);
     if(!handle){native_legacy_display_checkpoint();return;}
     native_legacy_display_static_init();native_gop_presenter_static_init();native_legacy_meta_status=OSMetaClass::postModLoad(handle);
+    IOLog("P23 DISP: postModLoad status=%d\n",(int)native_legacy_meta_status);
     if(native_legacy_meta_status){native_legacy_display_checkpoint();return;}
     PE_Video video={};native_legacy_stage=2;
     if(PE_current_console(&video) || !video.v_baseAddr || !video.v_width || !video.v_height || video.v_depth!=32
         || video.v_rotate || video.v_width>16384 || video.v_height>16384 || video.v_rowBytes<video.v_width*4
-        || video.v_rowBytes>UINT64_MAX/video.v_height){native_legacy_display_checkpoint();return;}
+        || video.v_rowBytes>UINT64_MAX/video.v_height){IOLog("P23 DISP: console base=%llx %ux%u depth=%u row=%u rot=%u\n",(unsigned long long)video.v_baseAddr,video.v_width,video.v_height,video.v_depth,video.v_rowBytes,video.v_rotate);native_legacy_display_checkpoint();return;}
     IOService *display=native_legacy_display_allocate();native_legacy_object=(uintptr_t)display;
-    if(!display){native_legacy_display_checkpoint();return;}
+    if(!display){IOLog("P23 DISP: allocate failed\n");native_legacy_display_checkpoint();return;}
     native_legacy_object_size=display->getMetaClass()->getClassSize();
     native_legacy_parent_match=(display->metaCast("IOMobileFramebufferLegacy") && display->metaCast("IOMobileFramebuffer") && display->metaCast("IOService"));
     native_legacy_stage=3;native_legacy_init_result=display->init();
     unsigned phase=1;PE_parse_boot_argn("offline-legacy-phase",&phase,sizeof(phase));
+    IOLog("P23 DISP: init=%d phase=%u\n",(int)native_legacy_init_result,phase);
     if(native_legacy_init_result && (phase==2 || phase==3 || phase==4)) {
         // IOSurface matches the real IOBSD resource, published by bsd_autoconf.
         // Retain this actual object until that normal lifecycle boundary.
@@ -544,8 +550,10 @@ void native_legacy_display_late_probe(void) {
     /* Unselected board peripheral; no MSM8998 provider qualified. */
     /* Unselected board peripheral; no MSM8998 provider qualified. */
     /* Unselected board peripheral; no MSM8998 provider qualified. */
+    IOLog("P23 DISP late: pending=%p\n",(void*)pendingLegacyDisplay);
     IOService *display=pendingLegacyDisplay;if(!display)return;pendingLegacyDisplay=nullptr;
     native_legacy_surface_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
+    IOLog("P23 DISP: late surface load status=%d\n",(int)native_legacy_surface_status);
     OSDictionary *matching=IOService::nameMatching("IOCoreSurfaceRoot");
     IOService *surface=matching?IOService::waitForMatchingService(matching,5000000000ULL):nullptr;
     native_legacy_surface_found=surface!=nullptr;OSSafeReleaseNULL(surface);OSSafeReleaseNULL(matching);

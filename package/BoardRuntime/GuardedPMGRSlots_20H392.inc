@@ -12,14 +12,14 @@
  void opaque185() override { unavailable(185); }
  void opaque186() override { unavailable(186); }
  void opaque187() override { unavailable(187); }
- void opaque188() override { unavailable(188); }
+ void opaque188() override {}
  void opaque189() override { unavailable(189); }
  void opaque190() override { unavailable(190); }
  void opaque191() override { unavailable(191); }
  void opaque192() override { unavailable(192); }
- void opaque193() override { unavailable(193); }
- void opaque194() override { unavailable(194); }
- void opaque195() override { unavailable(195); }
+ void opaque193() override {}
+ void opaque194() override {}
+ void opaque195() override {}
  void opaque196() override { unavailable(196); }
  void opaque197() override { unavailable(197); }
  void opaque198() override { unavailable(198); }
@@ -28,122 +28,122 @@
  void opaque201() override { unavailable(201); }
  void opaque202() override { unavailable(202); }
  void opaque203() override { unavailable(203); }
- void opaque204() override { unavailable(204); }
- void opaque205() override { unavailable(205); }
+ uint32_t opaque204() override { return 0x0u; }
+ uint32_t opaque205() override { return 0x0u; }
  void opaque206() override { unavailable(206); }
- void opaque207() override { unavailable(207); }
- void opaque208() override { unavailable(208); }
+ void opaque207() override {}
+ void opaque208() override {}
  void opaque209() override { unavailable(209); }
  void opaque210() override { unavailable(210); }
  void opaque211() override { unavailable(211); }
  void opaque212() override { unavailable(212); }
  void opaque213() override { unavailable(213); }
  void opaque214() override { unavailable(214); }
- void opaque215() override { unavailable(215); }
- void opaque216() override { unavailable(216); }
+ void opaque215() override {}
+ void opaque216() override {}
  void opaque217() override { unavailable(217); }
  void opaque218() override { unavailable(218); }
- void opaque219() override { unavailable(219); }
+ void opaque219() override {}
  void opaque220() override { unavailable(220); }
- void opaque221() override { unavailable(221); }
+ void opaque221() override {}
  void opaque222() override { unavailable(222); }
  void opaque223() override { unavailable(223); }
  void opaque224() override { unavailable(224); }
- void opaque225() override { unavailable(225); }
- void opaque226() override { unavailable(226); }
- void opaque227() override { unavailable(227); }
- void opaque228() override { unavailable(228); }
- void opaque229() override { unavailable(229); }
- void opaque230() override { unavailable(230); }
- void opaque231() override { unavailable(231); }
+ void opaque225() override {}
+ void opaque226() override {}
+ void opaque227() override {}
+ void opaque228() override {}
+ void opaque229() override {}
+ void opaque230() override {}
+ uint32_t opaque231() override { return 0x0u; }
  void opaque232() override { unavailable(232); }
- void opaque233() override { unavailable(233); }
- void opaque234() override { unavailable(234); }
- void opaque235() override { unavailable(235); }
- void opaque236() override { unavailable(236); }
+ void opaque233() override {}
+ void opaque234() override {}
+ void opaque235() override {}
+ void opaque236() override {}
  void opaque237() override { unavailable(237); }
  void opaque238() override { unavailable(238); }
  void opaque239() override { unavailable(239); }
- void opaque240() override { unavailable(240); }
- void opaque241() override { unavailable(241); }
+ uint32_t opaque240() override { return 0x0u; }
+ void opaque241() override {}
  void opaque242() override { unavailable(242); }
  void opaque243() override { unavailable(243); }
- void opaque244() override { unavailable(244); }
- void opaque245() override { unavailable(245); }
- void opaque246() override { unavailable(246); }
+ uint32_t opaque244() override { return 0x0u; }
+ void opaque245() override {}
+ void opaque246() override {}
  void opaque247() override { unavailable(247); }
- void opaque248() override { unavailable(248); }
+ void opaque248() override {}
  void opaque249() override { unavailable(249); }
  void opaque250() override { unavailable(250); }
- void opaque251() override { unavailable(251); }
- void opaque252() override { unavailable(252); }
- void opaque253() override { unavailable(253); }
+ void opaque251() override {}
+ uint32_t opaque252() override { return 0x0u; }
+ uint32_t opaque253() override { return 0x0u; }
  void opaque254() override { unavailable(254); }
  void opaque255() override { unavailable(255); }
- void opaque256() override { unavailable(256); }
- void opaque257() override { unavailable(257); }
- void opaque258() override { unavailable(258); }
- void opaque259() override { unavailable(259); }
- void opaque260() override { unavailable(260); }
+ void opaque256() override {}
+ void opaque257() override {}
+ void opaque258() override {}
+ uint32_t opaque259() override { return 0x0u; }
+ uint32_t opaque260() override { return 0x0u; }
  void opaque261() override { unavailable(261); }
  void opaque262() override { unavailable(262); }
- void opaque263() override { unavailable(263); }
- void opaque264() override { unavailable(264); }
- void opaque265() override { unavailable(265); }
- void opaque266() override { unavailable(266); }
+ void opaque263() override {}
+ void opaque264() override {}
+ uint32_t opaque265() override { return 0x0u; }
+ uint32_t opaque266() override { return 0x0u; }
  void opaque267() override { unavailable(267); }
  void opaque268() override { unavailable(268); }
- void opaque269() override { unavailable(269); }
- void opaque270() override { unavailable(270); }
- void opaque271() override { unavailable(271); }
- void opaque272() override { unavailable(272); }
+ void opaque269() override {}
+ uint32_t opaque270() override { return 0x0u; }
+ uint32_t opaque271() override { return 0x0u; }
+ uint32_t opaque272() override { return 0x0u; }
  void opaque273() override { unavailable(273); }
  void opaque274() override { unavailable(274); }
  void opaque275() override { unavailable(275); }
  void opaque276() override { unavailable(276); }
  void opaque277() override { unavailable(277); }
- void opaque278() override { unavailable(278); }
- void opaque279() override { unavailable(279); }
- void opaque280() override { unavailable(280); }
- void opaque281() override { unavailable(281); }
- void opaque282() override { unavailable(282); }
- void opaque283() override { unavailable(283); }
- void opaque284() override { unavailable(284); }
- void opaque285() override { unavailable(285); }
- void opaque286() override { unavailable(286); }
- void opaque287() override { unavailable(287); }
+ void opaque278() override {}
+ void opaque279() override {}
+ void opaque280() override {}
+ void opaque281() override {}
+ void opaque282() override {}
+ uint32_t opaque283() override { return 0xffffffffu; }
+ uint32_t opaque284() override { return 0x0u; }
+ uint32_t opaque285() override { return 0x0u; }
+ void opaque286() override {}
+ uint32_t opaque287() override { return 0x0u; }
  void opaque288() override { unavailable(288); }
- void opaque289() override { unavailable(289); }
- void opaque290() override { unavailable(290); }
+ uint32_t opaque289() override { return 0x0u; }
+ void opaque290() override {}
  void opaque291() override { unavailable(291); }
- void opaque292() override { unavailable(292); }
+ uint32_t opaque292() override { return 0x0u; }
  void opaque293() override { unavailable(293); }
- void opaque294() override { unavailable(294); }
- void opaque295() override { unavailable(295); }
- void opaque296() override { unavailable(296); }
- void opaque297() override { unavailable(297); }
- void opaque298() override { unavailable(298); }
- void opaque299() override { unavailable(299); }
- void opaque300() override { unavailable(300); }
- void opaque301() override { unavailable(301); }
- void opaque304() override { unavailable(304); }
+ uint32_t opaque294() override { return 0x0u; }
+ uint32_t opaque295() override { return 0x0u; }
+ void opaque296() override {}
+ void opaque297() override {}
+ void opaque298() override {}
+ void opaque299() override {}
+ void opaque300() override {}
+ void opaque301() override {}
+ void opaque304() override {}
  void opaque305() override { unavailable(305); }
- void opaque306() override { unavailable(306); }
- void opaque307() override { unavailable(307); }
- void opaque308() override { unavailable(308); }
- void opaque309() override { unavailable(309); }
- void opaque310() override { unavailable(310); }
- void opaque311() override { unavailable(311); }
- void opaque312() override { unavailable(312); }
- void opaque313() override { unavailable(313); }
+ void opaque306() override {}
+ void opaque307() override {}
+ void opaque308() override {}
+ void opaque309() override {}
+ void opaque310() override {}
+ void opaque311() override {}
+ uint32_t opaque312() override { return 0xffffffffu; }
+ void opaque313() override {}
  void opaque314() override { unavailable(314); }
  void opaque315() override { unavailable(315); }
  void opaque316() override { unavailable(316); }
  void opaque317() override { unavailable(317); }
  void opaque318() override { unavailable(318); }
- void opaque319() override { unavailable(319); }
- void opaque320() override { unavailable(320); }
- void opaque321() override { unavailable(321); }
- void opaque322() override { unavailable(322); }
- void opaque323() override { unavailable(323); }
- void opaque324() override { unavailable(324); }
+ uint32_t opaque319() override { return 0x0u; }
+ uint32_t opaque320() override { return 0x0u; }
+ uint32_t opaque321() override { return 0x0u; }
+ uint32_t opaque322() override { return 0x0u; }
+ uint32_t opaque323() override { return 0x10u; }
+ uint32_t opaque324() override { return 0x0u; }

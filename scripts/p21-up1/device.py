@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[2]
 class Device:
  def __init__(self,label):
   self.serial=json.loads((ROOT/'out/p3/private/selected-device.json').read_text())['serial']
-  self.env=dict(os.environ,ADB_LIBUSB='1',ADB_SERVER_SOCKET='tcp:localhost:5038',ADB_VENDOR_KEYS=str(ROOT/'.work/android/adbkey'),ANDROID_USER_HOME=str(ROOT/'.work/android'),TMPDIR=str(ROOT/'.work/tmp'))
+  self.env=dict(os.environ,ADB_LIBUSB='1',ADB_SERVER_SOCKET=os.environ.get('CHEESEBURGER_ADB_SERVER','tcp:localhost:5038'),ADB_VENDOR_KEYS=str(ROOT/'.work/android/adbkey'),ANDROID_USER_HOME=str(ROOT/'.work/android'),TMPDIR=str(ROOT/'.work/tmp'))
   self.out=ROOT/'out/p21/upstream-a/private'/(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+label+'-'+uuid.uuid4().hex[:6]);self.out.mkdir(parents=True,mode=0o700)
   self.n=0
  def run(self,tool,args,timeout=30):

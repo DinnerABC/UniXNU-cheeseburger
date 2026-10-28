@@ -11,7 +11,7 @@ id = "xnu"
 title = "MSM8998 XNU (temporary RAM boot)"
 type = "xnu"
 path = "/kernel.macho"
-args = "cheeseburger-upstream-userland=1 cheeseburger-touch=1 -v keepsyms=1 cpus=8 sheng-smp=1 armcpu-self-ipi=1 debug=0x8 sheng-log=1 launchd_unsecure_cache=1 -enable_kprintf_spam startup_debug=0 cheeseburger-disable-watchdogd=1 p20-observe=1 p21-iokit-trace=1 kextlog=0xfff offline-key-events=1 sheng-aks=1 sheng-aks-sls=3 offline-hid-input=1 offline-hid-home=1 cheeseburger-buttons=1 cheeseburger-home-chord=1 sheng-vsync=60 sheng-vsync-fixed=1 fajita-display-logical=1125x2436 fajita-display-ppi=458 fajita-fb-wc=1 offline-legacy-unit-scale=3 offline-mobile-graphics-load=1 offline-legacy-register=1 offline-legacy-phase=4 offline-legacy-gop=1 offline-legacy-pm=1 offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1"
+args = "cheeseburger-upstream-userland=1 cheeseburger-touch=1 cheeseburger-unattended-reset=300 cheeseburger-panic-hold=20 cheeseburger-disable-watchdogd=1 -v keepsyms=1 cpus=1 debug=0x8 sheng-log=1 sheng-data-persist=2 launchd_unsecure_cache=1 p20-observe=1 offline-mobile-graphics-load=1 offline-legacy-register=1 offline-legacy-phase=4 offline-legacy-pm=0 offline-legacy-transfer=0 fajita-display-logical=1125x2436 fajita-display-ppi=458 fajita-fb-wc=1 fajita-fb-src-cached=1 sheng-vsync=0 sheng-vsync-fixed=1 offline-legacy-gop=1 offline-legacy-validate=1 offline-legacy-cpu-present=1 offline-legacy-unit-scale=3 -enable_kprintf_spam startup_debug=0 p21-iokit-trace=1 kextlog=0xfff offline-key-events=1 sheng-aks=1 sheng-aks-sls=3 offline-hid-input=1 offline-hid-home=1 cheeseburger-buttons=1 cheeseburger-home-chord=1"
 [[entry]]
 id = "exit"
 title = "Return to firmware"

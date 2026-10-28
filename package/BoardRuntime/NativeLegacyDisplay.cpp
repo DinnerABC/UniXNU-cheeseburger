@@ -46,6 +46,9 @@ extern "C" __attribute__((noreturn)) void native_legacy_backend_guard(unsigned,v
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" bool native_legacy_gop_mapping_observed(IOService *,IOMemoryMap *,uint32_t,uint32_t);
 extern "C" void native_legacy_registration_observed(IOService *);
+// Display callbacks may run on the framebuffer work loop. Keep UFS I/O and
+// its sleeping lock out of this path; BootLog persists the normal console.
+static void disp_note(const char *text){ if (text) printf("P23 %s\n", text); }
 extern "C" void native_legacy_swap_stage(unsigned);
 extern "C" void native_legacy_client_enter(task_t,uint32_t);
 extern "C" void native_legacy_client_observed(IOReturn,IOUserClient *);
@@ -270,6 +273,7 @@ public:
     // port, so without it the user client's wait (selector 6) answers kIOReturnBusy forever and the compositor never presents. This is the
     // original state setter (virtual 354, the one the original code calls with this same request shape) with only the powered word named.
     void announcePoweredByFirmware() {
+        disp_note("DISP announcePowered");
         struct StateRequest {uint32_t skipRequested,requested,skipPowered,powered;uint8_t changed;uint8_t pad[11];} request={1,0,0,1,1,{}};
         typedef int (*Setter)(void *,StateRequest *,bool);
         Setter setter=reinterpret_cast<Setter *>(*reinterpret_cast<void **>(this))[UNIXNU_ABI_STATE_SETTER_SLOT];
@@ -277,6 +281,7 @@ public:
     }
     bool start(IOService *provider) override {
         if(!startDisplay(provider))return false;
+        disp_note("DISP start ok");
         startVsync();return true;
     }
     bool startDisplay(IOService *provider) {
@@ -303,6 +308,7 @@ public:
         return true;
     }
     IOReturn setPowerState(unsigned long ordinal,IOService *device) override {
+        {static unsigned n;if(n<8){++n;char b[64];snprintf(b,sizeof b,"DISP setPower ordinal=%lu #%u",ordinal,n);disp_note(b);}}
         if(!logicalPM)return IOMobileFramebufferLegacy::setPowerState(ordinal,device);
         if(ordinal>1 || !bootMapping){native_legacy_pm_observed(3,kIOReturnUnsupported,ordinal);return kIOReturnUnsupported;}
         native_legacy_pm_observed(3,kIOReturnSuccess,ordinal);
@@ -319,6 +325,7 @@ public:
         unsigned hz=0;PE_parse_boot_argn("sheng-vsync",&hz,sizeof(hz));
         if(primary && hz>60 && hz<=240)native_legacy_set_refresh_properties(this);
         IOService::registerService(options);native_legacy_registration_observed(this);
+        {static unsigned n;if(n<4){++n;char b[64];snprintf(b,sizeof b,"DISP registered hz=%u #%u",hz,n);disp_note(b);}}
     }
     bool isMainDisplay() override {return primary;}
     // The render server paces its display timer by the minimum refresh interval in IOMFBDisplayRefresh (int-209: no vsync client ever
@@ -340,6 +347,7 @@ public:
     // previous frame until the user touched it again). A retirement inside a kick only asks the running kick to loop.
     bool kicking=false,rekick=false;
     void kickSwapQueue() override {
+        {static unsigned n;if(n<6){++n;char b[64];snprintf(b,sizeof b,"DISP kick #%u",n);disp_note(b);}}
         armVsync();
         if(kicking){rekick=true;return;}
         kicking=true;
@@ -505,6 +513,7 @@ public:
     }
     // Separately gated retirement after a real scanout store, shared by copied and blank frames.
     void finishTransfer(const OriginalLegacySwapRequest *request,bool force=false) {
+        {static unsigned n;if(n<6){++n;char b[64];snprintf(b,sizeof b,"DISP finishTransfer #%u",n);disp_note(b);}}
         unsigned retire=0,cpuPresent=0;
         PE_parse_boot_argn("offline-legacy-retire",&retire,sizeof(retire));
         PE_parse_boot_argn("offline-legacy-cpu-present",&cpuPresent,sizeof(cpuPresent));
@@ -533,6 +542,7 @@ public:
         return kIOReturnUnsupported;
     }
     bool validateSwap(const OriginalLegacySwapRequest *request) override {
+        {static unsigned n;if(n<6){++n;char b[64];snprintf(b,sizeof b,"DISP validateSwap #%u",n);disp_note(b);}}
         // Qualified original request fields are packed; use memcpy for each
         // access. Accept only one full-frame, untransformed, nonplanar BGRA
         // surface with real original backing memory. No generic capability
@@ -589,31 +599,34 @@ public:
     // IOReturn. Its implementation assumes an AppleARMIODevice provider.
     // Query our actual generic provider instead; GOP supplies no dot pitch.
     IOReturn getDotPitch(uint32_t *pitch) override {
+        {static unsigned n;if(n<6){++n;char b[64];snprintf(b,sizeof b,"DISP getDotPitch #%u",n);disp_note(b);}}
         if(!pitch)return kIOReturnBadArgument;
-        *pitch=0;IOService *provider=getProvider();if(!provider)return kIOReturnNotReady;
+        IOService *provider=getProvider();if(!provider)return kIOReturnNotReady;
         OSObject *property=provider->getProperty("dot-pitch");
-        if(!property) {
-            // fajita-display-ppi=<N>: the pixel density of the logical display (iPad7,1: 264), for a provider without dot-pitch.
-            unsigned ppi=0;PE_parse_boot_argn("fajita-display-ppi",&ppi,sizeof(ppi));
-            if(ppi && ppi<=2000){*pitch=ppi;return kIOReturnSuccess;}
-            return kIOReturnNotFound;
-        }
+        if(!property)return kIOReturnNotFound;
         OSData *data=OSDynamicCast(OSData,property);
         if(!data || data->getLength()!=sizeof(*pitch))return kIOReturnBadArgument;
         memcpy(pitch,data->getBytesNoCopy(),sizeof(*pitch));return kIOReturnSuccess;
     }
     // Selector 74 enumerates optional frame-info trace keys, not display
     // modes. This backend implements no trace-key subscription contract.
+    // No output word is written: the 20H392 caller's three pointers are not
+    // kernel buffers (a 4-byte store through them landed on the client's own
+    // vptr and aborted the next teardown in safeMetaCast).
     IOReturn supportedFrameInfo(uint32_t,uint32_t *count,char *key,uint32_t *mask) override {
-        if(!count || !key || !mask)return kIOReturnBadArgument;
-        *count=0;*mask=0;bzero(key,64);return kIOReturnUnsupported;
+        {static unsigned n;if(n<6){++n;char b[64];snprintf(b,sizeof b,"DISP supportedFrameInfo #%u",n);disp_note(b);}}
+        (void)count;(void)key;(void)mask;
+        return kIOReturnUnsupported;
     }
     IOReturn newUserClient(task_t task,void *security,UInt32 type,IOUserClient **client) override {
+        {static unsigned n;if(n<6){++n;char b[64];snprintf(b,sizeof b,"DISP newUserClient type=%u #%u",(unsigned)type,n);disp_note(b);}}
         native_legacy_client_enter(task,type);
         IOReturn status=IOMobileFramebufferLegacy::newUserClient(task,security,type,client);
+        {static unsigned n;if(n<6){++n;printf("P23 DISP newUserClient return #%u type=%u status=%x client=%u\n",n,(unsigned)type,(unsigned)status,(unsigned)(status==kIOReturnSuccess && client && *client));}}
         native_legacy_client_observed(status,status==kIOReturnSuccess && client?*client:nullptr);return status;
     }
     bool startHardware() override {
+        disp_note("DISP startHardware enter");
         unsigned enabled=0;
         PE_parse_boot_argn("offline-legacy-gop",&enabled,sizeof(enabled));
         if(enabled!=1)return false;
@@ -626,7 +639,7 @@ public:
         // page-table alias and the ml_io_map_wcomb console/observer alias; no Device alias remains. Writes stay gathered so the per-frame
         // CPU copy does not dominate (kIOMapInhibitCache made it ~59% of all CPU samples in backboardd). Each copy still ends with dsb sy
         // before the swap completes.
-        IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapWriteCombineCache);
+        IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapInhibitCache);
         if(!mapping)return false;
         bool valid=mapping->getVirtualAddress() && mapping->getPhysicalAddress()==video.v_baseAddr &&
                    mapping->getLength()==video.v_rowBytes*video.v_height;
@@ -648,7 +661,9 @@ public:
                 if(valid)publishLogical();
             }
         }
-        OSSafeReleaseNULL(mapping);return valid;
+        OSSafeReleaseNULL(mapping);
+        disp_note(valid?"DISP startHardware ok":"DISP startHardware invalid");
+        return valid;
     }
 #define LEAF(n) __attribute__((noreturn,noinline)) void opaque##n() override { native_legacy_backend_guard(n,this,__builtin_return_address(0)); }
 #if UNIXNU_ABI_20H392

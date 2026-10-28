@@ -6,7 +6,7 @@
 .globl __ZTV9ApplePMGR
 .set __ZTV9ApplePMGR, 0xfffffff0060dfae8
 .globl __ZN9ApplePMGRC2EPK11OSMetaClass
-.set __ZN9ApplePMGRC2EPK11OSMetaClass, 0xfffffff004a97040
+.set __ZN9ApplePMGRC2EPK11OSMetaClass, 0xfffffff004a9703c
 .globl __ZN9ApplePMGRD2Ev
 .set __ZN9ApplePMGRD2Ev, 0xfffffff004a97164
 .globl __ZN9ApplePMGR10gMetaClassE

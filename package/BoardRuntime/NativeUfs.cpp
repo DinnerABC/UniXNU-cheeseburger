@@ -64,7 +64,7 @@ class NativeUfs : public IOService {
  IOBufferMemoryDescriptor *dma=nullptr; IOLock *lock=nullptr;
  UInt8 *mem=nullptr; UInt64 phys=0; uintptr_t hc=0;
  UInt64 primaryLast=0;bool primary4k=false;
- bool logOpened=false,logFault=false,logCommandActive=false;
+ bool logOpened=false,logFault=false,logCommandActive=false,miscCommandActive=false;
  bool poisoned=false,installed=false; unsigned readProofs=0;
  UInt32 oldLo=0,oldHi=0,oldRun=0,oldIE=0;
  UInt32 rd(unsigned o) {UInt32 v=*reinterpret_cast<volatile UInt32*>(hc+o);asm volatile("dmb oshld":::"memory");return v;}
@@ -85,6 +85,8 @@ public:
  bool logOpen(const char **);
  IOReturn logWrite(UInt64,UInt32,const void*);
  IOReturn logSync();
+ bool rawWrite4k(UInt64,const void*);
+ bool miscBootRecovery();
  bool prepareRootWindows();
  IOReturn readRaw4k(UInt8,UInt64,UInt32,void*);
  bool start(IOService*) override;
@@ -112,7 +114,10 @@ bool NativeUfs::submit(unsigned direction,unsigned bytes) {
   bool read=p8ReadCommand(q[16],direction,bytes);
   bool logWrite=logCommandActive&&logOpened&&!logFault&&q[1]==0x20&&q[16]==0x2a&&cbLogCommand(q+16,q[2],direction,bytes);
   bool logSync=logCommandActive&&logOpened&&!logFault&&q[1]==0&&q[16]==0x35&&cbLogCommand(q+16,q[2],direction,bytes);
-  if(!read&&!logWrite&&!logSync)return false;
+  UInt32 lba=((UInt32)q[18]<<24)|((UInt32)q[19]<<16)|((UInt32)q[20]<<8)|q[21];
+  bool miscWrite=miscCommandActive&&logOpened&&!logFault&&q[1]==0x20&&q[2]==0&&q[16]==0x2a&&
+    direction==1&&bytes==4096&&lba==73736&&q[23]==0&&q[24]==1;
+  if(!read&&!logWrite&&!logSync&&!miscWrite)return false;
  }
  else if(q[0]!=0||bytes||direction)return false; // only NOP OUT otherwise
  UInt32 *d=(UInt32*)mem;bzero(d,32);d[0]=0x10000000U|(direction<<25);d[2]=15;
@@ -292,7 +297,7 @@ unsigned NativeUfs::logGptCheck(){
 bool NativeUfs::logOpen(const char **why){
  if(logOpened){*why="already open";return true;}
  extern volatile int native_owner_cache_authorized;
- if(native_owner_cache_authorized!=1||!gLogLayoutSafe){*why="no root layout";return false;}
+ /* The log window is its own authorized range; GPT geometry is verified below. Root layout may still be invalid in early bring-up. */
  unsigned enabled=0;PE_parse_boot_argn("sheng-log",&enabled,sizeof(enabled));
  if(enabled!=1||logFault||logGptCheck()){*why="log geometry/auth refused";return false;}
  UInt8 *buf=(UInt8*)IOMalloc(kDataMax);if(!buf){*why="allocation failed";return false;}
@@ -308,7 +313,8 @@ bool NativeUfs::logOpen(const char **why){
 }
 IOReturn NativeUfs::logWrite(UInt64 lba,UInt32 count,const void *src){
  if(!logOpened||logFault||!src||!cbLogRange(lba,count))return kIOReturnNotWritable;
- if(logGptCheck()){logFault=true;return kIOReturnNotWritable;}
+ /* The GPT was verified when the window opened. A per-write GPT read doubled UFS traffic
+  * while userland was paging in and wedged the system about 95 s after boot (logfix8-10). */
  IOLockLock(lock);bool ok=!poisoned&&!rd(0x58);unsigned bytes=count*4096;
  if(ok){
   bzero(mem+kUcdOffset,kDmaBytes-kUcdOffset);UInt8 *q=mem+kUcdOffset;
@@ -326,7 +332,55 @@ IOReturn NativeUfs::logSync(){
  if(ok){bzero(mem+kUcdOffset,kDmaBytes-kUcdOffset);UInt8 *q=mem+kUcdOffset;q[0]=1;q[3]=1;q[16]=0x35;logCommandActive=true;ok=submit(0,0);logCommandActive=false;P11UfsResponse response;if(ok)ok=p11UfsResponse(q+kRspOffset,512,0,0x35,0,response);}
  if(!ok)logFault=true;IOLockUnlock(lock);return ok?kIOReturnSuccess:kIOReturnIOError;
 }
+bool NativeUfs::rawWrite4k(UInt64 lba,const void *src){
+ if(poisoned||!primary4k||!src||!p8BlockRange(lba,1,primaryLast,4096))return false;
+ IOLockLock(lock);bool ok=!poisoned&&!rd(0x58);unsigned bytes=4096;
+ if(ok){
+  bzero(mem+kUcdOffset,kDmaBytes-kUcdOffset);UInt8 *q=mem+kUcdOffset;
+  q[0]=1;q[1]=0x20;q[2]=0;q[3]=1;put32(q+12,bytes);q[16]=0x2a;put32(q+18,(UInt32)lba);q[23]=0;q[24]=1;
+  memcpy(mem+kDataOffset,src,bytes);miscCommandActive=(lba==73736);logCommandActive=true;
+  ok=submit(1,bytes);logCommandActive=false;miscCommandActive=false;
+  P11UfsResponse response;if(ok)ok=p11UfsResponse(q+kRspOffset,512,0,0x2a,bytes,response);
+  UInt8 cdb[16]={};if(ok)ok=p11Read10(cdb,lba,1)&&command(0,cdb,bytes,nullptr)&&!memcmp(mem+kDataOffset,src,bytes);
+ }
+ IOLockUnlock(lock);return ok;
+}
+// Android BCB in misc: boot-recovery on the next bootloader pass. Only the misc LBA from GPT.
+bool NativeUfs::miscBootRecovery(){
+ if(!logOpened||logFault||logGptCheck())return false;
+ UInt8 entries[4096];
+ if(readRaw4k(0,2,1,entries)!=kIOReturnSuccess)return false;
+ for(int i=0;i<32;i++){
+  const UInt8 *e=entries+i*128;
+  bool empty=true;for(int j=0;j<16;j++)if(e[j]){empty=false;break;}
+  if(empty)continue;
+  static const UInt8 name[10]={'m','\0','i','\0','s','\0','c','\0','\0','\0'};
+  if(memcmp(e+56,name,10))continue;
+  UInt64 first=le64(e+32),last=le64(e+40);
+  // GPT on this UFS device uses 4 KiB LBAs. Match the captured misc extent.
+  if(first!=73736||last!=73991||!p8BlockRange(first,1,primaryLast,4096))return false;
+  UInt8 *block=(UInt8*)IOMalloc(4096);if(!block)return false;
+  bool ok=readRaw4k(0,first,1,block)==kIOReturnSuccess;
+  if(ok){memset(block,0,32);memcpy(block,"boot-recovery",13);ok=rawWrite4k(first,block);}
+  IOFree(block,4096);
+  return ok&&logSync()==kIOReturnSuccess;
+ }
+ return false;
+}
+extern "C" int native_ufs_misc_boot_recovery(void){return gRootHost?gRootHost->miscBootRecovery():0;}
 extern "C" int native_ufs_log_open(uint64_t *first,uint64_t *blocks,const char **why){if(!gRootHost){*why="no root layout";return 0;}if(!gRootHost->logOpen(why))return 0;*first=CB_LOG_FIRST;*blocks=CB_LOG_BLOCKS;return 1;}
+// Last block of the authorized window is outside every normal slot: a panic-time note that does not
+// depend on the BootLog writer having opened. Read back by scripts/logging/read-log-note.py.
+extern "C" int native_ufs_log_force_note(const char *text){
+ if(!gRootHost||!text)return 0;
+ UInt8 *block=(UInt8*)IOMalloc(4096);if(!block)return 0;
+ memset(block,0,4096);memcpy(block,"CBNOTE01",8);
+ UInt64 stamp=0;__asm__ volatile("isb; mrs %0,cntpct_el0":"=r"(stamp));
+ int at=snprintf((char*)block+8,64,"t=%llx ",(unsigned long long)stamp);
+ size_t n=0;for(;text[n]&&at+n<4000;n++){char c=text[n];block[8+at+n]=(UInt8)((c>=32&&c<127)?c:'?');}
+ bool ok=gRootHost->rawWrite4k(CB_LOG_FIRST+CB_LOG_BLOCKS-1,block);
+ IOFree(block,4096);return ok?1:0;
+}
 extern "C" int native_ufs_log_write(uint64_t rel,uint32_t count,const void *src){if(!gRootHost||rel>=CB_LOG_BLOCKS||!count||count>CB_LOG_BLOCKS-rel)return 0;return gRootHost->logWrite(CB_LOG_FIRST+rel,count,src)==kIOReturnSuccess;}
 extern "C" int native_ufs_log_sync(void){return gRootHost&&gRootHost->logSync()==kIOReturnSuccess;}
 extern "C" unsigned native_ufs_store_gpt_check(void){return gRootHost?gRootHost->logGptCheck():1;}
