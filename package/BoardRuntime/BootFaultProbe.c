@@ -86,14 +86,21 @@ void boot_progress_exit_fault(int pid,unsigned signal,char *out,unsigned long ca
       if(copyinstr(image.imageFilePath,path,sizeof(path),&copied))path[0]=0;
      }
     }
-    if(best)n+=snprintf(out+n,capacity-n," img=%s+0x%llx base=%llx dyldslide=%llx",
-                        path,(unsigned long long)(f.pc-best),(unsigned long long)best,
-                        (unsigned long long)cache_slide);
+    if(best) {
+     char extra[160];
+     snprintf(extra,sizeof extra," img=%s+0x%llx base=%llx dyldslide=%llx",
+              path,(unsigned long long)(f.pc-best),(unsigned long long)best,
+              (unsigned long long)cache_slide);
+     if(n<capacity) { unsigned long room=capacity-n; snprintf(out+n,room,"%s",extra); n+=strlen(out+n); }
+    }
    }
    char message[81]={0}; unsigned long copied=0;
    if(f.x[0] && !copyinstr(f.x[0],message,sizeof(message),&copied)) {
     for(unsigned i=0;message[i];++i)if((unsigned char)message[i]<32||(unsigned char)message[i]>126)message[i]='?';
-    if(message[0])n+=snprintf(out+n,capacity-n," msg=%s",message);
+    if(message[0] && n<capacity) {
+     unsigned long room=capacity-n;
+     snprintf(out+n,room," msg=%s",message); n+=strlen(out+n);
+    }
    }
   }
  }

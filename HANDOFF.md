@@ -152,3 +152,13 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - **尚未解决 1**：logfix32 在 336.8 s 出现 `mbuf_mtypes_sync+0x78` data abort（`far=0xffffffec0b8c6b6f`），发生在 SpringBoard 反复 sig=5、84 次 corpse、内存压力很大的阶段；与显示客户端修复无关，尚未定位。
 - **尚未解决 2（UI 阻塞）**：用户态 SIGTRAP 潮（SpringBoard/contextstored/triald/biomed/donotdisturbd sig=5）。已查上游：UniXNU 只支持 iPadOS 17，无 iOS 16/SIGTRAP 案例；本机 P21 基线（无 GPU/无 IOGPU，CPU 显示）有 `IOMFB: default_fb_surface: No Default FB Surface found` 但仍正常出界面且 SpringBoard 零退出，故缺 GPU 与这条 IOMFB 消息都不是原因。`boot_progress_exit_fault` 已增强：按进程 dyld 镜像列表解析 `PC` 到 `img=<path>+0x…` 并附带 `x0` 消息（logfix33），用于定位断言点。
 - **候选与日志索引**：logfix31 `a0a61d9a…`（倒计时验证）；logfix32 `1bcf1b0d…`（supportedFrameInfo 修复，`20261028T165238Z`）；logfix33 `52ccdc76…`（fault 探针增强，见其后日志）；logfix30 `3cae7b16…` 无效（owner UUID）。
+
+## 2026-10-29：keybag/SIGTRAP 定位与 `-apfs_shared_datavolume` 回退
+
+- **SIGTRAP 断言点（已定位）**：SpringBoard 首个 `brk #1`（ESR `0xf2000001`）唯一落在 **`MobileKeyBag` `_MKBEventsRegister.cold.2 + 0x2c`**；同栈为 SpringBoardFoundation/libdispatch/SpringBoardUIServices。定位方法：用 16K 对齐 + “该地址必须是 BRK”反解 slide；`task_shared_region_slide` 直接相减会错落到 WallpaperKit（此前 BootFaultProbe 的 `+slide` 不可信）。triald/biomed/donotdisturbd 同一时段也 sig=5。
+- **AKS 不是该断言路径**：20H392 donor kernelcache 不含 `com.apple.driver.AppleKeyStore`（P21/17.7.11 有并在 66 s 注册），`sheng-aks` 计数全为 0；即使把 `sheng-aks` 提前进参数窗口（logfix34）也仍 sig=5。
+- **上游案例**：`upstream/UniXNU/scripts/probe-keybag-bypass.py` 显示无系统 keybag 时要用 `-apfs_shared_datavolume` 且 Data 卷存在 `keybags/backup`，keybagd 才走白名单而非致命路径。我们的 seed（`scripts/build-data-seed.py`）已创建 `keybags`、`keybags/backup`。
+- **实测失败（logfix35）**：加入 `-apfs_shared_datavolume`（参数 470 字节）后，启动在日志线程启动前停止——监视器读到窗口哈希未变（`40cef886…`，与上一轮相同），300 s 倒计时也未执行（说明 PMGR 启动前/期间即失败），设备约 386 s 后才由硬件看门狗回到 Recovery。该参数与当前 owner/scratch Data 布局不兼容，已回退；logfix36 用回退参数（486 字节）复核。
+- **探针修复**：logfix33 的 fault 探针在追加 `base/dyldslide` 后发生 `capacity-n` 下溢，导致 logfix34 没有 `FIRST UI FAULT` 输出；已改为局部缓冲 + 剩余空间检查（logfix35 起）。
+- **待解决**：MKB 断言的根因（无系统 keybag / AKS 缺失 / 服务注册），需要不依赖 `-apfs_shared_datavolume` 的路径；以及 keybag 相关 daemon 的 sig=5 潮。
+- **候选索引**：logfix33 `52ccdc76…`（probe 首版，越界）；logfix34 `bbf62f0f…`（AKS 入窗，仍 sig=5，无 FAULT 输出）；logfix35 `b2568888…`（`-apfs_shared_datavolume`，无日志、未倒计时，已弃）；logfix36 `480e2c2e…`（回退参数 + 探针修复，待验证）。
