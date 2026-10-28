@@ -9,7 +9,7 @@
 #include <vm/vm_map.h>
 #include <pexpert/pexpert.h>
 #include "BootUiTraceCore.h"
-enum { WaitThreads=24, WaitFrames=16, WaitRows=360 };
+enum { WaitThreads=24, WaitFrames=16, WaitRows=600 };
 char p21_wait_rows[WaitRows][91];
 static char draft[WaitRows][91],published[WaitRows][91];
 // Only the process capture worker writes these buffers.
@@ -20,8 +20,8 @@ void p21_wait_publish(void){memcpy(published,draft,sizeof draft);}
 void p21_wait_snapshot(void){memcpy(p21_wait_rows,published,sizeof published);}
 static int read_stack(void *context,uint64_t address,void *bytes,unsigned size){return vm_map_read_user((vm_map_t)context,address,bytes,size)!=KERN_SUCCESS;}
 void p21_wait_capture(task_t task,unsigned role,int pid){
- if(role>2)return;
- const unsigned base=role*WaitThreads*5;const char letter="SBC"[role];
+ if(role>4)return;
+ const unsigned base=role*WaitThreads*5;const char letter="SBCKU"[role];
  snprintf(draft[base],91,"STK %c p%d unavailable/busy",letter,pid);
  if(!task || !task_lock_try(task))return;
  vm_map_t map=task->map;if(!map){task_unlock(task);return;}

@@ -178,3 +178,11 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - **候选**：logfix38 `5919a6dd…`（复位链修复的第一版，未启动；HANDOFF 早前误写为 480e2c2e）；logfix39 `af8e8e24…`、内核 `d3b1bcdd…`、固件 `b1f40440…`（20261028T182442Z：无内核 panic，SpringBoard 断言在 `FBSDisplayMode _initWithWidth:…validityCheck:+0x244`，倒计时 355 s 正常回 Recovery——只验证了倒计时路径，panic→PSCI 尚未被实机触发）；logfix40 `825013c8…`（`cpus=8`）；logfix41 `9ffd0b50…`（按 P21 基线去掉 `fajita-display-logical`，恢复 `validate/cpu-present/unit-scale=1`）。
 
 - **证据更正（子代理审计）**：logfix33 目录内镜像的 ramdisk 与 manifest/固件 pin 不是同一组（`52ccdc76…` 镜像内 payload `255d37e5…`，manifest/固件却是 `efe05eee…`），且缺 `check-firmware-pins.log`，不能作为可复现候选；33–38 均缺 pins 日志，39/40/41 已保存。日志索引补充：`out/p21/persistent-logs/20261028T182442Z`（logfix39，boot `0x3a12cd3b`，60 rounds，无内核 panic）。
+
+## 2026-10-29：SIGTRAP 消除与 keybag 用户会话卡住（logfix42–44）
+
+- **SIGTRAP 潮已消除（logfix42）**：把 20H392 真正的 keybag kext（`com.apple.driver.AppleSEPKeyStore`、`com.apple.driver.AppleSEPCredentialManager`，依赖 `AppleSEPManager`）加入 prelink roots 后，`sig=5` 从约 100 次降为 **0**，SpringBoard 不再退出，日志出现 `AppleSEPKeyStore ... starting`、`_sep_enabled = 1`，本轮无内核 panic。倒计时 358 s 正常回 Recovery。
+- **新的阻塞**：用户态在 **143.8 s 完全静默**（之后只有内核 `P23 ALIVE`），`DISPLAY stage=10 reg=1 clients=0 frames=0`，即 backboardd/SpringBoard 从未建立显示客户端。采样符号化显示 SpringBoard 主线程阻塞在 `_CFPREFERENCES_IS_WAITING_FOR_USER_CFPREFSD`（libxpc `_dispatch_mach_send_and_wait_for_reply`），进程采样同时显示 keybagd(pid44)、usermanagerd(pid82)、SpringBoard(pid25) 用户线程全部 WAIT —— 用户会话没有激活。
+- **`sep-booted=1` 无效（logfix43）**：`_sep_enabled` 仍为 1，仍在 143.8 s 卡住；该 boot-arg 不能替代真实 SEP 端点。
+- **logfix44 诊断扩展**：线程栈采样原先只覆盖 chronod/SpringBoard/backboardd（role S/B/C），现增加 keybagd（role K）与 usermanagerd（role U）：`StartupWaitProbe.c` 支持 role 0–4、WaitRows 600；`BootProcessProbe.c` 对 index 6/14 采样。目的：确认 keybagd 到底卡在哪个 XPC / io_connect / mach_msg。
+- **候选索引**：logfix42 `f58ce2c9…`（SEP key store，SIGTRAP 归零）；logfix43 `fe135832…`（`sep-booted=1`，无效）；logfix44 `a6804fc9…`、内核 `c6b4fc96…`（K/U 栈采样）。
