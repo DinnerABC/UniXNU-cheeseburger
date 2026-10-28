@@ -202,3 +202,11 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - **SMP 已验证（logfix46）**：参数 `sheng-smp=1 armcpu-self-ipi=1` 后 8 核全部 online（CPU7 mpidr=103 step=7），`cpu_signal failed` 为 0，`sig=5` 仍为 0，无内核 panic，倒计时 354 s 正常回 Recovery。结论：多核本身可用，不是用户会话卡住的原因。
 - **卡住仍在**：用户态在约 139.5 s 后静默，`DISPLAY clients=0 frames=0`；keybagd/usermanagerd 各只有 1 线程且 WAIT；本轮 logd 也只有 1–3 线程且全部 WAIT（P21 基线 logd 有 8 线程）。
 - **logfix47**：把栈采样目标从 keybagd/usermanagerd 换成 **launchd(index 0→role K)** 与 **logd(index 14→role U)**，用于确认是否是 launchd 在 boot task 期间无法应答 bootstrap，导致所有 daemon 在 os_log/os_trace 初始化时永久等待。
+
+## 2026-10-29：用户会话停滞的当前结论（logfix47）
+
+- **已验证可用**：8 核 SMP（`sheng-smp=1 armcpu-self-ipi=1`）全核 online、无 `cpu_signal failed`；`sig=5` 为 0；无内核 panic；倒计时 354–358 s 稳定回 Recovery；`preboot-gate.py` 每次启动前通过。
+- **仍停滞**：用户态在约 139 s 后无新日志，`DISPLAY clients=0 frames=0`，backboardd/SpringBoard 未建立显示客户端。栈采样显示：launchd 在 mach_msg 事件循环（正常），logd 后期也在 mach_msg（正常），早期一次采样落在 dyld 初始化；keybagd/usermanagerd 只有 1 个线程且在第一次 os_log/os_trace 初始化处等待。P21 基线同一阶段 keybagd 3 线程、logd 8 线程、SpringBoard 132 s 启动、backboardd 147 s 启动、155 s 出现 IOMobileFramebufferUserClient 显示类型。
+- **尚未证明的假设**：a) launchd 在同步 boot task 期间无法应答 bootstrap；b) usermanagerd 的 persona/会话建立在 scratch Data 上失败（上游 QEMU 探针也把“persona/session on empty Data”列为下一下阻塞）；c) `-apfs_shared_datavolume` 需要 Data 与 root 同 APFS 容器，而当前 owner union 不满足（该参数此前会导致日志线程前停机）。
+- **下一步候选**：① 采样全部 24 个目标进程的栈（当前只有 5 个角色）以找出真正持有资源的进程；② 对照 P21 的 launchd 配置/会话激活路径，确认 20H392 缺的 boot task；③ 评估把 scratch Data 改成与 root 同容器的 shared data volume（结构性工作）。
+- **设备状态**：root Recovery，ADB `tcp:localhost:5037`，序列号 `3b25cc7c`；无监视器在跑；最近日志 `20261028T195205Z`（logfix47，窗口 `0c3dbfce…`）。
