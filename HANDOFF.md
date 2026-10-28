@@ -186,3 +186,13 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - **`sep-booted=1` 无效（logfix43）**：`_sep_enabled` 仍为 1，仍在 143.8 s 卡住；该 boot-arg 不能替代真实 SEP 端点。
 - **logfix44 诊断扩展**：线程栈采样原先只覆盖 chronod/SpringBoard/backboardd（role S/B/C），现增加 keybagd（role K）与 usermanagerd（role U）：`StartupWaitProbe.c` 支持 role 0–4、WaitRows 600；`BootProcessProbe.c` 对 index 6/14 采样。目的：确认 keybagd 到底卡在哪个 XPC / io_connect / mach_msg。
 - **候选索引**：logfix42 `f58ce2c9…`（SEP key store，SIGTRAP 归零）；logfix43 `fe135832…`（`sep-booted=1`，无效）；logfix44 `a6804fc9…`、内核 `c6b4fc96…`（K/U 栈采样）。
+
+## 2026-10-29：用户会话卡在 logd bootstrap（logfix45）
+
+- **K/U 栈（已修正导出与下标）**：`StartupWaitProbe` 现在输出 600 行，`BootLog.c` 同步导出 600 行；usermanagerd 的 targets 下标是 13（此前误用 14=logd），因此 K/U 字母与进程对应关系是反的：`STK K p82` 实为 usermanagerd，`STK U p44` 实为 keybagd。
+- **阻塞点（符号化，slide 0x3f3bc000）**：
+  - keybagd(pid44)：`__os_trace_get_logd_port` → `__bootstrap_create_request` → `__xpc_pipe_routine` → `mach_msg`（等 launchd 回答 logd 的 bootstrap 查询）。
+  - usermanagerd(pid82)：`_firehose_client_reconnect` / `_firehose_send_register` → `__os_trace_init_slow`（同样在等 logd firehose）。
+  - 两者用户线程数都只有 1 且 WAIT；P21 基线同一阶段 keybagd 有 3 线程、logd 8 线程。
+- **推断**：launchd 在同步执行 keybag/usermanagerd boot task 时无法应答 bootstrap 查询，导致 daemon 在第一次 os_trace 初始化时永久等待；`logd_helper` 在 121 s 还出现“3 秒 45057 次唤醒”的忙等，单核调度饥饿会放大该问题。
+- **logfix46**：启用真正的 SMP（`sheng-smp=1 armcpu-self-ipi=1`，从参数中去掉 `offline-hid-input=1` 以保持 494 字节），验证 7 核 online、`cpu_signal failed` 是否消失、以及 keybagd 是否仍卡在 logd bootstrap。
