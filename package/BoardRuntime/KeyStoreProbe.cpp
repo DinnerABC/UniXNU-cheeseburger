@@ -88,17 +88,22 @@ static void native_keyevents_probe(void) {
     if (data && data->getLength() == sizeof(ephemeral))
         memcpy(&ephemeral, data->getBytesNoCopy(), sizeof(ephemeral));
     OSSafeReleaseNULL(chosen);
+    IOLog ("P23 AKS probe: enabled=%u ephemeral=%u original=%u\n", enabled, ephemeral, original);
     if (ephemeral != 1 || original) return;
     const OSSymbol *name = OSSymbol::withCString("AppleKeyStore");
     bool absent = name && !OSMetaClass::getMetaClassWithName(name);
     OSSafeReleaseNULL(name);
+    IOLog ("P23 AKS probe: class_absent=%u\n", absent);
     if (!absent) return;
     IOService *provider = IOService::getResourceService();
+    IOLog ("P23 AKS probe: provider=%p\n", provider);
     if (!provider) return;
     void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    IOLog ("P23 AKS probe: handle=%p\n", handle);
     if (!handle) return;
     native_keyevents_static_init();
     native_keyevents_status = OSMetaClass::postModLoad(handle);
+    IOLog ("P23 AKS probe: postModLoad=%d\n", native_keyevents_status);
     if (native_keyevents_status) return;
     native_keyevents_stage = 2;
     IOService *service = native_keyevents_allocate();
