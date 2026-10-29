@@ -327,3 +327,10 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - 合并：新增 `package/BoardRuntime/NativeSandboxPolicy.cpp`（照 ios-sweet 0050：注册名为 "Sandbox" 的 MAC policy，`mpo_policy_syscall` 对容器/扩展类操作返回 ENOENT，其余返回 0，并打印首次使用的 op），`native_keystore_probe` 中调用；`prelink.py` 移除 `com.apple.security.sandbox` 根（避免同名 policy 冲突）。参数加 `native-sandbox=1`（448 字节）。
 - 注意：导出头把 `mac_policy_register` 声明为 C++ 链接，内核实际导出 C 符号，桩里用 `__asm__("_mac_policy_register")` 显式绑定。
 - 待验证：sandbox 拒绝消失后 lsd 是否完成数据库重建、SpringBoard/backboardd 是否开始 swap（screen 出图）。
+
+## 2026-10-29：按操作者要求暂停自动重启（logfix68）
+
+- 目的：首次启动需要重建 LaunchServices/数据库，耗时较长；本轮**去掉 `cheeseburger-unattended-reset`**，让系统持续运行。panic 仍保留 60 s 现场后停机（不会自动重启）。
+- `preboot-gate.py` 增加显式 `--allow-no-reset`：仅在操作者明确要求时放行缺少倒计时参数的镜像；其余检查（`cheeseburger-panic-hold`、`sheng-log=1`、内核符号、panic PSCI、pin）不变。
+- 本轮同时包含 ios-sweet 0050 的宽松 Sandbox policy（`native-sandbox=1`），预期 lsd 的 mobilegestalt 拒绝消失、数据库重建可完成、SpringBoard/backboardd 开始 swap。
+- 设备不会自动回 Recovery；待操作者手动返回后，用读取脚本回收本轮日志（监视器以长超时等待）。

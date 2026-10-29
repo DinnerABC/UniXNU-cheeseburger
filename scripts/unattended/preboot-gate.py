@@ -46,13 +46,20 @@ def main(candidate):
 
     if len(args) >= WINDOW:
         fail(f'boot args {len(args)} bytes exceed the delivered window')
-    for needle in ('cheeseburger-unattended-reset=', 'cheeseburger-panic-hold=', 'sheng-log=1'):
+    allow_no_reset = '--allow-no-reset' in sys.argv
+    for needle in ('cheeseburger-panic-hold=', 'sheng-log=1'):
         at = args.find(needle)
         if at < 0 or at >= WINDOW:
             fail(f'{needle} missing or beyond byte {WINDOW}')
     reset = re.search(r'cheeseburger-unattended-reset=(\d+)', args)
-    if not reset or int(reset.group(1)) <= 0:
-        fail('unattended reset countdown not positive')
+    if not allow_no_reset:
+        at = args.find('cheeseburger-unattended-reset=')
+        if at < 0 or at >= WINDOW:
+            fail(f'cheeseburger-unattended-reset= missing or beyond byte {WINDOW}')
+        if not reset or int(reset.group(1)) <= 0:
+            fail('unattended reset countdown not positive')
+    else:
+        print('operator override: countdown reset disabled for this boot', file=sys.stderr)
 
     for symbol in (b'_board_panic_reset', b'_cheeseburger_unattended_reset_start'):
         if kernel.find(symbol) < 0:
@@ -97,7 +104,7 @@ def main(candidate):
         'image_sha256': hashlib.sha256(raw).hexdigest(),
         'kernel_sha256': validation['sha256'],
         'args_bytes': len(args),
-        'countdown_s': int(reset.group(1)),
+        'countdown_s': int(reset.group(1)) if reset else 0,
         'firmware_sha256': hashlib.sha256(firmware).hexdigest(),
     }))
 
