@@ -1,0 +1,73 @@
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -3544,6 +3544,9 @@
+ 
+ 	return obj;
+ }
++
++/* Registered by a service property so its own clients bypass the sandbox verdict. */
++static bool native_sandbox_grant(IOService * service);
+ 
+ /* Routine io_registry_entry_get_property */
+ kern_return_t
+@@ -3566,7 +3569,8 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
++	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+ #endif
+@@ -3634,7 +3638,8 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
++	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+ #endif
+@@ -3681,7 +3686,8 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
++	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+ #endif
+@@ -3743,7 +3749,8 @@
+ 		ref->root = container;
+ 	}
+ 	if (ref->root == container) {
+-		if (0 != mac_iokit_check_get_property(ref->cred, ref->entry, name->getCStringNoCopy())) {
++		if (!(OSDynamicCast(IOService, ref->entry) && native_sandbox_grant(OSDynamicCast(IOService, ref->entry)))
++		    && 0 != mac_iokit_check_get_property(ref->cred, ref->entry, name->getCStringNoCopy())) {
+ 			value = NULL;
+ 		}
+ 	}
+@@ -3871,7 +3878,8 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
++	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+ #endif
+@@ -3893,7 +3901,9 @@
+ 					while ((NULL == obj) && (entry = iter->getNextObject())) {
+ 						OSObject * currentObj = IOCopyPropertyCompatible(entry, property_name);
+ #if CONFIG_MACF
+-						if (currentObj != NULL && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
++						if (currentObj != NULL
++						    && !(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++						    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 							// Record that MAC hook blocked this entry and property, and continue to next entry
+ 							err = kIOReturnNotPermitted;
+ 							OSSafeReleaseNULL(currentObj);
