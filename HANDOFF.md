@@ -264,3 +264,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 
 - logfix56：103 已放行，接着 `CB owner fail=106 stage=6 mnt=0 sel=1000043 vm=1 va=1` —— 来自 `native_owner_cache_prepare` 末尾的 `root_recheck`（再次要求 verified root）。logfix57 把 `native_apfs_group_window` 并入该判定（`root_authorized && (verified || group)`）。
 - logfix57：106 已越过，接着 `CB owner fail=107 stage=6` —— boot-manifest 发布需要 root 的 verified SHA-384，group 窗口没有。logfix58：`apfs-group` 模式下跳过 `native_owner_publish_boot_manifest`（`/chosen` 的零占位保持不变）。
+
+## 2026-10-29：分组容器完整启动到用户态（logfix58）
+
+- logfix58（跳过 boot-manifest 发布）：owner 各 gate 全部通过，日志出现 `load_init_program: attempting to load /sbin/launchd`，launchd/keybagd/usermanagerd/SpringBoard 全部运行，`sig=5` 为 0，无内核 panic。**root 与用户态均已从 userdata 16 GiB 的新分组容器启动**。
+- 用户态仍在约 117 s 后安静（SpringBoard 唤醒风暴后无新日志），与之前 logd bootstrap 停顿时序一致；本轮尚未启用 Data 配对。
+- 下一步（logfix59）：参数加入 `-apfs_shared_datavolume`（去掉 `offline-legacy-validate=1` 保持 484 字节），验证 APFS 是否把同容器 role=Data 卷配对为 shared data volume，以及 keybag allow-list 是否改变用户会话。
