@@ -60,6 +60,14 @@
 - 候选 logfix76：payload `b995948b…`、固件 `fa905120…`、镜像 `166a17d2…`，门禁通过。
 - 说明：零售设备的 `debug-enabled` 通常也是 0，因此 slot 180 的 not-permitted 可能本来就是正常行为；本轮用于确认打开该开关后 op180 是否变为 0、以及 backboardd 是否因此注册 vsync/开始出帧。
 
+## 2026-10-29：按 ios-sweet 路线移除 sandbox（logfix77）
+
+- 上游调查：官方 UniXNU（sheng/fajita/Pagani board.toml）与 Xiaomi 6（ios_sagit kext-collections 04-apfs-security）都**保留**原版 `com.apple.security.sandbox`，只做 IOKit 客户端授权（zzw/zzwb），并有审计脚本保证 sandbox 可执行文件逐字节未改；没有 mach-lookup 绕过。
+- ios-sweet 是“没有 Apple kext”的架构（全部源码自建），所谓移除只是本就不存在；可复用的是 0050 的宽松 "Sandbox" policy（我们已有 `NativeSandboxPolicy.cpp`）、`launchd_unsecure_cache=1`、容器布局与迁移跳过。
+- 静态验证：剩余 12 个 prelink 组件的 `__DATA/__DATA_CONST` 中**没有任何指针落在 sandbox 的四个段内**（0x52365c0-0x53764b6、0x64b9000-0x64e4640、0x7ae8d00-0x7afd3e8、0x6ef83c0-0x6efbbd8），删除不会留下悬空绑定。
+- logfix77：prelink 去掉 sandbox 根（37 条 → 29 components），参数加 `native-sandbox=1`（449 字节），内核 `a0ddccfc…`、payload `bef82d13…`、固件 `2920150b…`、镜像 `7634ee10…`，门禁通过。
+- 前两次同类尝试（logfix68/71）都在写日志前失败、原因未明；本轮保留 debug-enabled=1、op180/swap 探针与 60 s 停屏，用屏幕现象区分“loader 未进内核”和“内核早 panic”。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。

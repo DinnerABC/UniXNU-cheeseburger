@@ -11,7 +11,7 @@ id = "xnu"
 title = "MSM8998 XNU (temporary RAM boot)"
 type = "xnu"
 path = "/kernel.macho"
-args = "cheeseburger-upstream-userland=1 cheeseburger-unattended-reset=1800 cheeseburger-panic-hold=60 cheeseburger-disable-watchdogd=1 -v keepsyms=1 cpus=8 launchd_unsecure_cache=1 sheng-log=1 p20-observe=1 offline-mobile-graphics-load=1 offline-legacy-register=1 offline-legacy-phase=4 offline-legacy-pm=0 offline-legacy-transfer=1 sheng-vsync=60 offline-legacy-gop=1 offline-legacy-unit-scale=1 sheng-smp=1 armcpu-self-ipi=1 apfs-group=1"
+args = "cheeseburger-upstream-userland=1 cheeseburger-unattended-reset=1800 cheeseburger-panic-hold=60 cheeseburger-disable-watchdogd=1 -v keepsyms=1 cpus=8 launchd_unsecure_cache=1 sheng-log=1 p20-observe=1 offline-mobile-graphics-load=1 offline-legacy-register=1 offline-legacy-phase=4 offline-legacy-pm=0 offline-legacy-transfer=1 sheng-vsync=60 offline-legacy-gop=1 offline-legacy-unit-scale=1 sheng-smp=1 armcpu-self-ipi=1 apfs-group=1 native-sandbox=1"
 [[entry]]
 id = "exit"
 title = "Return to firmware"
