@@ -31,12 +31,12 @@ def compile(src,name=None,flags=(),late=False):
   elif a in ('-MF','-MJ','-MT'):i+=1
   elif a not in ('-MD','-MMD','-MP'):cmd.append(a)
   i+=1
- cmd+=['-I',str(S),'-I',str(O/'abi'),'-I',str(T/'.cache/xnu-work/osfmk'),'-I',str(U/'kits/VerifiedRoot/include'),'-Wno-error','-mgeneral-regs-only','-DUNIXNU_BOARD_ABI_20H392=1',*flags]
+ cmd+=['-I',str(S),'-I',str(O/'abi'),'-I',str(T/'.cache/xnu-work'),'-I',str(T/'.cache/xnu-work/osfmk'),'-I',str(U/'kits/VerifiedRoot/include'),'-Wno-error','-mgeneral-regs-only','-DUNIXNU_BOARD_ABI_20H392=1',*flags]
  run(cmd,name+'-compile',rec['directory']);commands.append({'source':str(src.relative_to(R)),'source_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),'command':cmd,'cwd':rec['directory'],'object_sha256':hashlib.sha256(obj.read_bytes()).hexdigest()})
  if late:
   transformed=O/(name+'.late.o');run(['/opt/homebrew/opt/llvm/bin/llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_'+src.name,obj,transformed],name+'-late');obj=transformed
  compiled.append(obj);return obj
-cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
+cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture','NativeSandboxPolicy']
 late={'NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','NativeLegacyDisplay','NativeGOPPresenter','NativeHidInput','NativeKeyStoreEvents'}
 for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=1'] if n=='NativeHidInput' else [],late=n in late)
 for n in ['BootWatchdogPolicy','no-store-provider','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe']:compile(S/(n+'.c'))

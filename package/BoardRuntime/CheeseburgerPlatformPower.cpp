@@ -170,6 +170,16 @@ extern "C" void board_panic_reset(void) {
  /* Operator decision: keep the panic screen; the unattended countdown is the
   * only reset path. With SMP the writer and countdown keep running on the
   * other CPUs, so the scene and the persistent log both survive. */
+ if (__atomic_load_n(&cheeseburger_unattended_remaining,__ATOMIC_ACQUIRE)==0) {
+  /* No countdown thread exists yet: parking here would never reset. */
+  unattended_console_line("CB panic: no countdown; SYSTEM_RESET\n");
+  for (;;) {
+   uint64_t rc=cb_psci(0x84000009UL,0);
+   char line[64]; int n=snprintf(line,sizeof line,"CB panic reset: SYSTEM_RESET returned %llx\n",rc);
+   for(int i=0;i<n;i++) p8_console_char(line[i]);
+   for (volatile unsigned spin=0; spin<1000000; ++spin) __asm__ volatile("yield");
+  }
+ }
  unattended_console_line("CB panic: parked; countdown will reset\n");
  for (;;) __asm__ volatile("wfe");
 }
