@@ -1,0 +1,24 @@
+{
+  "experiment": "P21-UP1",
+  "source_repo": "https://github.com/IssacL04/UniXNU-Pagani_SM8750",
+  "source_commit": "02c7ccd3286b661bef4513a7de50dba5153f8e6d",
+  "source_file": "scripts/prepare-ram-data.py",
+  "selected_new_jobs": [
+    "com.apple.identityservicesd",
+    "com.apple.locationd"
+  ],
+  "preserved_job": "com.apple.watchdogd",
+  "mechanism": "existing exclusive-created RAM Data disabled.plist plus disabled.migrated; root:wheel0644",
+  "enable_argument": "cheeseburger-upstream-userland=1",
+  "default": "unchanged R17 watchdog policy",
+  "release": "experiment disabled",
+  "root_and_data_seed_changed": false,
+  "maxvnodes_changed": false,
+  "source_sha256": {
+    "BootWatchdogPolicy.c": "33870d9792b6048802787d6f1f03e35ca3b29fce3850cd484fb44eaff58a34ea",
+    "BootUserlandPolicy.h": "e8dc787d0e4b829d8a38767521112497c163633cbbf5b8bb8395b954f67208a9",
+    "BootLog.c": "9507364fe0bb99c2517ff4454bf15e90de5125e99df8ed9a00e5c7fac92f3947",
+    "BootProcessProbe.c": "a1d56c95849931e2efee6d61202eb3b69c24e4038958cc5ac743bca09b993e95"
+  },
+  "runtime_effect": "unverified until recovery logs and physical output"
+}
