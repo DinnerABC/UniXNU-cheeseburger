@@ -637,6 +637,46 @@
       "15": "calls provider slot 180 with two scalars and one scalar output; returned 0xe00002bc (not permitted) - base class refusal, our object does not override that slot.",
       "5": "structure input 1132 bytes, reads byte 879 bit 0, binds com.apple.private.gain-map-access; returned 0.",
       "84": "single scalar input (4 bytes); returned unsupported."
+    },
+    "vtable": {
+      "address_point": "0xfffffff006def8e0 (IOMobileFramebufferLegacy, identified by start() at slot 86)",
+      "nodes": {
+        "178": "IOMobileFramebufferLegacy::swap_submit(IOMFBSwap *, IOUserClient *) - name from the kext __PRETTY_FUNCTION__ string",
+        "180": "real method behind selector 15; returns e00002bc (not permitted) when its precondition fails",
+        "188": "getDotPitch",
+        "200": "unsupported stub in the Legacy vtable (selector 17 target)",
+        "212": "supportedFrameInfo",
+        "274": "startHardware",
+        "276": "kickSwapQueue",
+        "282": "validateSwap",
+        "287": "getRefreshAttributes",
+        "321": "collectCompletionReports"
+      },
+      "selector_to_slot": {
+        "0": 173,
+        "3": 240,
+        "4": 177,
+        "5": 216,
+        "6": 176,
+        "7": 175,
+        "8": 246,
+        "12": 228,
+        "15": 180,
+        "17": 200,
+        "22": 183,
+        "26": 229,
+        "27": 199,
+        "28": 188,
+        "29": 189,
+        "33": 231,
+        "50": 207,
+        "57": 206,
+        "74": 212,
+        "79": 223,
+        "84": 203
+      },
+      "swap_path": "selector 5 (1132-byte IOMFBSwap) -> provider slot 178 swap_submit. Only selector 5 references vtable offset 1424 (178*8). backboardd called selector 5 at 190.966 s and 1070.768 s; both returned 0, but kickSwapQueue (slot 276) and validateSwap (slot 282) never ran, so the donor swap_submit accepted the request without queueing it.",
+      "slot178_signature": "IOMFBStatus swap_submit(IOMFBSwap *swap, IOUserClient *client)"
     }
   }
 }

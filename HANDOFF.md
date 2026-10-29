@@ -21,6 +21,15 @@
 - 依据上述事实，IOUserClient.cpp 的 get-property 限定三个画布属性，允许名单支持有界 OSString/OSData；LegacyDisplayProbe.cpp 的 NativeGOPFramebuffer 发布进程名单。原先非画布的 get-property 豁免被移除；该扩展不是官方原生实现，尚未验证效果。内核缓存修改的补丁记录 `patches-8796/xnu/native-canvas-grant-fix.patch` 不含最后一处递归路径的修订，后续需补全并接入补丁序列。
 - canvasfix 镜像 `out/p23/ios-16.7.16-20H392-canvasfix/uefi/boot-p23-stagec-20h392-nosync.img` SHA256 `3f6c08d642df6d6d5d0d01a1eceb71db48a6693b05243e30e6b7cdb0abdf8ca2`，固件 pins 核对通过，Fastboot 临时启动 OKAY；预置 misc Recovery 标记，手机正在运行，尚无结果。启动参数与 logfix72 一致。
 
+## 2026-10-29：静态解析 IOMobileFramebufferUserClient 与 Legacy vtable
+
+- 方法：从 donor kernelcache 提取 `com.apple.iokit.IOMobileGraphicsFamily`，定位 user client 分发表 `0xfffffff006decb58`（每项 24 字节，分派代码 `0xfffffff005bff398`），导出 78 个 selector 的签名到 `out/p23/ios-16.7.16-20H392/analysis/iomfb-userclient-selectors.json`。
+- Legacy 类 vtable 地址点 `0xfffffff006def8e0`（用 `IOMobileFramebufferLegacy::start` 落在 slot 86 反推）。关键槽：**178 `IOMobileFramebufferLegacy::swap_submit(IOMFBSwap *, IOUserClient *)`**（名字来自 kext 内的 `__PRETTY_FUNCTION__` 字符串）、180（selector 15 目标，真实实现，前置条件失败时返回 `e00002bc`）、188 getDotPitch、200 Legacy 里的 **unsupported stub**（selector 17 目标）、212 supportedFrameInfo、274 startHardware、276 kickSwapQueue、282 validateSwap、287 getRefreshAttributes、321 collectCompletionReports。
+- selector→槽（实测收敛）：0→173，3→240，4→177，5→216，6→176，7→175，8→246，12→228，**15→180**，**17→200**，22→183，26→229，27→199，28→188，29→189，33→231，50→207，57→206，74→212，79→223，84→203。
+- **swap 真路径**：selector 5（1132 字节 IOMFBSwap）→ provider 槽 178 `swap_submit`。全表只有 selector 5 引用 178*8=1424。运行日志里 backboardd 在 190.966 s 与 1070.768 s 各调用一次 selector 5，均返回 0；但 kickSwapQueue（槽 276）与 validateSwap（槽 282）从未执行 → donor 的 swap_submit 接受了请求却没有入队/校验，帧仍然为 0。
+- 另一处失败：selector 15 → 槽 180 在 190.968 s 返回 `e00002bc`（不允许），是基类实现的前置条件拒绝；该函数的实现会先调一个导入检查，再访问 `this+5040` 的辅助对象。
+- 上游官方参考：`out/p20/upstream/NativeMobileDisplay/README.md` 明确 "the CPU and GPU scanout paths work；GOP 无 vblank，`sheng-vsync=<Hz>` 用 work-loop 定时器发送原 family 的 vsync 消息"；swap 的 offer/validate/retire 由该组件实现，由 family 调用。本机 family 未走到 validate，说明差异在 family 的 swap_submit 内部判定，而不是我们的拷贝实现。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。
