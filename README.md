@@ -19,7 +19,7 @@ The device owner has confirmed the original iPadOS interface on hardware. A late
 | Storage / root | Partial | Native UFS reads and owner-authorized OS / SystemOS root mounting |
 | Data | Partial | Writable APFS RAM Data from a seed; persistent user Data is not established |
 | Display | Partial | Original iPadOS UI appeared on hardware using CPU framebuffer presentation |
-| Phone-style UI | Experimental | Phone identity with an iPadOS root; latest candidate reported to reach a system screen, phone layout unconfirmed |
+| Phone-style UI | Experimental | Phone identity with an iPadOS root; latest candidate reached a system screen but still showed a tablet layout |
 | Touch | Not working | Synaptics S3320 / QUP5 driver integrated; reset input remains low before I²C initialization |
 | Buttons | Partial | Power and volume adapter, with a volume-key Home chord; full physical interaction is not qualified |
 | GPU / Metal | Not available | No qualified Adreno 540 acceleration |
