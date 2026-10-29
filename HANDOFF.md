@@ -278,3 +278,10 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - Data 配对未发生：日志显示 `P17 Data activation: publishing UniXNUOwnerData` → `mounting volume OwnerData`、`role 0 Not a System or data volume`，即 `/private/var` 仍来自我们的 scratch 数据盘；APFS 没有把同容器的 `DataTest` 卷配成 shared data volume（容器无 volume group，macOS 拒绝 `-groupWith`）。
 - 仍卡：`DISPLAY stage=10 clients=0 frames=0`；backboardd[55] 于 137.7 s 启动，采样显示其主线程在 dlopen/IOKit 初始化（`_map_images`/`_IOHIDEventSystemRegister`），未见 `IOMobileFramebuffer` 匹配事件。
 - 候选：logfix59 `cfd9c267…`、内核 `4888851d…`、固件 `835cd948…`；日志 `20261029T042404Z`。
+
+## 2026-10-29：长跑稳定但界面仍缺（logfix60）
+
+- logfix60（倒计时 600 s）：运行到 647 s，rounds=120，`sig=5` 与内核 panic 均为 0；用户态持续活动。但 `DISPLAY stage=10 clients=0 frames=0`，backboardd 从未创建 framebuffer 客户端。
+- backboardd 阻塞栈（slide `0x15054000` 符号化）：`MobileKeyBag __copy_aks_client_connection` → `IOKit _io_service_open_extended` → `mach_msg`，即**打开 AppleSEPKeyStore 用户客户端时一直等待**；上层是 `IOKit __processUserActivityMsg → _get_device_lock_state`（PearlEventFilter 路径）。这解释了 backboardd/keybagd/usermanagerd 的同一类停顿：都卡在 AKS 打开。
+- 判断：prelink 的真实 `AppleSEPKeyStore` 能注册并启动，但在无 SEP 硬件时其 open/SEP 交互会阻塞，而不是快速失败。
+- 下一步候选：A) 用板级运行时提供最小 `AppleSEPKeyStore` 用户客户端桩（把 sheng-aks 的选择器仿真移植到 20H392 ABI），并从 prelink roots 移除真实 kext；B) 继续排查真实 kext 的 start/open 阻塞点（SEPManager 端点/DT 节点），使其快速失败并回落到 keybag allow-list。
