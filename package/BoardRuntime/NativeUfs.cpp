@@ -501,11 +501,10 @@ static bool gGroupWindow = false;
 
 bool NativeUfsBlock::configureVerification ()
 {
-  if (gGroupWindow) {
-    /* Grouped-container bring-up: the relocated window carries its own signed
-     * policy built separately; read it without the per-block owner table until
-     * that policy is linked in. */
-    gRootDiagnostic.stage = "group window: policy skipped";
+  if (gGroupWindow && !strcmp (label, "OS")) {
+    /* Grouped-container bring-up: the relocated OS window has no linked policy
+     * yet; SystemOS keeps its signed policy. */
+    gRootDiagnostic.stage = "group OS window: policy skipped";
     return true;
   }
   gRootDiagnostic.stage = "policy selection";
@@ -657,6 +656,7 @@ IOReturn NativeUfsBlock::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 bl
   struct Operations {
     IOLock *mutex;
     IOMemoryDescriptor *buffer;
+    bool plain;
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
     const vr_view *view;
 #endif
@@ -669,9 +669,8 @@ IOReturn NativeUfsBlock::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 bl
       return r;
     }
     IOReturn verify (uint64_t index, const void *data, size_t length) {
-      if (gGroupWindow) {
-        /* No per-block policy is linked for the relocated window yet: serve the
-         * APFS metadata directly so the grouped container can mount. */
+      if (plain) {
+        /* No per-block policy is linked for the relocated OS window yet. */
         return kIOReturnSuccess;
       }
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
@@ -696,7 +695,7 @@ IOReturn NativeUfsBlock::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 bl
       if (copied == length) __atomic_fetch_add (&native_ufs_block_reads, 1, __ATOMIC_RELAXED);
       return copied;
     }
-  } operations = { windowLock, buffer
+  } operations = { windowLock, buffer, gGroupWindow && !strcmp (label, "OS")
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
     , &verified
 #endif

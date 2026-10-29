@@ -244,3 +244,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - 现象：logfix48 在 root 身份阶段失败后 panic，约 20 s 内即重启，持久日志没写入 panic 文本；窗口末尾 note 块仍是旧的 `owner fail=104`（说明 panic 路径的 `boot_log_panic_flush_text` 未成功落盘）。
 - 改动：①`cheeseburger-panic-hold` 由 20 提升到 **60 s**；②`cheeseburger_unattended_reset_start()` 里也解析 `cheeseburger-panic-hold`（bsd_init 早期调用，PMGR 之前的 panic 也能保留现场）；倒计时复位不变。
 - logfix50：镜像 `f0ed5571…`、内核 `55ffd756…`、固件 `c80043d8…`，同时包含 root 身份阶段的新诊断（`NativeUfs: identity …`、窗口 offset/size 列表），03:10:30Z 启动。
+
+## 2026-10-29：group 窗口身份与读路径（logfix52–54）
+
+- logfix52（panic 停机 + `/chosen` 取 UUID）：`identity OS uuid DADD93F8…` 通过，但仍 `Waiting on IOMedia UUID DADD93F8…`，109.8 s `Failed to mount root device`。panic 后停机、300 s 倒计时在 353 s 复位并完整回收日志（确认停机策略可用）。
+- logfix53（读路径全局旁路）：`identity OS` 通过，但 `identity SystemOS volume uuid unavailable` → 因为 `configureVerification` 的跳过是全局的，把 SystemOS 的签名策略也跳过了。
+- **logfix54 修复**：策略跳过与直读旁路都只作用于 label 为 `OS` 的窗口，SystemOS 继续使用签名策略；`Operations` 增加 `plain` 标志。待实机验证 root 是否能从新容器挂载。
