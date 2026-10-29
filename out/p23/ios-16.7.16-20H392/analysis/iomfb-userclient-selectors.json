@@ -1,0 +1,642 @@
+{
+  "table": [
+    {
+      "selector": 0,
+      "handler": "0xfffffff005bff728",
+      "scalar_in": 3,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 1,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 2,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 3,
+      "handler": "0xfffffff005bff784",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 4,
+      "handler": "0xfffffff005bff940",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 5,
+      "handler": "0xfffffff005bff998",
+      "scalar_in": 0,
+      "struct_in": 1132,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 6,
+      "handler": "0xfffffff005bffa40",
+      "scalar_in": 3,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 7,
+      "handler": "0xfffffff005bffb3c",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 8,
+      "handler": "0xfffffff005bffb94",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 2,
+      "struct_out": 0
+    },
+    {
+      "selector": 9,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 10,
+      "handler": "0xfffffff005c003c4",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 11,
+      "handler": "0xfffffff005c00400",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 12,
+      "handler": "0xfffffff005c0044c",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 13,
+      "handler": "0xfffffff005c00488",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 14,
+      "handler": "0xfffffff005c004c4",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 15,
+      "handler": "0xfffffff005c0053c",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 16,
+      "handler": "0xfffffff005c005b4",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 17,
+      "handler": "0xfffffff005c005f0",
+      "scalar_in": 0,
+      "struct_in": 3084,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 18,
+      "handler": "0xfffffff005c00658",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 19,
+      "handler": "0xfffffff005c006b0",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 20,
+      "handler": "0xfffffff005c007c0",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 21,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 22,
+      "handler": "0xfffffff005c0080c",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 23,
+      "handler": "0xfffffff005c00848",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 24,
+      "handler": "0xfffffff005c00894",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 16
+    },
+    {
+      "selector": 25,
+      "handler": "0xfffffff005c008c8",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 26,
+      "handler": "0xfffffff005c00920",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 27,
+      "handler": "0xfffffff005c00950",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 3084
+    },
+    {
+      "selector": 28,
+      "handler": "0xfffffff005c00a40",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 29,
+      "handler": "0xfffffff005c00a98",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 8
+    },
+    {
+      "selector": 30,
+      "handler": "0xfffffff005c00acc",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 31,
+      "handler": "0xfffffff005c00b08",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 32,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 33,
+      "handler": "0xfffffff005c00c50",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 34,
+      "handler": "0xfffffff005c00c8c",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 35,
+      "handler": "0xfffffff005c00cc8",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 36,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 37,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 38,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 39,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 40,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 41,
+      "handler": "0xfffffff005c00d04",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 42,
+      "handler": "0xfffffff005c00d48",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 20
+    },
+    {
+      "selector": 43,
+      "handler": "0xfffffff005c00db0",
+      "scalar_in": 0,
+      "struct_in": 4,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 44,
+      "handler": "0xfffffff005c00e18",
+      "scalar_in": 0,
+      "struct_in": 16,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 45,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 46,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 47,
+      "handler": "0xfffffff005c00e80",
+      "scalar_in": 4,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 48,
+      "handler": "0xfffffff005c00f6c",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 49,
+      "handler": "0xfffffff005c010d4",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 50,
+      "handler": "0xfffffff005c00784",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 51,
+      "handler": "0xfffffff005c006ec",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 52,
+      "handler": "0xfffffff005bffa9c",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 53,
+      "handler": "0xfffffff005bffc08",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 54,
+      "handler": "0xfffffff005c009fc",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 72
+    },
+    {
+      "selector": 55,
+      "handler": "0xfffffff005c00984",
+      "scalar_in": 1,
+      "struct_in": 72,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 56,
+      "handler": "0xfffffff005bffc64",
+      "scalar_in": 0,
+      "struct_in": 156,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 57,
+      "handler": "0xfffffff005c00728",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 58,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 66,
+      "handler": "0xfffffff005bffca0",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 67,
+      "handler": "0xfffffff005bffcec",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 68,
+      "handler": "0xfffffff005c00264",
+      "scalar_in": 1,
+      "struct_in": 128,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 69,
+      "handler": "0xfffffff005c0114c",
+      "scalar_in": 0,
+      "struct_in": 136,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 72,
+      "handler": "0xfffffff005c00b44",
+      "scalar_in": 4,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 73,
+      "handler": "0xfffffff005c00bac",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 74,
+      "handler": "0xfffffff005c00c04",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 64
+    },
+    {
+      "selector": 75,
+      "handler": "0xfffffff005c01208",
+      "scalar_in": 0,
+      "struct_in": 32776,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 76,
+      "handler": "0xfffffff005c012d0",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 77,
+      "handler": "0xfffffff005c01228",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 78,
+      "handler": "0xfffffff005bffd5c",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 79,
+      "handler": "0xfffffff005bffedc",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 80,
+      "handler": "0xfffffff005c0125c",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 81,
+      "handler": "0xfffffff005bffad8",
+      "scalar_in": 2,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 82,
+      "handler": "0xfffffff005c01060",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 83,
+      "handler": "0xfffffff005bff824",
+      "scalar_in": 1,
+      "struct_in": 0,
+      "scalar_out": 1,
+      "struct_out": 0
+    },
+    {
+      "selector": 84,
+      "handler": "0xfffffff005c009c8",
+      "scalar_in": 0,
+      "struct_in": 4,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 85,
+      "handler": "0xfffffff005c00020",
+      "scalar_in": 0,
+      "struct_in": 0,
+      "scalar_out": 0,
+      "struct_out": 0
+    },
+    {
+      "selector": 86,
+      "handler": "0xfffffff005c00164",
+      "scalar_in": 0,
+      "struct_in": 4294967295,
+      "scalar_out": 1,
+      "struct_out": 0
+    }
+  ],
+  "notes": {
+    "table_va": "0xfffffff006decb58",
+    "dispatcher": "0xfffffff005bff398",
+    "device": "20H392 donor kernelcache com.apple.iokit.IOMobileGraphicsFamily",
+    "observations": {
+      "17": "checks structureInputSize == 3084 then forwards structureInput to a provider virtual; matches the 20H392 legacy swap request (surfaces at +2184, mode 812, w/h 816/820). Never called in the 20261029T115120Z run.",
+      "27": "same 3084-byte size as a structure output; companion of 17.",
+      "28": "calls provider slot 188 (getDotPitch); our override ran at the same instant; returned 0xe00002f0 (no dot-pitch property).",
+      "74": "passes scalarInput[0], scalarOutput and structureOutput(64) to a provider virtual; our supportedFrameInfo logged at the same instant.",
+      "15": "calls provider slot 180 with two scalars and one scalar output; returned 0xe00002bc (not permitted) - base class refusal, our object does not override that slot.",
+      "5": "structure input 1132 bytes, reads byte 879 bit 0, binds com.apple.private.gain-map-access; returned 0.",
+      "84": "single scalar input (4 bytes); returned unsupported."
+    }
+  }
+}
