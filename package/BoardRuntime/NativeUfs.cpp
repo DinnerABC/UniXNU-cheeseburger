@@ -498,6 +498,7 @@ static inline uint64_t timerTicks (void) {uint64_t v; __asm__ volatile ("isb\n\t
 volatile uint32_t native_ufs_integrity_failures = 0;
 
 static bool gGroupWindow = false;
+extern "C" int native_apfs_group_window = 0;
 
 bool NativeUfsBlock::configureVerification ()
 {
@@ -911,6 +912,7 @@ bool NativeUfs::prepareRootWindows ()
         layout->window[i].size = 0x300000000ULL;   /* 12 GiB */
         layout->imageBytes = 0x700000000ULL;       /* 28 GiB */
         gGroupWindow = true;
+        native_apfs_group_window = 1;
         IOLog ("NativeUfs: apfs-group window override active\n");
         for (unsigned i = 0; i < layout->windows; ++i) {
           IOLog ("NativeUfs: window %s offset=%llx size=%llx\n", layout->window[i].name,

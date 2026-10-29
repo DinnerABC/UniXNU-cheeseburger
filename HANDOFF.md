@@ -250,3 +250,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix52（panic 停机 + `/chosen` 取 UUID）：`identity OS uuid DADD93F8…` 通过，但仍 `Waiting on IOMedia UUID DADD93F8…`，109.8 s `Failed to mount root device`。panic 后停机、300 s 倒计时在 353 s 复位并完整回收日志（确认停机策略可用）。
 - logfix53（读路径全局旁路）：`identity OS` 通过，但 `identity SystemOS volume uuid unavailable` → 因为 `configureVerification` 的跳过是全局的，把 SystemOS 的签名策略也跳过了。
 - **logfix54 修复**：策略跳过与直读旁路都只作用于 label 为 `OS` 的窗口，SystemOS 继续使用签名策略；`Operations` 增加 `plain` 标志。待实机验证 root 是否能从新容器挂载。
+
+## 2026-10-29：root 已从分组容器挂载（logfix54/55）
+
+- logfix54：`identity OS` 与 `identity SystemOS` 均通过；日志出现 `Got boot device = … /AppleAPFSContainerScheme/AppleAPFSMedia/AppleAPFSContainer/SydneyUpdate20H392.D22D221OS@1` 与 `apfs: mountroot called!`、`mounting volume SydneyUpdate20H392.D22D221OS` —— **root 卷确实从新的 12 GiB 分组容器挂载成功**。
+- 新阻塞：50.26 s `panic: rootvp not authenticated after mounting @bsd_init.c:1081`。该检查要求 `native_verified_block_root_authorized(rootdev)`，而 group 窗口没有 owner 逐块策略，必然为 0。
+- 修复（logfix55）：board runtime 增加 `native_apfs_group_window`（仅 `apfs-group=1` 置位）；`bsd_init.c` 在 panic 前对 group 模式置 `owner_authorized=1` 并记录阶段文字。其余身份/只读/设备检查保持不变。
