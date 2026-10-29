@@ -334,3 +334,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - `preboot-gate.py` 增加显式 `--allow-no-reset`：仅在操作者明确要求时放行缺少倒计时参数的镜像；其余检查（`cheeseburger-panic-hold`、`sheng-log=1`、内核符号、panic PSCI、pin）不变。
 - 本轮同时包含 ios-sweet 0050 的宽松 Sandbox policy（`native-sandbox=1`），预期 lsd 的 mobilegestalt 拒绝消失、数据库重建可完成、SpringBoard/backboardd 开始 swap。
 - 设备不会自动回 Recovery；待操作者手动返回后，用读取脚本回收本轮日志（监视器以长超时等待）。
+
+## 2026-10-29：回退 sandbox 移除（logfix69）
+
+- logfix68（移除 `com.apple.security.sandbox` + `native-sandbox=1`、无倒计时）在日志线程启动前即失败：监视器窗口哈希未变、设备约 90 s 后回到 Recovery（无倒计时时的早 panic 保护分支直接 PSCI）。最可能是移除 sandbox kext 破坏了 AMFI/预链接依赖。
+- 处理：`prelink.py` 恢复 `com.apple.security.sandbox` 根（组件 30，含 sandbox），回到 logfix66 的可启动基线；参数恢复但倒计时改为 **1800 s**（30 分钟，给首次建库留时间，同时失败时仍能回 Recovery 取日志）。`NativeSandboxPolicy.cpp` 保留在树里但未启用（无 `native-sandbox` 参数）。
+- 后续若要再试宽松 Sandbox：需先用较长 `cheeseburger-panic-hold`（如 300 s）把早期 panic 文本留在屏幕上，确认真正失败点，而不是盲删根。
