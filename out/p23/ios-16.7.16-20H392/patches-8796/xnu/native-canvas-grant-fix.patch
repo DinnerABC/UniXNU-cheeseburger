@@ -1,0 +1,76 @@
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -3547,6 +3547,19 @@
+ 
+ /* Registered by a service property so its own clients bypass the sandbox verdict. */
+ static bool native_sandbox_grant(IOService * service);
++extern "C" void proc_selfname(char *, int);
++static bool native_canvas_grant(IORegistryEntry *entry, const char *property) {
++ if (!property || (strcmp(property, "canvas-width") && strcmp(property, "canvas-height") && strcmp(property, "supports-apt"))) return false;
++ IOService *service = OSDynamicCast(IOService, entry); if (!service) return false;
++ OSObject *obj = service->getProperty("NativeSandboxGrantProcess");
++ OSString *str = OSDynamicCast(OSString, obj); OSData *data = OSDynamicCast(OSData, obj);
++ const char *list = str ? str->getCStringNoCopy() : data ? (const char *)data->getBytesNoCopy() : NULL;
++ size_t size = str ? strlen(list) + 1 : data ? data->getLength() : 0;
++ if (!list || !size || size > 256 || list[size-1] != 0 || strnlen(list, size) != size-1) return false;
++ char name[17] = {}; proc_selfname(name, sizeof(name));
++ for (const char *at = list; *at;) { size_t n = 0; while (at[n] && at[n] != ',') ++n; if (n && !strncmp(name, at, n < 16 ? n : 16) && (n >= 16 || name[n] == 0)) return true; at += n + (at[n] == ',' ? 1 : 0); }
++ return false;
++}
+ 
+ /* Routine io_registry_entry_get_property */
+ kern_return_t
+@@ -3569,7 +3582,7 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	if (!native_canvas_grant(entry, property_name)
+ 	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+@@ -3638,7 +3651,7 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	if (!native_canvas_grant(entry, property_name)
+ 	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+@@ -3686,7 +3699,7 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	if (!native_canvas_grant(entry, property_name)
+ 	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+@@ -3749,7 +3762,7 @@
+ 		ref->root = container;
+ 	}
+ 	if (ref->root == container) {
+-		if (!(OSDynamicCast(IOService, ref->entry) && native_sandbox_grant(OSDynamicCast(IOService, ref->entry)))
++		if (!(ref->cred == kauth_cred_get() && native_canvas_grant(ref->entry, name->getCStringNoCopy()))
+ 		    && 0 != mac_iokit_check_get_property(ref->cred, ref->entry, name->getCStringNoCopy())) {
+ 			value = NULL;
+ 		}
+@@ -3878,7 +3891,7 @@
+ 	CHECK( IORegistryEntry, registry_entry, entry );
+ 
+ #if CONFIG_MACF
+-	if (!(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++	if (!native_canvas_grant(entry, property_name)
+ 	    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 		return kIOReturnNotPermitted;
+ 	}
+@@ -3902,7 +3915,7 @@
+ 						OSObject * currentObj = IOCopyPropertyCompatible(entry, property_name);
+ #if CONFIG_MACF
+ 						if (currentObj != NULL
+-						    && !(OSDynamicCast(IOService, entry) && native_sandbox_grant(OSDynamicCast(IOService, entry)))
++						    && !native_canvas_grant(entry, property_name)
+ 						    && 0 != mac_iokit_check_get_property(kauth_cred_get(), entry, property_name)) {
+ 							// Record that MAC hook blocked this entry and property, and continue to next entry
+ 							err = kIOReturnNotPermitted;

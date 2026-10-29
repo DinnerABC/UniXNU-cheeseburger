@@ -1,5 +1,26 @@
 # UniXNU-cheeseburger 交接
 
+## 2026-10-29：画布授权排查
+
+- iouctrace 本轮日志 `out/p21/persistent-logs/20261029T114827Z`，boot ID `0x45db1008`，1801s、358 rounds、write_errors=0。SpringBoard 对 IOSurfaceRootUserClient 的 selector 13、0、9、35，以及 backboardd selector 34、5 均有成功返回；具体 selector 语义和对象内容仍需按 20H392 ABI 核实。backboardd 的 IOMobileFramebuffer selector 4/5/6 返回 0；12/50/68/84 有 `0xe00002c7`（kIOReturnUnsupported），不是自动证明致命。frames=0，swap validator=0，vsync arm=0。探针每类每 selector 全局限前两次，不能由缺失条目断言未调用，也不能据成功返回推定渲染任务完成或提交成功。
+
+- 重要诊断修正：`LegacyDisplayProbe.cpp` 的客户端 vtable interpose 因旧 UAF 已停用，`FB3 in/out=0` 不代表 selector 未调用。新候选通过 `IOUserClient::callExternalMethod` 对 IOSurfaceRootUserClient 和 IOMobileFramebufferUserClient 的指定进程限量记录 selector 进入/返回及状态，不替换 vtable；补丁 `p23-iouc-surface-display-trace.patch` 已列入序列。该探针不能直接证明用户态软件渲染任务完成，也可能因类名、其他调用路径或日志覆盖遗漏。
+- iouctrace 镜像 `out/p23/ios-16.7.16-20H392-iouctrace/uefi/boot-p23-stagec-20h392-nosync.img` SHA256 `720d63a496308fb206d610503299131e6251620cb5f068952d7d45eb4efaefd9`；内核编译、预链接、固件 pins、打包通过，临时 Fastboot boot OKAY。预置 Recovery 标记，启动参数未变（1800 秒）；尚未回收本轮日志。回 Recovery 后查 `P23 UC enter/exit` 和新 boot ID。
+
+- tid7415 调用链离线进一步符号化：QuartzCore software scan_convert block -> libdispatch `_dispatch_apply_invoke$VARIANT$mp` -> worker；表明这是并行软件光栅任务，但单次快照不证明卡死。`out/p23/ios-16.7.16-20H392/analysis/backboardd-7415/` 保存脚本及原始结果。kernel/pthread 的最近符号可能是共享缓存缺少符号的近邻，不得直接认定具体函数。现有日志仅证明 IOSurfaceRoot 启动，没有提供可靠的 surface 创建、渲染完成或提交路径证据；SWAP check=0。
+
+- 线程 7415 进一步用已挂载 20H392 dyld cache 的 `.symbols` 本地符号表符号化：QuartzCore `0x188450028` = `CA::OGL::SW::image_sampler<...ARGB8_Host...> + 0xe4`；LR `0x188448d0c` = `CA::OGL::SW::sample_texture + 0x30c`；后续 `CA::OGL::SW::scanline + 0x3e0`、`CA::OGL::SW::scan_convert...block_invoke + 0x65c`。实际 CPU 软件渲染路径已执行；未证明整个 180s 一直运行此函数，也未证明提交 swap 的阻塞原因。采样文件中 B 角色 PC 214 条可解析记录中 8 条命中该 image_sampler、2 条 tex_color_matrix，201 条落 libsystem_kernel（多线程、非 CPU 时间统计）。
+
+- 已离线解析本机 20H392 dyld cache 映像表：高 CPU backboardd pid55 tid7415 的 PC `0x1c9b7c028`、slide `0x4172c000`，去 slide 后落在 QuartzCore `+0x1cc028`；LR 和前两帧分别为 QuartzCore `+0x1c4d0c/+0x1c2a24/+0x1c256c`，其余帧落在 libdispatch、libsystem_pthread。只解析到映像和偏移，函数名尚未符号化；单次快照不能证明因果。ios-topaz 记录过无 GPU 时 IOAcceleratorES 查询与零 swap 的相似案例，当前本机并无对应查询证据。
+
+- 画布授权两份补丁已依次加入 `patches-8796/series-8796.list`，补齐递归属性读取；在当前源码基线上反向再正向应用后字节一致。增量内核构建、预链接、payload、UEFI 和打包通过，EFI 模块中三项 pins 已核对；未做干净树全量重建。候选 `out/p23/ios-16.7.16-20H392-canvas-series/uefi/boot-p23-stagec-20h392-nosync.img` SHA256 `73d0e14b93978275bc24fe02e06cc7b3b9d6a95ef52c6233c10110fc71e15514`，本轮未启动。上游 zzw 只为特定服务的 open 授权，画布属性扩展为本地实现，尚未证明成功出帧。
+
+- canvasfix 用户手动回 Recovery 后读取 `out/p21/persistent-logs/20261029T105345Z/`，boot ID `0x451dfdb3`，1365s、272 rounds、0 write errors。持久日志中 PosterBoard/CollectionsPoster 的 canvas-width/height deny 未再出现；最新 clients=10 frames=0，swap check=0。AegirPoster 等仍有 supports-apt deny，AegirPoster 多次 sig6，尚无直接 abort 原因。不能据此认定缺失授权是 SIGABRT 原因或没有 deny 即成功读取。
+
+- 用户确认上轮日志后，诊断版回收 `out/p21/persistent-logs/20261029T102215Z`，boot ID `0x416a5788`；`disp0` 的 NativeSandboxGrantProcess 类型为 OSData，NativeGOPFramebuffer 节点属性缺失；PosterBoard/CollectionsPoster 的画布读取仍被拒绝，SWAP 为 0。
+- 依据上述事实，IOUserClient.cpp 的 get-property 限定三个画布属性，允许名单支持有界 OSString/OSData；LegacyDisplayProbe.cpp 的 NativeGOPFramebuffer 发布进程名单。原先非画布的 get-property 豁免被移除；该扩展不是官方原生实现，尚未验证效果。内核缓存修改的补丁记录 `patches-8796/xnu/native-canvas-grant-fix.patch` 不含最后一处递归路径的修订，后续需补全并接入补丁序列。
+- canvasfix 镜像 `out/p23/ios-16.7.16-20H392-canvasfix/uefi/boot-p23-stagec-20h392-nosync.img` SHA256 `3f6c08d642df6d6d5d0d01a1eceb71db48a6693b05243e30e6b7cdb0abdf8ca2`，固件 pins 核对通过，Fastboot 临时启动 OKAY；预置 misc Recovery 标记，手机正在运行，尚无结果。启动参数与 logfix72 一致。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。

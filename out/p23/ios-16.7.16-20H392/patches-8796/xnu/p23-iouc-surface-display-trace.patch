@@ -1,0 +1,32 @@
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -6404,6 +6404,21 @@
+ IOUserClient::callExternalMethod(uint32_t selector, IOExternalMethodArguments * args)
+ {
+ 	IOReturn ret;
++	/* Read-only bring-up trace: bounded per class and selector, no vtable replacement. */
++	const char *traceClass = getMetaClass()->getClassName();
++	bool surfaceTrace = traceClass && !strcmp(traceClass, "IOSurfaceRootUserClient");
++	bool displayTrace = traceClass && !strcmp(traceClass, "IOMobileFramebufferUserClient");
++	static unsigned traceCounts[2][128];
++	bool trace = false;
++	char traceName[17] = {};
++	if ((surfaceTrace || displayTrace) && selector < 128) {
++		proc_selfname(traceName, sizeof(traceName));
++		if (!strcmp(traceName, "backboardd") || !strcmp(traceName, "SpringBoard") ||
++		    !strcmp(traceName, "PosterBoard") || !strcmp(traceName, "CollectionsPoste")) {
++			trace = __atomic_fetch_add(&traceCounts[displayTrace ? 1 : 0][selector], 1, __ATOMIC_RELAXED) < 2;
++			if (trace) IOLog("P23 UC enter proc=%s class=%s sel=%u\n", traceName, traceClass, selector);
++		}
++	}
+ 
+ 	if (defaultLocking) {
+ 		if (defaultLockingSingleThreadExternalMethod) {
+@@ -6420,6 +6435,7 @@
+ 	if (defaultLocking) {
+ 		IORWLockUnlock(&lock);
+ 	}
++	if (trace) IOLog("P23 UC exit proc=%s class=%s sel=%u rc=%x\n", traceName, traceClass, selector, ret);
+ 	return ret;
+ }
+ 

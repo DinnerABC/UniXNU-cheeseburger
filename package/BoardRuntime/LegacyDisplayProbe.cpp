@@ -574,6 +574,7 @@ void native_legacy_display_late_probe(void) {
         OSArray *ranges=OSArray::withCapacity(1);
         if(nub && memory && ranges && parent && nub->init()) {
             ranges->setObject(memory);nub->setDeviceMemory(ranges);nub->setName("NativeGOPFramebuffer");
+            nub->setProperty("NativeSandboxGrantProcess", "PosterBoard,CollectionsPoster,SpringBoard,backboardd");
             nubAttached=nub->attach(parent);if(nubAttached)nubStarted=nub->start(parent);
             if(nubStarted) {
                 unsigned phase=0;PE_parse_boot_argn("offline-legacy-phase",&phase,sizeof(phase));
