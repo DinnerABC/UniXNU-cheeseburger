@@ -340,3 +340,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix68（移除 `com.apple.security.sandbox` + `native-sandbox=1`、无倒计时）在日志线程启动前即失败：监视器窗口哈希未变、设备约 90 s 后回到 Recovery（无倒计时时的早 panic 保护分支直接 PSCI）。最可能是移除 sandbox kext 破坏了 AMFI/预链接依赖。
 - 处理：`prelink.py` 恢复 `com.apple.security.sandbox` 根（组件 30，含 sandbox），回到 logfix66 的可启动基线；参数恢复但倒计时改为 **1800 s**（30 分钟，给首次建库留时间，同时失败时仍能回 Recovery 取日志）。`NativeSandboxPolicy.cpp` 保留在树里但未启用（无 `native-sandbox` 参数）。
 - 后续若要再试宽松 Sandbox：需先用较长 `cheeseburger-panic-hold`（如 300 s）把早期 panic 文本留在屏幕上，确认真正失败点，而不是盲删根。
+
+## 2026-10-29：显示画布节点按本机面板 1080×1920（logfix70）
+
+- 30 分钟长跑（logfix69）显示：约 1066 s 时 PosterBoard/CollectionsPoster 首次打开 IOMobileFramebuffer 客户端（累计 4 个），但从未 swap；sandbox 拒绝其读取 `ioPlatformDevice` 的 `canvas-width`/`canvas-height`，且 ADT 中没有该节点（上游 ios-sweet 在 `/arm-io/disp0` 上提供 `device_type=display-subsystem`、`compatible=sweet,display` 与 canvas 尺寸）。
+- 按操作者要求，画布采用 **1080×1920**（OnePlus 5 面板，与 scanout 1:1），不加 iPhone X 的 1125×2436 逻辑尺寸。脚本 `scripts/add-armio-disp-node.py` 在 `/arm-io/disp0` 与根平台节点上写 canvas-width/height（u32 LE，与 ios-sweet 一致），并更新 ADT validation.json 哈希。
+- logfix70：内核 `b1eb8a20…`、ADT `5332544b…`，倒计时 1800 s。
