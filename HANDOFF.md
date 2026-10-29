@@ -45,6 +45,14 @@
 - logfix74：把槽 180 改成只观测（打印前 6 次的 a/b/out 指针与返回码，原样转发基类），其余不变。内核 `781b0d83…`、payload `dc1a1842…`、固件 `af6691ae…`、镜像 `0e7d2737…`，门禁通过。
 - 最短观察窗口：显示客户端 148–222 s 打开，slot 180 与 supportedFrameInfo 在约 181 s，首次 swap 提交约 191 s（首轮）或 1062 s（本轮）。**跑满 ≈300 s 即可手动重启**；日志每秒落盘，手动复位不会丢已写部分。
 
+## 2026-10-29：槽 180 的拒绝原因 = PE_i_can_has_debugger（logfix75）
+
+- logfix74 回收（boot `0x3fdeadfd`，约 438 s 后手动复位）：`P23 DISP op180 #1 a=0 b=16 out=0x… rc=e00002bc`（179.5 s），只调用一次。
+- 用 donor kernelcache 自带的符号表反查：槽 180 在拒绝前调用的导入就是 **`_PE_i_can_has_debugger`**（`0xfffffff007803668`），它读取 `debug_enabled`；该值为 0 时返回 kIOReturnNotPermitted。对应的全局位于 `0xfffffff007198b8c/0x7198c58`（`PE_i_can_has_debugger` 的 debug 标志）。
+- 原因：logfix70 起使用的参数组里 **没有 `debug=`**（更早的 P23 参数组有 `debug=0x8`，切换参数时丢失），所以 `debug_enabled=0`，backboardd 的这次显示操作被无条件拒绝，随后也不注册 vsync 客户端（selector 72 从未出现，arm=0）。
+- logfix75：只在启动参数末尾加回 `debug=0x8`（442 字节），内核与 logfix74 相同（`781b0d83…`），payload `9cc000c9…`、固件 `e7e7620d…`、镜像 `74b5564e…`，门禁通过。
+- 注意：`debug=0x8` 是 DB_KPRT（kprintf 镜像到调试口），不设 DB_HALT；早期 P23 参数组曾使用该值并正常启动。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。
