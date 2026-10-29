@@ -1,0 +1,25 @@
+--- a/iokit/Kernel/arm/NativeKeyStoreStub.cpp
++++ b/iokit/Kernel/arm/NativeKeyStoreStub.cpp
+@@ -222,10 +222,18 @@
+ 		break;
+ 	}
+ 
+-	char name[32];
+-	proc_selfname(name, sizeof(name));
+-	IOLog("P23 AKS: %s sel %u arg0 %llu in %u/%u out %u/%u -> 0x%x\n", name, selector,
+-	    arg0, in_scalars, in_struct, out_scalars, out_struct, ret);
++	/* Per-call tracing floods the console; keep it behind p23-aks-log=1. */
++	static int aksLog=-1;
++	if (aksLog<0) {
++		unsigned v=0;
++		aksLog=PE_parse_boot_argn("p23-aks-log",&v,sizeof(v)) && v==1;
++	}
++	if (aksLog) {
++		char name[32];
++		proc_selfname(name, sizeof(name));
++		IOLog("P23 AKS: %s sel %u arg0 %llu in %u/%u out %u/%u -> 0x%x\n", name, selector,
++		    arg0, in_scalars, in_struct, out_scalars, out_struct, ret);
++	}
+ 	return ret;
+ }
+ #endif

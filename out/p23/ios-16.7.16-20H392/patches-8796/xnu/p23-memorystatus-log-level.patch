@@ -1,0 +1,20 @@
+--- a/bsd/kern/kern_memorystatus.c
++++ b/bsd/kern/kern_memorystatus.c
+@@ -2505,7 +2505,7 @@
+ 		 * (That's why forked processes can consume unlimited memory.)
+ 		 */
+ 
+-		memorystatus_log(
++		memorystatus_log_info(
+ 			"memorystatus_update(enter): pid %d, priority %d, dirty=0x%x, Active(%dMB %s), Inactive(%dMB, %s)\n",
+ 			proc_getpid(p), priority, p->p_memstat_dirty,
+ 			memlimit_active, (memlimit_active_is_fatal ? "F " : "NF"),
+@@ -2574,7 +2574,7 @@
+ 			/* apply now */
+ 			task_set_phys_footprint_limit_internal(proc_task(p), ((p->p_memstat_memlimit > 0) ? p->p_memstat_memlimit : -1), NULL, use_active, is_fatal);
+ 
+-			memorystatus_log(
++			memorystatus_log_info(
+ 				"memorystatus_update: init: limit on pid %d (%dMB %s) targeting priority(%d) dirty?=0x%x %s\n",
+ 				proc_getpid(p), (p->p_memstat_memlimit > 0 ? p->p_memstat_memlimit : -1),
+ 				(p->p_memstat_state & P_MEMSTAT_FATAL_MEMLIMIT ? "F " : "NF"), priority, p->p_memstat_dirty,

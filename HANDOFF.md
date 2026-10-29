@@ -30,6 +30,13 @@
 - 另一处失败：selector 15 → 槽 180 在 190.968 s 返回 `e00002bc`（不允许），是基类实现的前置条件拒绝；该函数的实现会先调一个导入检查，再访问 `this+5040` 的辅助对象。
 - 上游官方参考：`out/p20/upstream/NativeMobileDisplay/README.md` 明确 "the CPU and GPU scanout paths work；GOP 无 vblank，`sheng-vsync=<Hz>` 用 work-loop 定时器发送原 family 的 vsync 消息"；swap 的 offer/validate/retire 由该组件实现，由 family 调用。本机 family 未走到 validate，说明差异在 family 的 swap_submit 内部判定，而不是我们的拷贝实现。
 
+## 2026-10-29：swap_submit 探针 + 控制台减噪（logfix73）
+
+- 依据静态解析（槽 178 = `IOMobileFramebufferLegacy::swap_submit(IOMFBSwap *, IOUserClient *)`），在 `OriginalLegacyFramebufferABI_20H392.h` 把 `opaque178` 定性为 `swap_submit`，并在 `NativeLegacyDisplay.cpp` 只重写该槽：前 3 次打印 `P23 SWAP submit`（swap/client 指针、返回码、结构前 6 个字），随后原样调用基类实现，不改变队列判定。
+- 控制台减噪：`P23 AKS` 逐次调用日志改为仅在 `p23-aks-log=1` 时输出（注册行保留）；`kern_memorystatus.c` 的两处 `memorystatus_update` 信息日志从 `memorystatus_log` 降为 `memorystatus_log_info`（默认不打印）。两处内核改动记录为 `patches-8796/xnu/p23-aks-log-gate.patch`、`p23-memorystatus-log-level.patch` 并加入序列。
+- 候选 `out/p23/ios-16.7.16-20H392-logfix73`：内核 `2c867aee…`、payload `325ba9f9…`、固件 `d9b3cd9b…`、镜像 `f33f3e43…`，门禁通过（432 字节参数、1800 s 倒计时）。尚未启动。
+- 目的：下一次启动能看到 swap_submit 是否真的被调用、拿到什么 IOMFBSwap，以及基类实现后是否终于进入 kickSwapQueue/validateSwap。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。

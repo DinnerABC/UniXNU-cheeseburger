@@ -10,6 +10,8 @@
 #include <IOKit/IOService.h>
 #include <libkern/libkern.h>
 struct OriginalLegacySwapRequest;
+struct IOMFBSwap;
+class IOUserClient;
 class IOMobileFramebufferLegacy : public IOService {
  OSDeclareAbstractStructors(IOMobileFramebufferLegacy)
  unsigned char originalPrivate[0x1660-sizeof(IOService)];
@@ -72,7 +74,9 @@ public:
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque175();
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque176();
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque177();
- virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque178();
+ // Selector 5 submits the 1132-byte IOMFBSwap here; the name and signature come
+ // from the donor's own IOMobileFramebufferLegacy::swap_submit type string.
+ virtual IOReturn swap_submit(IOMFBSwap *, IOUserClient *);
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque179();
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque180();
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque181();

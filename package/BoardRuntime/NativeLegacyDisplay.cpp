@@ -618,6 +618,25 @@ public:
         (void)count;(void)key;(void)mask;
         return kIOReturnUnsupported;
     }
+    // Selector 5 carries the 1132-byte IOMFBSwap. The family accepts it here and
+    // is expected to queue and validate it afterwards; in the 20H392 trace it
+    // returned success without ever reaching kickSwapQueue. Log the first
+    // submissions and forward unchanged so the queue decision stays original.
+    IOReturn swap_submit(IOMFBSwap *swap, IOUserClient *client) override {
+        static unsigned n;
+        bool log=(swap && n<3);
+        if(log)++n;
+        IOReturn status=IOMobileFramebufferLegacy::swap_submit(swap,client);
+        if(log) {
+            uint64_t words[8]={};
+            memcpy(words,swap,sizeof(words));
+            printf("P23 SWAP submit #%u swap=%p client=%p rc=%x w0=%llx w1=%llx w2=%llx w3=%llx w4=%llx w5=%llx\n",
+                n,(void *)swap,(void *)client,(unsigned)status,
+                (unsigned long long)words[0],(unsigned long long)words[1],(unsigned long long)words[2],
+                (unsigned long long)words[3],(unsigned long long)words[4],(unsigned long long)words[5]);
+        }
+        return status;
+    }
     IOReturn newUserClient(task_t task,void *security,UInt32 type,IOUserClient **client) override {
         {static unsigned n;if(n<6){++n;char b[64];snprintf(b,sizeof b,"DISP newUserClient type=%u #%u",(unsigned)type,n);disp_note(b);}}
         native_legacy_client_enter(task,type);
