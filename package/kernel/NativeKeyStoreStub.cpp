@@ -41,10 +41,12 @@ enum {
 	kAKSLockBag          = 13,
 	kAKSGetSystem        = 14,
 	kAKSGetDeviceState   = 17,
+	kAKSGetExtDeviceState = 35,     /* aks_get_extended_device_state (SpringBoard, chronod, ...) */
 	kAKSAssertHold       = 26,
 	kAKSAssertDrop       = 27,
 	kAKSUnloadSessionBags = 55,
 	kAKSNotifyStateSet   = 102,
+	kAKSAssertConsume    = 101,     /* aks_assert_consume */
 };
 
 /* The system (device) bag handle. */
@@ -189,6 +191,7 @@ AppleKeyStoreUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
 	case kAKSLockBag:
 	case kAKSAssertHold:
 	case kAKSAssertDrop:
+	case kAKSAssertConsume:
 	case kAKSUnloadSessionBags:
 	case kAKSNotifyStateSet:
 		args->scalarOutputCount = 0;
@@ -210,6 +213,7 @@ AppleKeyStoreUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
 		args->scalarOutputCount = 1;
 		break;
 	case kAKSGetDeviceState:
+	case kAKSGetExtDeviceState:
 		args->scalarOutputCount = 0;
 		ret = sweet_aks_device_state(args);
 		break;

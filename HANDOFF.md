@@ -314,3 +314,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
   - `ports/UniXNU-sheng`：Xiaomi Pad 6S Pro（SM8550）；`ports/UniXNU-OnePlus-Ace5`：OnePlus Ace 5（giulia，SM8650）。
 - 官方 UniXNU 组织下未找到 Polaris 仓库；其他 UniXNU 端口（nabu/dipper/picasso/sirius/umi/uke/zeta/pong/qemu/droidvm）为不同 SoC 设备，主要用于驱动范式参考。
 - 当前设备：USB 上完全枚举不到（ioreg 无 OnePlus，adb/fastboot 均空），logfix65 已打包并通过门禁，等设备回到 root Recovery 后启动。
+
+## 2026-10-29：内建 AppleKeyStore 生效 + 合并 0055（logfix65/66）
+
+- logfix65（ios-sweet 0038 合并）：`P23 AKS: AppleKeyStore registered (no passcode, unlocked)`，600 s 长跑 650 次调用、sig=5 与 panic 均为 0；backboardd 在 139 s 完成 sel 0/17，SpringBoard 在 177 s 调用 sel 0/7，但 **sel 35 返回 Unsupported**（`0xe00002c7`）。
+- logfix66：合并 ios-sweet `0055` 的 AKS 部分——新增 `kAKSGetExtDeviceState=35`（按 17 的 DER 状态应答）与 `kAKSAssertConsume=101`（成功）。`package/kernel/NativeKeyStoreStub.cpp` 与内核树同步修改。
+- 待验证：SpringBoard 拿到 35 后是否继续到 display；`DISPLAY clients` 仍为 0，若仍无客户端，下一个参考是 ios-sweet `0046`（IOSurface IOCoreSurfaceRoot + IOMobileFramebuffer AppleCLCD）。
