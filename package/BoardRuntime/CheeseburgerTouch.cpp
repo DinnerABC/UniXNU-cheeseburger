@@ -89,7 +89,9 @@ static int hardware(){
  if((rd(gcc,0x21008)|rd(gcc,0x17004))&0x80000000)return -52;
  const unsigned gp[]={87,88,89,125};for(unsigned i=0;i<4;++i)if(!map(pins[i],0x3400000+0x900000+gp[i]*0x1000,0x1000))return -53;
  for(unsigned i=0;i<2;++i)wr(pins[i],0,(rd(pins[i],0)&~(0x3cu|0x200u))|(3u<<2));
- // Do not pulse RESET or change regulators. An asserted reset is diagnostic.
+ // OnePlus 5 upstream ts_reset_active: GPIO89, input with pull-up. Preserve supplies.
+ // Linux pinctrl-msm encodes pull-up as 3; never drive or pulse the reset line.
+ wr(pins[2],0,(rd(pins[2],0)&~(0x3cu|0x200u|3u))|3u);IOSleep(20);
  cb_touch[14]=rd(pins[2],4);if(!(cb_touch[14]&1))return -54;
  wr(pins[3],0,rd(pins[3],0)&~(0x3cu|0x200u));
  cb_touch[15]=rd(pins[3],0);cb_touch[16]=rd(pins[3],8);
