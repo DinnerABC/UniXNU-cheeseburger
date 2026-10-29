@@ -304,3 +304,13 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - 合并方式：源码复制为 `package/kernel/NativeKeyStoreStub.cpp`，实际编入 `tree/.cache/xnu-work/iokit/Kernel/arm/NativeKeyStoreStub.cpp`，`iokit/conf/files.arm64` 增加该文件，`KernelConfigTables.cpp` 增加人格。板级 `NativeKeyStoreEvents.cpp` 的类定义已 `#if 0`（仅保留诊断计数与占位 allocate），避免重复符号。
 - 参数相应去掉 `offline-key-events=1 sheng-aks=1 sheng-aks-sls=3`（431 字节），因为内建驱动总是应答。
 - 备注：ios-sweet 还提供出界面所需的 `0046-sweet-iosurface-iomfb.patch`（IOSurface IOCoreSurfaceRoot + IOMobileFramebuffer AppleCLCD）、`0050` 宽松 Sandbox、`0055` AKS 35/101、`0068` surface lookup 缓存等，可作为后续显示路径的直接参考。
+
+## 2026-10-29：其他端口与可合并来源（已完成克隆）
+
+- 本地 upstream：`upstream/UniXNU`（b6ae99c）、`upstream/UniXNU-sheng`（0c2046b）已存在。
+- 新增克隆（`.work/tmp/`，浅克隆、走 7897 代理）：
+  - `ios-sweet`：**iOS 16.7.16/20H392，已在手机上出过 GUI**（Setup Hello）。可直接合并：`0038` AppleKeyStore（已合并为 logfix65）、`0046` IOSurface+IOMobileFramebuffer(AppleCLCD)、`0050` 宽松 Sandbox、`0055` AKS 35/101、`0068` surface lookup 缓存、`0078` 8 核 SMP、`0079` 显示电源；另有 Setup 跳过/`LastSystemVersion` 迁移跳过/containers/`RENAME_SWAP` 等环境经验。
+  - `ports/ios_sagit`：Xiaomi 6（sagit，MSM8998）完整端口；显示走 `QcomDisplay`/`QcomMIPIDSI`，GPU 走 `QcomGPU`/`QcomMTL`（IOSurface+Metal），无 AppleKeyStore 实现；对 MSM8998 的时钟/电源/输入/总线有参考价值，显示架构与我们不同。
+  - `ports/UniXNU-sheng`：Xiaomi Pad 6S Pro（SM8550）；`ports/UniXNU-OnePlus-Ace5`：OnePlus Ace 5（giulia，SM8650）。
+- 官方 UniXNU 组织下未找到 Polaris 仓库；其他 UniXNU 端口（nabu/dipper/picasso/sirius/umi/uke/zeta/pong/qemu/droidvm）为不同 SoC 设备，主要用于驱动范式参考。
+- 当前设备：USB 上完全枚举不到（ioreg 无 OnePlus，adb/fastboot 均空），logfix65 已打包并通过门禁，等设备回到 root Recovery 后启动。
