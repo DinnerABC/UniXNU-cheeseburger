@@ -299,6 +299,11 @@ void boot_log_panic_flush_text(const char *text) {
   __atomic_store_n(&panic_text_ready,1,__ATOMIC_RELEASE);
 }
 void boot_log_panic_flush(void) { }
+// Read back the reason captured by the panic funnel so the board power code can
+// reprint it after the panic dump, where the 60-row console cannot clear it.
+const char *boot_log_panic_text(void) {
+  return __atomic_load_n(&panic_text_ready,__ATOMIC_ACQUIRE) ? panic_text : "";
+}
 
 // Called by the board page's monitor once a second; starts the writer the first time when sheng-log=1.
 void boot_log_tick(unsigned now) {

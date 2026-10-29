@@ -161,8 +161,23 @@ static unsigned cb_total_seconds=180;
  * writer commits the panic, then reset. 0 keeps the stock debugger path. */
 extern "C" uint32_t board_panic_hold_seconds=0;
 static volatile bool cb_panic_parked=false;
+extern "C" const char *boot_log_panic_text(void);
+extern "C" volatile int p8_console_quiet;
 extern "C" void board_panic_reset(void) {
  __atomic_store_n(&cb_panic_parked,true,__ATOMIC_RELEASE);
+ /* The panic dump scrolls the reason off the 60-row console. Reprint the saved
+  * reason here, after the dump, so it is the last visible line. */
+ {
+  __atomic_store_n(&p8_console_quiet,0,__ATOMIC_RELEASE);
+  const char *why=boot_log_panic_text();
+  /* Ten filler lines push the reason past any row-60 clear so it lands on a
+   * fresh page and stays fully visible. */
+  for (int i=0;i<10;++i) unattended_console_line("CB panic: ---------- ---- ---- ---- ---- ---- ---- ---- ----\n");
+  unattended_console_line("\nCB PANIC REASON: ");
+  unattended_console_line(why&&*why?why:"(not captured)\n");
+  unattended_console_line("\n");
+  __atomic_store_n(&p8_console_quiet,1,__ATOMIC_RELEASE);
+ }
  /* The ML hold already kept this screen for cheeseburger-panic-hold seconds.
   * A parked CPU is unrecoverable when cpus=1 (the countdown thread would never
   * run again), so every panic ends in PSCI from here. The note is skipped:
