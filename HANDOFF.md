@@ -285,3 +285,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - backboardd 阻塞栈（slide `0x15054000` 符号化）：`MobileKeyBag __copy_aks_client_connection` → `IOKit _io_service_open_extended` → `mach_msg`，即**打开 AppleSEPKeyStore 用户客户端时一直等待**；上层是 `IOKit __processUserActivityMsg → _get_device_lock_state`（PearlEventFilter 路径）。这解释了 backboardd/keybagd/usermanagerd 的同一类停顿：都卡在 AKS 打开。
 - 判断：prelink 的真实 `AppleSEPKeyStore` 能注册并启动，但在无 SEP 硬件时其 open/SEP 交互会阻塞，而不是快速失败。
 - 下一步候选：A) 用板级运行时提供最小 `AppleSEPKeyStore` 用户客户端桩（把 sheng-aks 的选择器仿真移植到 20H392 ABI），并从 prelink roots 移除真实 kext；B) 继续排查真实 kext 的 start/open 阻塞点（SEPManager 端点/DT 节点），使其快速失败并回落到 keybag allow-list。
+
+## 2026-10-29：A 方案——用自有 AppleKeyStore 桩替代真实 SEP keystore（logfix61）
+
+- 依据：仓库已有 iOS 16.7 的 `AppleKeyStore`/`AppleKeyStoreUserClient` 桩（`NativeKeyStoreEvents.cpp`，selectors 0/4/5/7/9/12/13/14/17/26/27/35/55/101/102；14 返回 system keybag 0，7 返回 unlocked，17/35 返回 DER 状态），启用条件为 `offline-key-events=1` + `/chosen` 的 `ephemeral-storage=1` + 类 `AppleKeyStore` 不存在；`sheng-aks=1` 才应答查询。
+- 改动：从 prelink roots 移除 `AppleSEPKeyStore`/`AppleSEPCredentialManager`（组件 35→30），参数去掉 `-apfs_shared_datavolume` 与 `offline-legacy-cpu-present=1`，加入 `offline-key-events=1 sheng-aks=1 sheng-aks-sls=3`（480 字节）。
+- 预期：backboardd/MKB 打开 `AppleKeyStore` 时立即得到“无 keybag、无密码、未锁定”，不再阻塞在真实 kext 的 SEP 交互；随后应尝试创建 framebuffer 客户端（`DISPLAY clients>0`）。
