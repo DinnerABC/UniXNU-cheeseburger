@@ -92,7 +92,16 @@ static int hardware(){
  // OnePlus 5 upstream ts_reset_active: GPIO89, input with pull-up. Preserve supplies.
  // Linux pinctrl-msm encodes pull-up as 3; never drive or pulse the reset line.
  wr(pins[2],0,(rd(pins[2],0)&~(0x3cu|0x200u|3u))|3u);IOSleep(20);
- cb_touch[14]=rd(pins[2],4);if(!(cb_touch[14]&1))return -54;
+ cb_touch[14]=rd(pins[2],4);
+ if(!(cb_touch[14]&1)) {
+  // GPIO89 is the active-low reset. Mainline releases it by driving the line
+  // high; input plus pull-up left it low on this board (error -54 every run).
+  // Set OE, keep the pull-up, drive high, then read the line back.
+  unsigned cfg89=rd(pins[2],0);
+  wr(pins[2],0,cfg89|0x200u);wr(pins[2],4,1);IOSleep(50);
+  cb_touch[14]=rd(pins[2],4);
+  if(!(cb_touch[14]&1)) { wr(pins[2],0,cfg89);return -58; }
+ }
  wr(pins[3],0,rd(pins[3],0)&~(0x3cu|0x200u));
  cb_touch[15]=rd(pins[3],0);cb_touch[16]=rd(pins[3],8);
  if(!map(qup,0xc179000,0x1000))return -55;
