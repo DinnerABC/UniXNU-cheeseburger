@@ -210,3 +210,11 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - **尚未证明的假设**：a) launchd 在同步 boot task 期间无法应答 bootstrap；b) usermanagerd 的 persona/会话建立在 scratch Data 上失败（上游 QEMU 探针也把“persona/session on empty Data”列为下一下阻塞）；c) `-apfs_shared_datavolume` 需要 Data 与 root 同 APFS 容器，而当前 owner union 不满足（该参数此前会导致日志线程前停机）。
 - **下一步候选**：① 采样全部 24 个目标进程的栈（当前只有 5 个角色）以找出真正持有资源的进程；② 对照 P21 的 launchd 配置/会话激活路径，确认 20H392 缺的 boot task；③ 评估把 scratch Data 改成与 root 同容器的 shared data volume（结构性工作）。
 - **设备状态**：root Recovery，ADB `tcp:localhost:5037`，序列号 `3b25cc7c`；无监视器在跑；最近日志 `20261028T195205Z`（logfix47，窗口 `0c3dbfce…`）。
+
+## 2026-10-29：B（shared data volume）阶段一——主机侧新容器已就绪
+
+- **userdata 现有布局（从 SHNGROOT 头解析）**：imageBytes `0x1F3800000`（7.81 GiB）；`OS` 窗口 offset `0x100000`、size `0x14FE08600`；`SystemOS` offset `0x150000000`、size `0xA3800000`；持久日志窗口固定在 userdata 相对 10 GiB（`0x280000000`，32 MiB）。当前 root 卷**不在 volume group**（APFS 日志明示）。
+- **APFS 约束（kext 字符串）**：`could not find volume with role 0x%x in (container/volume group)` —— root 无组时按**同一容器**查找 Data 卷。macOS 的 `diskutil apfs addVolume -groupWith` 在该 iOS 容器上失败（`-69624`），但**同一容器内新增 role=Data 的卷成功**。
+- **新容器（仅主机侧，未写设备）**：`out/p23/ios-16.7.16-20H392/apfs-group/os-writable.dmg`，12 GiB，GPT+APFS；OS 卷 UUID 保持 `DADD93F8-DBBF-4B17-A1DF-0F11E64172F7`（role System），新增 `DataTest` 卷 `2F1E7AD5-9E78-4F90-B05B-59238A091A98`（role Data），已创建 `keybags/backup`。窗口 SHA-256 `66372f41…`，见同目录 `receipt.json`。
+- **设备侧阻塞点**：NativeUfs 的 verified-root 策略把原 OS 窗口的 `image_bytes` 与 `image_sha256` 签名固化（`configureVerification` 要求 `verified.image_bytes==bytes` 且哈希等于 SHNGROOT 记录）；新 12 GiB 窗口必须先重建该策略（`scripts/p12-build-policies.py`）并重新嵌入内核。
+- **下一步（按序）**：①用 `p12-build-policies.py` 为新窗口生成签名策略；②窗口 override 用 boot arg（不改 SHNGROOT；`logSafe` 判定需允许窗口位于日志窗口之后且不重叠）；③把 12 GiB 写到 userdata 空闲区（拟 16 GiB 起，已授权），写后回读校验；④先不带 `-apfs_shared_datavolume` 验证 root 正常挂载，再带该参数验证 Data 配对与 keybag allow-list。
