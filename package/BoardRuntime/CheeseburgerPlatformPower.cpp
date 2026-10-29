@@ -167,13 +167,11 @@ extern "C" void board_panic_reset(void) {
   * A parked CPU is unrecoverable when cpus=1 (the countdown thread would never
   * run again), so every panic ends in PSCI from here. The note is skipped:
   * rawWrite4k can block on a storage lock the panic may have left held. */
- unattended_console_line("CB panic: hold done; SYSTEM_RESET\n");
- for (;;) {
-  uint64_t rc=cb_psci(0x84000009UL,0); /* PSCI SYSTEM_RESET */
-  char line[64]; int n=snprintf(line,sizeof line,"CB panic reset: SYSTEM_RESET returned %llx\n",rc);
-  for(int i=0;i<n;i++) p8_console_char(line[i]);
-  for (volatile unsigned spin=0; spin<1000000; ++spin) __asm__ volatile("yield");
- }
+ /* Operator decision: keep the panic screen; the unattended countdown is the
+  * only reset path. With SMP the writer and countdown keep running on the
+  * other CPUs, so the scene and the persistent log both survive. */
+ unattended_console_line("CB panic: parked; countdown will reset\n");
+ for (;;) __asm__ volatile("wfe");
 }
 static int cb_halt_restart(unsigned int type) {
  /* Only restart requests reset the SoC; halts and diagnostics keep their normal path. */

@@ -730,6 +730,22 @@ void NativeUfsBlock::free ()
 // Ordered publication of the root windows. The original owner-trust code resolves the SystemOS
 // volume by UUID immediately after the root is mounted, so SystemOS must already have published its
 // volume media by then; the OS window (whose volume is the root being waited for) goes last.
+static bool p12RootMatchingUuid(char out[37])
+{
+  IORegistryEntry *chosen=IORegistryEntry::fromPath("/chosen",gIODTPlane);
+  if(!chosen)return false;
+  OSData *data=OSDynamicCast(OSData,chosen->getProperty("root-matching"));
+  OSObject *object=nullptr;bool valid=false;
+  if(data&&data->getLength()>0&&data->getLength()<=4096&&
+      static_cast<const char*>(data->getBytesNoCopy())[data->getLength()-1]==0){
+    object=OSUnserializeXML(static_cast<const char*>(data->getBytesNoCopy()));
+    OSDictionary *dict=OSDynamicCast(OSDictionary,object);
+    OSDictionary *properties=dict?OSDynamicCast(OSDictionary,dict->getObject("IOPropertyMatch")):nullptr;
+    OSString *wanted=properties?OSDynamicCast(OSString,properties->getObject("UUID")):nullptr;
+    if(wanted&&wanted->getLength()==36){strlcpy(out,wanted->getCStringNoCopy(),37);valid=true;}
+  }
+  OSSafeReleaseNULL(object);chosen->release();return valid;
+}
 static bool p12RootMatchingEquals(const char *uuid)
 {
  IORegistryEntry *chosen=IORegistryEntry::fromPath("/chosen",gIODTPlane);
@@ -942,7 +958,14 @@ bool NativeUfs::prepareRootWindows ()
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
       for (unsigned i = 0; i < gPending; ++i) {
         gRootDiagnostic.publicationWindow = i;
-        if (!gPendingDevice[i]->signedVolumeUuid (gPendingUuid[i])) {
+        if (gGroupWindow && !strcmp (gPendingDevice[i]->windowLabel (), "OS")) {
+          /* The relocated window has no per-block policy yet; its root identity
+           * is the volume UUID the device tree already selects for root. */
+          if (!p12RootMatchingUuid (gPendingUuid[i])) {
+            IOLog ("NativeUfs: identity OS uuid unavailable from /chosen\n");
+            return false;
+          }
+        } else if (!gPendingDevice[i]->signedVolumeUuid (gPendingUuid[i])) {
           IOLog ("NativeUfs: identity %s volume uuid unavailable\n", gPendingDevice[i]->windowLabel ());
           return false;
         }

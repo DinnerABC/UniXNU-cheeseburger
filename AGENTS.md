@@ -90,10 +90,14 @@ A boot of ANY image while unattended must have a verified automatic return to
 Recovery. A candidate that can stop on a panic screen, a parked kernel or a
 userland with no automatic reset is not allowed, even as a diagnostic control.
 
-- Before every boot, the gate must assert the image carries a live reset path:
-  `cheeseburger-panic-hold` (board panic funnel: print, hold, PSCI reset) or
-  `cheeseburger-unattended-reset` (watchdog thread), and the kernel must export
-  `board_panic_reset` / the watchdog code. Absence of either is a STOP.
+- Operator decision (2026-10-29): a panic now **parks** its CPU after
+  `cheeseburger-panic-hold` (60 s) so the screen and the persistent log survive;
+  the `cheeseburger-unattended-reset` countdown is the only reset path. This is
+  safe only with real SMP (`cpus=8 sheng-smp=1 armcpu-self-ipi=1`); never park a
+  single-CPU image. The pre-boot gate must still assert `sheng-log=1`, the
+  countdown argument inside the delivered window, and the reset symbols.
+- Start `scripts/unattended/monitor.py --poll 2` for every boot, and read the
+  persistent window as soon as the device returns; no sleep-based waiting.
 - Cross-stage or cross-device control images (P21/P22/other boards) must be
   rebuilt with the same reset guarantees before they are booted here. If that
   is not possible, do not boot them; report the missing capability instead.
