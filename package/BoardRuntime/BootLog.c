@@ -153,6 +153,8 @@ extern volatile uint32_t native_legacy_stage;
 extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
+extern volatile int native_legacy_unit_scale_status;
+extern volatile uint32_t native_legacy_unit_scale_calls,native_legacy_chosen_scale,native_legacy_chosen_rotation;
 extern volatile uint32_t armcpu_smp_running,armcpu_core_timer[8],armcpu_core_sgi[8],armcpu_smp_step[8],armcpu_smp_fail[8],armcpu_smp_mpidr[8];
 extern volatile int32_t armcpu_smp_psci_rc[8];
 extern volatile uint32_t native_touch_hid_reports;
@@ -162,6 +164,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  size_t at=0;char head[96];snprintf(head,sizeof(head),"#slot %u t=%us tag=cheeseburger-P21",slot,now);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"DISPLAY stage=%llu meta=%x reg=%llu clients=%llu frames=%llu",p20_observer[7],native_legacy_meta_status,p20_registry_seen,p20_display_clients,p20_display_frames);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"SWAP check=%llu reject=%llu why=%llu transfer=%llu rc=%llx",p20_swap_stats[0],p20_swap_stats[2],p20_swap_stats[3],p20_swap_stats[7],p20_swap_stats[11]);at=put(out,at,cap,head,sizeof(head));
+ snprintf(head,sizeof(head),"DISPLAY SCALE status=%d calls=%u chosen=%u rotation=%u",native_legacy_unit_scale_status,native_legacy_unit_scale_calls,native_legacy_chosen_scale,native_legacy_chosen_rotation);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"WATCHDOG policy requested=%d status=%d applied=%d",cheeseburger_watchdog_policy_requested,cheeseburger_watchdog_policy_status,cheeseburger_watchdog_policy_applied);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"UP1 policy requested=%d status=%d written=%d jobs=watchdogd/identityservicesd/locationd",cheeseburger_upstream_policy_requested,cheeseburger_upstream_policy_status,cheeseburger_upstream_policy_applied);at=put(out,at,cap,head,sizeof(head));
  for(unsigned cpu=0;cpu<8;++cpu){char core[144];snprintf(core,sizeof core,"CPU%u mpidr=%x step=%u fail=%u PSCI=%d timer=%u IPI=%u online=%u",cpu,armcpu_smp_mpidr[cpu],armcpu_smp_step[cpu],armcpu_smp_fail[cpu],armcpu_smp_psci_rc[cpu],armcpu_core_timer[cpu],armcpu_core_sgi[cpu],processor_avail_count);at=put(out,at,cap,core,sizeof core);}
