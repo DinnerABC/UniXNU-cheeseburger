@@ -17,14 +17,25 @@ def adb(*args, **kwargs):
 
 
 def main(full_hash):
-    block = adb('exec-out', f'dd if={PARTITION} bs=4096 skip={OFFSET_BYTES // 4096} count=2 2>/dev/null').stdout
-    if len(block) < 8192:
+    block = adb('exec-out', f'dd if={PARTITION} bs=4096 skip={OFFSET_BYTES // 4096} count=8 2>/dev/null').stdout
+    if len(block) < 32768:
         sys.exit('short read')
     if block[510:512] != b'\x55\xaa':
         sys.exit('no GPT protective MBR signature')
     if block[512:520] != b'EFI PART':
         sys.exit('no GPT header')
-    container = block[0x4400 + 32:0x4400 + 36]
+    import struct
+    entries_lba = struct.unpack_from('<Q', block, 512 + 72)[0]
+    first = None
+    for index in range(8):
+        entry = block[entries_lba * 512 + index * 128: entries_lba * 512 + (index + 1) * 128]
+        if entry[:16] == b'\x00' * 16:
+            continue
+        first = struct.unpack_from('<Q', entry, 32)[0]
+        break
+    if first is None:
+        sys.exit('no GPT partition entry')
+    container = block[first * 512 + 32:first * 512 + 36]
     if container != b'NXSB':
         sys.exit('no APFS container superblock at the GPT partition start')
     print('GPT and APFS container magic verified at userdata+16 GiB')

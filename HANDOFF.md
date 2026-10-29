@@ -218,3 +218,23 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - **新容器（仅主机侧，未写设备）**：`out/p23/ios-16.7.16-20H392/apfs-group/os-writable.dmg`，12 GiB，GPT+APFS；OS 卷 UUID 保持 `DADD93F8-DBBF-4B17-A1DF-0F11E64172F7`（role System），新增 `DataTest` 卷 `2F1E7AD5-9E78-4F90-B05B-59238A091A98`（role Data），已创建 `keybags/backup`。窗口 SHA-256 `66372f41…`，见同目录 `receipt.json`。
 - **设备侧阻塞点**：NativeUfs 的 verified-root 策略把原 OS 窗口的 `image_bytes` 与 `image_sha256` 签名固化（`configureVerification` 要求 `verified.image_bytes==bytes` 且哈希等于 SHNGROOT 记录）；新 12 GiB 窗口必须先重建该策略（`scripts/p12-build-policies.py`）并重新嵌入内核。
 - **下一步（按序）**：①用 `p12-build-policies.py` 为新窗口生成签名策略；②窗口 override 用 boot arg（不改 SHNGROOT；`logSafe` 判定需允许窗口位于日志窗口之后且不重叠）；③把 12 GiB 写到 userdata 空闲区（拟 16 GiB 起，已授权），写后回读校验；④先不带 `-apfs_shared_datavolume` 验证 root 正常挂载，再带该参数验证 Data 配对与 keybag allow-list。
+
+## 2026-10-29：B 阶段二——分组容器内核集成与待执行写入
+
+- **内核改动（logfix48）**：`NativeUfs` 新增 boot arg `apfs-group=1`：把 `OS` 窗口重定位到 userdata 16 GiB、12 GiB（`imageBytes` 28 GiB），不改 SHNGROOT；`logSafe` 改为只要求窗口不与 10 GiB 日志窗口重叠；该模式下跳过 OS 窗口的 owner 逐块策略（`configureVerification` 直接返回，原策略库不变），因为 12 GiB 清单（100 MB）放进内核会触发 arm64 BL ±128 MB 超限、放进 `__PLK_DATA_CONST` 又与 prelink 的“该段必须为空”冲突。
+- **参数**：`-cheeseburger-touch=1 +apfs-group=1`，486 字节；`PREBOOT_GATE_PASS`（镜像 `aa34b564…`、内核 `b840680f…`、固件 `7e7938d5…`）。
+- **待人工执行（自动模式禁止裸块写入）**：
+  ```sh
+  cd /Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger
+  head -c 12884901888 out/p23/ios-16.7.16-20H392/apfs-group/os-writable.dmg | \
+    .work/p3-tools-35/platform-tools/adb shell 'dd of=/dev/block/sda14 bs=1M seek=16384 conv=notrunc'
+  /opt/homebrew/bin/python3.13 scripts/p23-verify-group-window.py --hash
+  ```
+  写入范围 userdata 16–28 GiB，与 SHNGROOT（≤8.17 GiB）和 10 GiB 日志窗口不重叠；目标区当前为 0xFF/零、无文件系统；SHNGROOT 头已备份到 `apfs-group/evidence/userdata-header-20261029.bin`；期望回读 SHA-256 `66372f41…`。
+- **写入后**：直接 `fastboot boot` logfix48 镜像，预期日志出现 `NativeUfs: apfs-group window override active`，root 从新容器挂载；随后再带 `-apfs_shared_datavolume` 复验 Data 配对/keybag allow-list。
+
+## 2026-10-29：B 阶段三——分组容器已写入并校验（logfix48 启动）
+
+- 操作者手动执行了 12 GiB 写入：userdata `/dev/block/sda14` 偏移 16 GiB、长度 12 GiB（`dd bs=1M seek=16384`），来源 `apfs-group/os-writable.dmg`。
+- 回读校验（`scripts/p23-verify-group-window.py --hash`）：GPT 保护 MBR、GPT 头、APFS `NXSB` 均正确；12,884,901,888 字节全窗口 SHA-256 = `66372f415b1cb1183ae2fc6d06698aea8f9cc7cd1de8fd0d12b6369060707df1`，与签名清单一致。校验脚本此前误报是因为只读了 8 KiB（分区起点在 0x4400），已改为按 GPT 条目动态定位。
+- logfix48（镜像 `aa34b564…`、内核 `b840680f…`、固件 `7e7938d5…`、`apfs-group=1`、486 字节、`PREBOOT_GATE_PASS`）于 03:03:24Z 临时启动。待确认：`NativeUfs: apfs-group window override active`、root 从新容器挂载、以及同容器 Data 卷是否被 APFS 识别。
