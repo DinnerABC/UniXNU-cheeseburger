@@ -346,3 +346,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - 30 分钟长跑（logfix69）显示：约 1066 s 时 PosterBoard/CollectionsPoster 首次打开 IOMobileFramebuffer 客户端（累计 4 个），但从未 swap；sandbox 拒绝其读取 `ioPlatformDevice` 的 `canvas-width`/`canvas-height`，且 ADT 中没有该节点（上游 ios-sweet 在 `/arm-io/disp0` 上提供 `device_type=display-subsystem`、`compatible=sweet,display` 与 canvas 尺寸）。
 - 按操作者要求，画布采用 **1080×1920**（OnePlus 5 面板，与 scanout 1:1），不加 iPhone X 的 1125×2436 逻辑尺寸。脚本 `scripts/add-armio-disp-node.py` 在 `/arm-io/disp0` 与根平台节点上写 canvas-width/height（u32 LE，与 ios-sweet 一致），并更新 ADT validation.json 哈希。
 - logfix70：内核 `b1eb8a20…`、ADT `5332544b…`，倒计时 1800 s。
+
+## 2026-10-29：canvas 节点无效——sandbox 才是当前墙（logfix70）
+
+- logfix70（ADT 含 `/arm-io/disp0` + 根节点 canvas 1080×1920，30 分钟长跑）：5 个显示客户端，仍 `frames=0`、无 swap。日志反复出现 `Sandbox: PosterBoard/CollectionsPoster deny(1) iokit-get-properties iokit-class:IOPlatformDevice property:canvas-width/canvas-height/supports-apt`——属性已存在但被 sandbox 拒绝读取；PosterBoard 后在 1702 s 因内存压力被 sig=9 杀掉。
+- 结论：DT canvas 节点是必要条件但不充分；必须像 ios-sweet 那样用**内建 AMFI（0025/0035/0036）+ 宽松 Sandbox policy（0050）**替换 Apple 的 AMFI/sandbox 组合。直接删 Apple sandbox 根会在日志线程前失败（logfix68，疑为 AMFI 的 kext 依赖）。
+- 下一步（已确认的上游路径，需较大合并）：把 `bsd/kern/sweet_amfi.c`（含 platform-binary entitlements 与 CS_SIGNED）移植进我们的 xnu 树，移除 `com.apple.driver.AppleMobileFileIntegrity` 与 `com.apple.security.sandbox` 两个 prelink 根，并调整 prelink 的 `--early-security-init`，再启用我们的宽松 Sandbox policy。
