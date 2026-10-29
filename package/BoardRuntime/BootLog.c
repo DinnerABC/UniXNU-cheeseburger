@@ -289,8 +289,10 @@ static void writer(void *arg, wait_result_t result) {
 
 // Panic context publishes bounded text only. The ordinary writer owns UFS I/O;
 // calling IOMalloc or taking the UFS lock from panic context can deadlock.
+extern volatile int p8_console_quiet;
 void boot_log_panic_flush_text(const char *text) {
   if (!text) return;
+  __atomic_store_n(&p8_console_quiet, 1, __ATOMIC_RELEASE);
   unsigned i=0;
   while (i+1<sizeof panic_text && text[i]) { panic_text[i]=text[i]; ++i; }
   panic_text[i]=0;

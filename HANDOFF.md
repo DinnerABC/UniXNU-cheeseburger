@@ -68,6 +68,13 @@
 - logfix77：prelink 去掉 sandbox 根（37 条 → 29 components），参数加 `native-sandbox=1`（449 字节），内核 `a0ddccfc…`、payload `bef82d13…`、固件 `2920150b…`、镜像 `7634ee10…`，门禁通过。
 - 前两次同类尝试（logfix68/71）都在写日志前失败、原因未明；本轮保留 debug-enabled=1、op180/swap 探针与 60 s 停屏，用屏幕现象区分“loader 未进内核”和“内核早 panic”。
 
+## 2026-10-29：无 sandbox 启动会早期 panic；控制台冻结（logfix78）
+
+- logfix77（删 sandbox 根 + native-sandbox=1）启动后 panic；持久日志窗口**完全没变**（仍 boot `0x3b00276f`、76 rounds），说明 panic 发生在日志线程之前，和 logfix68/71 同一签名。
+- 屏幕上的 panic 被后续输出冲掉：早期控制台 `p8_console_char` 只有 60 行，写满即整屏清除。已加 `p8_console_quiet`：panic 漏斗打印原因后由 `boot_log_panic_flush_text` 置位，之后丢弃所有控制台字符，panic 文本留在屏幕上。
+- 改动：`osfmk/console/serial_console.c`（补丁 `p23-console-freeze-on-panic.patch`，已入系列）、`package/BoardRuntime/BootLog.c`。
+- logfix78 = logfix77 + 控制台冻结：内核 `e240c0a1…`、payload `afddd9ed…`、固件 `720a5ef1…`、镜像 `732d5d21…`，门禁通过。预期仍会 panic，但这次原因会停在屏幕上。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。
