@@ -263,3 +263,4 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix56：在 `kern_exec.c` 的 103 判定处同样按 `native_apfs_group_window` 放行（其余 101/102/104 与后续挂载检查不变）。
 
 - logfix56：103 已放行，接着 `CB owner fail=106 stage=6 mnt=0 sel=1000043 vm=1 va=1` —— 来自 `native_owner_cache_prepare` 末尾的 `root_recheck`（再次要求 verified root）。logfix57 把 `native_apfs_group_window` 并入该判定（`root_authorized && (verified || group)`）。
+- logfix57：106 已越过，接着 `CB owner fail=107 stage=6` —— boot-manifest 发布需要 root 的 verified SHA-384，group 窗口没有。logfix58：`apfs-group` 模式下跳过 `native_owner_publish_boot_manifest`（`/chosen` 的零占位保持不变）。
