@@ -256,3 +256,8 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix54：`identity OS` 与 `identity SystemOS` 均通过；日志出现 `Got boot device = … /AppleAPFSContainerScheme/AppleAPFSMedia/AppleAPFSContainer/SydneyUpdate20H392.D22D221OS@1` 与 `apfs: mountroot called!`、`mounting volume SydneyUpdate20H392.D22D221OS` —— **root 卷确实从新的 12 GiB 分组容器挂载成功**。
 - 新阻塞：50.26 s `panic: rootvp not authenticated after mounting @bsd_init.c:1081`。该检查要求 `native_verified_block_root_authorized(rootdev)`，而 group 窗口没有 owner 逐块策略，必然为 0。
 - 修复（logfix55）：board runtime 增加 `native_apfs_group_window`（仅 `apfs-group=1` 置位）；`bsd_init.c` 在 panic 前对 group 模式置 `owner_authorized=1` 并记录阶段文字。其余身份/只读/设备检查保持不变。
+
+## 2026-10-29：owner 缓存第二次 root 校验（logfix55/56）
+
+- logfix55（group root 接受）：`rootvp not authenticated` 消失，但 52.6 s 变成 `CB owner fail=103 stage=0`（`native_owner_cache_prepare` 里第二次 `native_p15_verified_block_root_authorized`）。本轮 panic 文本完整写入（`rounds=60`），停机+倒计时按预期在约 353 s 复位。
+- logfix56：在 `kern_exec.c` 的 103 判定处同样按 `native_apfs_group_window` 放行（其余 101/102/104 与后续挂载检查不变）。
