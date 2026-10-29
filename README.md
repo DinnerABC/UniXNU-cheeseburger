@@ -1,59 +1,53 @@
 # UniXNU-cheeseburger
 
-UniXNU device repository for the **OnePlus 5** (cheeseburger, Qualcomm MSM8998 / Snapdragon 835).
+Device repository for the OnePlus 5 (cheeseburger, Qualcomm MSM8998 / Snapdragon 835), built on [UniXNU](https://github.com/UniXNU/UniXNU). The current `ipados-17.7.11` branch targets iPadOS 17.7.11 (21H461) and XNU 10063.141.1.
 
-**The original iPadOS interface now appears on hardware.** P21-UP1 reaches a screen showing the time with CPU rendering. P22-R6 logs confirm eight CPUs online and successful display transfers. Native touch remains under development.
-
-This is an independent device port built on [UniXNU](https://github.com/UniXNU/UniXNU). The current system is iPadOS 17.7.11 (21H461), with XNU 10063.141.1.
+The device owner has confirmed the original iPadOS interface on hardware. A later run recorded eight CPUs online, 2 GiB managed memory and display transfers. Touch and phone-style UI remain in development.
 
 - [UniXNU documentation](https://unixnu.com)
 - [Porting guide](https://unixnu.com/porting/)
 - [Build guide](https://unixnu.com/building)
-- [Current port status](porting.toml)
+- [Development handoff](HANDOFF.md)
+- [Next-agent handoff](docs/DEEPSEEK_HANDOFF.md)
 
-## Status
+## Device support
 
-| Component | State |
-| --- | --- |
-| UEFI / DarwinBoot | Boots XNU through the device's UEFI firmware |
-| CPU / memory | Eight CPUs online with per-core timer activity in P22-R6; 1 GiB boot window |
-| Storage / root | UFS reads, authenticated owner root and SystemOS mounting |
-| Data | Writable, volatile APFS RAM Data; resets to its seed on reboot |
-| Display | Original iPadOS interface visible on the physical screen; CPU presentation |
-| Touch | Native QUP5 / Synaptics RMI4 / HID integrated; physical input not yet validated |
-| Buttons | Power / volume input and a volume-button Home chord; partial support |
-| GPU | No Adreno 540 or Metal acceleration |
-| KeyStore | Development-only non-key state/event compatibility; no SEP-backed protection |
-| Persistent diagnostics | Bounded log capture and read-only retrieval in Recovery |
-| Wi-Fi / cellular / audio / camera | Not supported or not validated |
-| Power management | Partial; deep suspend and complete charging support are not validated |
+| Feature | State | Notes |
+| --- | --- | --- |
+| UEFI / DarwinBoot | Working | Temporary Fastboot boot; high-memory window requires board adaptation |
+| CPU / memory | Partial | Eight CPUs online and 2 GiB managed memory recorded; long-term stability remains under test |
+| Storage / root | Partial | Native UFS reads and owner-authorized OS / SystemOS root mounting |
+| Data | Partial | Writable APFS RAM Data from a seed; persistent user Data is not established |
+| Display | Partial | Original iPadOS UI appeared on hardware using CPU framebuffer presentation |
+| Phone-style UI | Experimental | Phone identity with an iPadOS root; a previous run reached system services but submitted no frames |
+| Touch | Not working | Synaptics S3320 / QUP5 driver integrated; reset input remains low before I²C initialization |
+| Buttons | Partial | Power and volume adapter, with a volume-key Home chord; full physical interaction is not qualified |
+| GPU / Metal | Not available | No qualified Adreno 540 acceleration |
+| KeyStore | Partial | Development compatibility; no SEP-backed security claim |
+| Logs | Partial | Bounded persistent log window and Recovery retrieval; automatic host collection requires a running monitor |
+| Wi-Fi / Bluetooth / cellular / audio / camera / sensors | Not qualified | No hardware support claim |
+| Power management / USB | Not qualified | Deep suspend, charging and XNU USB are not established |
 
-The current UI milestone is based on the device owner's confirmation of the original screen showing the time. Full Setup/Home interaction and stability are still being brought up. Runtime details and image identities belong in [the boot comparison](docs/P21_UPSTREAM_BOOT_COMPARISON.md), rather than this page.
-
-The next task is a userdata-only iOS migration with the boot stack and diagnostics preserved. See the [current handoff](docs/P22_HANDOFF.md) including the next-agent prompt.
-
-[P22-R6/R7 notes](docs/P22_R6_STATUS.md) record the PSCI fix and Normal non-cacheable framebuffer candidate. R7 has been temporarily booted; its display performance is not yet validated.
+Fastboot acceptance, kernel execution, user-space startup and usable hardware are separate milestones. The phone-style identity experiment uses an iPadOS root and differs from the matching OS/identity configuration recommended by upstream.
 
 ## Build
 
-Use the [official UniXNU build environment](https://unixnu.com/building) and the fixed sources recorded in this repository. Board and SoC configuration live in `board.toml`, `configs/`, `dts/` and `soc/msm8998/`; integration code lives in `package/BoardRuntime/` and `patches/`.
+Use the [official UniXNU build environment](https://unixnu.com/building), the board configuration in `board.toml`, and the pinned source inputs. The device port contains board runtime sources in `package/BoardRuntime/`, board and SoC settings in `configs/`, `dts/` and `soc/msm8998/`, and local integration patches in `patches/`.
 
-The migration to the shared-SoC build layout is incomplete. `example = true` remains as a guard on the general image pipeline. Current hardware candidates use the staged local integration scripts (including `scripts/p21-up1/`); a clean, one-command end-to-end build is not yet qualified. See [the integration notes](docs/P21_OFFICIAL_ADAPTATION.md) for the current workflow and prerequisites.
+The general image pipeline remains guarded by `example = true`; a clean one-command build has not been qualified. The preserved UP1 reconstruction, input inventory, phone-identity experiment and window adaptation are under [`rebuild/ipados-up1/`](rebuild/ipados-up1/). Existing local firmware builds also depend on retained Linux VM overlay layers. See the [handoff](docs/DEEPSEEK_HANDOFF.md) and [official adaptation notes](docs/P21_OFFICIAL_ADAPTATION.md) for the current inputs and build boundaries.
 
-Apple OS images, generated kernels, signed policies, private device captures and build outputs are not distributed in this repository. GitHub Actions workflows are manual-only.
+Apple firmware, system images, signed policy material, private device logs and generated boot images are not distributed in this repository. GitHub Actions are manual-only.
 
 ## Device use
 
-Development images use `fastboot boot`. A compatible, separately prepared OS/SystemOS installation is required; a boot image alone does not install iPadOS. Existing device preparation may replace Android userdata. There is no general-purpose installer or supported rollback procedure here.
-
-Do not reuse another board's storage layout, MMIO addresses, device identity or signed policy. Follow the [porting guide](https://unixnu.com/porting/) and adapt them to the actual device.
+Development uses `fastboot boot` for temporary boots. A compatible, separately prepared OS / SystemOS installation is required; the boot image alone is not an installer. Follow the [porting guide](https://unixnu.com/porting/) and verify device-specific storage geometry, firmware, memory, MMIO and driver inputs before any device write.
 
 ## Sources
 
 - [UniXNU](https://github.com/UniXNU/UniXNU): build framework, OS profiles and reusable components.
-- [edk2-msm8998](https://github.com/edk2-porting/edk2-msm8998): device UEFI base.
-- [UniXNU-sheng](https://github.com/UniXNU/UniXNU-sheng): integration and runtime component references.
-- [UniXNU-qemu](https://github.com/xVanTuring/UniXNU-qemu): same-build userland and CPU display reference.
-- [UniXNU-Pagani_SM8750](https://github.com/IssacL04/UniXNU-Pagani_SM8750): P21-UP1 development launch-policy reference.
+- [UniXNU-sheng](https://github.com/UniXNU/UniXNU-sheng): reference integration and device workflows.
+- [edk2-msm8998](https://github.com/edk2-porting/edk2-msm8998): MSM8998 UEFI base.
+- [ios_sagit](https://github.com/MC-XiaoXiao/ios_sagit): Xiaomi 6 MSM8998 reference; board and OS differences require verification.
+- [UniXNU-qemu](https://github.com/xVanTuring/UniXNU-qemu): userland and CPU display reference.
 
-Pinned revisions, local adaptations and test boundaries are recorded in [upstream integration](docs/P21_UPSTREAM_INTEGRATION.md) and [the UP1 experiment](docs/P21_UPSTREAM_PATCH_EXPERIMENT.md). Component and upstream license notices remain with their sources; see [upstream notices](evidence/UPSTREAM_LICENSE).
+Component and upstream notices are preserved with their sources; see [upstream notices](evidence/UPSTREAM_LICENSE).
