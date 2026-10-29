@@ -270,3 +270,11 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix58（跳过 boot-manifest 发布）：owner 各 gate 全部通过，日志出现 `load_init_program: attempting to load /sbin/launchd`，launchd/keybagd/usermanagerd/SpringBoard 全部运行，`sig=5` 为 0，无内核 panic。**root 与用户态均已从 userdata 16 GiB 的新分组容器启动**。
 - 用户态仍在约 117 s 后安静（SpringBoard 唤醒风暴后无新日志），与之前 logd bootstrap 停顿时序一致；本轮尚未启用 Data 配对。
 - 下一步（logfix59）：参数加入 `-apfs_shared_datavolume`（去掉 `offline-legacy-validate=1` 保持 484 字节），验证 APFS 是否把同容器 role=Data 卷配对为 shared data volume，以及 keybag allow-list 是否改变用户会话。
+
+## 2026-10-29：`-apfs_shared_datavolume` 实测（logfix59）
+
+- 参数：去掉 `offline-legacy-validate=1`，加入 `-apfs_shared_datavolume`（484 字节），内核沿用 logfix58。
+- 结果：**用户态存活时间大幅延长**——`memorystatus` 等活动持续到 344 s（此前约 139 s 静默），`sig=5` 为 0，无 panic；UARPUpdaterService 在 269 s 被 sig=9 清理属正常。
+- Data 配对未发生：日志显示 `P17 Data activation: publishing UniXNUOwnerData` → `mounting volume OwnerData`、`role 0 Not a System or data volume`，即 `/private/var` 仍来自我们的 scratch 数据盘；APFS 没有把同容器的 `DataTest` 卷配成 shared data volume（容器无 volume group，macOS 拒绝 `-groupWith`）。
+- 仍卡：`DISPLAY stage=10 clients=0 frames=0`；backboardd[55] 于 137.7 s 启动，采样显示其主线程在 dlopen/IOKit 初始化（`_map_images`/`_IOHIDEventSystemRegister`），未见 `IOMobileFramebuffer` 匹配事件。
+- 候选：logfix59 `cfd9c267…`、内核 `4888851d…`、固件 `835cd948…`；日志 `20261029T042404Z`。
