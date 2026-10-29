@@ -261,3 +261,5 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 
 - logfix55（group root 接受）：`rootvp not authenticated` 消失，但 52.6 s 变成 `CB owner fail=103 stage=0`（`native_owner_cache_prepare` 里第二次 `native_p15_verified_block_root_authorized`）。本轮 panic 文本完整写入（`rounds=60`），停机+倒计时按预期在约 353 s 复位。
 - logfix56：在 `kern_exec.c` 的 103 判定处同样按 `native_apfs_group_window` 放行（其余 101/102/104 与后续挂载检查不变）。
+
+- logfix56：103 已放行，接着 `CB owner fail=106 stage=6 mnt=0 sel=1000043 vm=1 va=1` —— 来自 `native_owner_cache_prepare` 末尾的 `root_recheck`（再次要求 verified root）。logfix57 把 `native_apfs_group_window` 并入该判定（`root_authorized && (verified || group)`）。
