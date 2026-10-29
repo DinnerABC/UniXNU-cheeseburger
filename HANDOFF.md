@@ -75,6 +75,14 @@
 - 改动：`osfmk/console/serial_console.c`（补丁 `p23-console-freeze-on-panic.patch`，已入系列）、`package/BoardRuntime/BootLog.c`。
 - logfix78 = logfix77 + 控制台冻结：内核 `e240c0a1…`、payload `afddd9ed…`、固件 `720a5ef1…`、镜像 `732d5d21…`，门禁通过。预期仍会 panic，但这次原因会停在屏幕上。
 
+## 2026-10-29：删 sandbox 三次失败的真正原因 = policy 注册太晚（logfix80）
+
+- logfix79 的 panic 文本终于拿到：`Unexpected fault in kernel static region, at pc 0xfffffff00b795be8`。符号化为 **`_mac_policy_register + 0x34c`**，且 x20 = `native_sandbox_handle`、x9/x10/x23/x25 = `mac_policy_static_entries`。ESR `0x9600004f` = 数据中止/权限故障 level 3。
+- 机理：`mac_policy_static_entries` 是 `SECURITY_READ_ONLY_LATE`；它在内核启动后半段被锁成只读。我们的宽松 policy 在 bsd_autoconf（`native_keystore_probe`）才注册，此时写入静态表 → 权限故障 panic。日志线程尚未启动，所以 logfix68/71/77/79 全部“无日志”。
+- 也就是说：**删掉 sandbox kext 本身没有坏**，坏的是我们的 policy 注册时机；之前所有“删根失败”的结论作废。
+- 修复（logfix80）：在 `security/mac_base.c` 的 `mac_policy_init()` 末尾调用弱符号 `native_sandbox_policy_register()`，在只读锁定之前注册（与 kext 早期注册同一时间窗）。补丁 `p23-board-policy-early-register.patch` 已入系列。
+- logfix80：内核 `fb19521b…`、payload `39f76660…`、固件 `b6a37f98…`、镜像 `93557053…`，门禁通过。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。

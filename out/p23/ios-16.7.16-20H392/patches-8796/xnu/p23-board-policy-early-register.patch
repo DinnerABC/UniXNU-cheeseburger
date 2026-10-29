@@ -1,0 +1,23 @@
+--- a/security/mac_base.c
++++ b/security/mac_base.c
+@@ -349,6 +349,20 @@
+ 
+ 	SLIST_INIT(&mac_label_element_list);
+ 	SLIST_INIT(&mac_static_label_element_list);
++
++#if CONFIG_MACF
++	/*
++	 * A board may supply a policy in place of a prelinked component. It must
++	 * register here, while mac_policy_static_entries is still writable; a late
++	 * registration faults in the read-only static region.
++	 */
++	{
++		extern void native_sandbox_policy_register(void) __attribute__((weak_import));
++		if (&native_sandbox_policy_register) {
++			native_sandbox_policy_register();
++		}
++	}
++#endif
+ }
+ 
+ /* Function pointer set up for loading security extensions.

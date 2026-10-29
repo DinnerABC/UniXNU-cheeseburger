@@ -51,6 +51,7 @@ out/p23/ios-16.7.16-20H392/patches-8796/xnu/p23-iouc-surface-display-trace.patch
 out/p23/ios-16.7.16-20H392/patches-8796/xnu/p23-aks-log-gate.patch
 out/p23/ios-16.7.16-20H392/patches-8796/xnu/p23-memorystatus-log-level.patch
 out/p23/ios-16.7.16-20H392/patches-8796/xnu/p23-console-freeze-on-panic.patch
+out/p23/ios-16.7.16-20H392/patches-8796/xnu/p23-board-policy-early-register.patch
 out/p23/ios-16.7.16-20H392/patches-8796/xnu/zzx-pmap-sync-64bit-pa.patch
 .work/p21-official-framework/patches/xnu/zzy-native-gpu-addon-mount.patch
 .work/p21-official-framework/patches/xnu/zzy-staged-system-apps.patch
