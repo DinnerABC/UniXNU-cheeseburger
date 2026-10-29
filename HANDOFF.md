@@ -7,7 +7,9 @@
   - 2 秒轮询，只使用已经监听的 ADB 端点（默认 5037/5038），绝不启动第二个 server；
   - 判定“root Recovery + ro.bootmode=recovery + cheeseburger”后立即调用 `scripts/logging/read-cheeseburger-log.py`；
   - 以窗口 SHA-256 对比 `out/unattended/state.json`，输出 `NEW_LOG` / `NO_NEW_LOG`。
-- 尚未移植：iOS 线的 `scripts/unattended/preboot-gate.py`。它的断言绑定 P23 内核符号与 432/449 字节参数，不能直接用于本分支；需要按 P21 的镜像、参数和打包收据重写。
+- 已移植门禁：`scripts/unattended/preboot-gate-p21.py`
+  - 校验 packaging → 镜像哈希 → P13LZ001 payload → 展开哈希/长度 → payload 内 kernel 与 `kernel/validation.json` 一致 → 固件哈希与打包一致 → 镜像内 gzip(FD)+DTB 与 uefi 文件一致 → 参数含 `sheng-log=1`、`keepsyms=1`；
+  - 已验证：R17 D2、R14 通过；R4 因参数没有 `sheng-log=1` 被拒（R4 是唯一出过 UI 的历史镜像，但要诊断仍需带日志的候选）。
 - iOS 线留档要点（详见 `ios-16.7.16` 分支的 HANDOFF）：
   - sandbox kext 移除成功，根因是宽松 MAC policy 必须在 `mac_policy_init` 早期注册（晚注册会写只读静态表 panic）；
   - `lsd` 的 `mobilegestalt` 拒绝从 11 次降到 0；
