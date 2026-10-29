@@ -119,6 +119,7 @@ static void native_keyevents_probe(void) {
     native_keyevents_service = (uintptr_t)service;
     native_keyevents_status = kIOReturnSuccess;
     native_keyevents_stage = 3;
+    IOLog ("P23 AKS probe: stage=%u status=%d service=%p\n", native_keyevents_stage, native_keyevents_status, service);
 }
 volatile uint32_t native_keystore_stage;
 volatile int native_keystore_load_status = -1;
@@ -127,7 +128,9 @@ volatile uint32_t native_keystore_class_size;
 __attribute__((noinline)) void native_keystore_checkpoint(void) {
     __asm__ volatile("" ::: "memory");
 }
+extern "C" void native_sandbox_policy_register(void);
 void native_keystore_probe(void) {
+    native_sandbox_policy_register();
     native_keyevents_probe();
     unsigned enabled = 0;
     if (!PE_parse_boot_argn("offline-keystore", &enabled, sizeof(enabled)) || enabled != 1 ||

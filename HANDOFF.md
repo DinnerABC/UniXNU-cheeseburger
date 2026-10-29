@@ -320,3 +320,10 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix65（ios-sweet 0038 合并）：`P23 AKS: AppleKeyStore registered (no passcode, unlocked)`，600 s 长跑 650 次调用、sig=5 与 panic 均为 0；backboardd 在 139 s 完成 sel 0/17，SpringBoard 在 177 s 调用 sel 0/7，但 **sel 35 返回 Unsupported**（`0xe00002c7`）。
 - logfix66：合并 ios-sweet `0055` 的 AKS 部分——新增 `kAKSGetExtDeviceState=35`（按 17 的 DER 状态应答）与 `kAKSAssertConsume=101`（成功）。`package/kernel/NativeKeyStoreStub.cpp` 与内核树同步修改。
 - 待验证：SpringBoard 拿到 35 后是否继续到 display；`DISPLAY clients` 仍为 0，若仍无客户端，下一个参考是 ios-sweet `0046`（IOSurface IOCoreSurfaceRoot + IOMobileFramebuffer AppleCLCD）。
+
+## 2026-10-29：合并 ios-sweet 0050（宽松 Sandbox policy，logfix67）
+
+- 现象：logfix66 已建立 5 个 IOMobileFramebuffer 显示客户端，但无 swap；SpringBoard 与 backboardd 都停在 LaunchServices 数据库重建（`LAUNCH_SERVICES_IS_RESEEDING_ITS_DATABASE_AND_MAY_BLOCK` → 同步 XPC 等 lsd），lsd 被 sandbox 拒绝 `mach-lookup com.apple.mobilegestalt.xpc`。我们的 seed 已设置 `LastSystemVersion=20H392`（迁移已跳过），卡点是 sandbox 拒绝本身。
+- 合并：新增 `package/BoardRuntime/NativeSandboxPolicy.cpp`（照 ios-sweet 0050：注册名为 "Sandbox" 的 MAC policy，`mpo_policy_syscall` 对容器/扩展类操作返回 ENOENT，其余返回 0，并打印首次使用的 op），`native_keystore_probe` 中调用；`prelink.py` 移除 `com.apple.security.sandbox` 根（避免同名 policy 冲突）。参数加 `native-sandbox=1`（448 字节）。
+- 注意：导出头把 `mac_policy_register` 声明为 C++ 链接，内核实际导出 C 符号，桩里用 `__asm__("_mac_policy_register")` 显式绑定。
+- 待验证：sandbox 拒绝消失后 lsd 是否完成数据库重建、SpringBoard/backboardd 是否开始 swap（screen 出图）。
