@@ -292,3 +292,5 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - 改动：从 prelink roots 移除 `AppleSEPKeyStore`/`AppleSEPCredentialManager`（组件 35→30），参数去掉 `-apfs_shared_datavolume` 与 `offline-legacy-cpu-present=1`，加入 `offline-key-events=1 sheng-aks=1 sheng-aks-sls=3`（480 字节）。
 - 预期：backboardd/MKB 打开 `AppleKeyStore` 时立即得到“无 keybag、无密码、未锁定”，不再阻塞在真实 kext 的 SEP 交互；随后应尝试创建 framebuffer 客户端（`DISPLAY clients>0`）。
 - logfix61（替换真实 SEP keystore）：648 s 稳定、sig=5/panic 均为 0，但 `AKS opens/calls` 仍为 0，桩没有发布；`offline-key-events=1`、`sheng-aks=1`、`sheng-aks-sls=3` 已确认进入设备参数。logfix62 在 `native_keyevents_probe` 各返回点加 IOLog（enabled/ephemeral/class_absent/provider/handle/postModLoad），用于确认是哪一步不满足。
+- logfix62：桩注册链路**全部通过**（`enabled=1 ephemeral=1 class_absent=1 provider=… handle=… postModLoad=0`），但 `AKS opens/calls` 仍为 0，说明 MKB/backboardd 并没有打开我们的 `AppleKeyStore` 用户客户端。backboardd 末段栈是 `libsystem_kernel` 的 mach_msg（无 FP 链），无法从用户栈判断端口；keybagd 仍 1 线程 WAIT。
+- 待确认：①桩的 `start()` 是否真的成功（stage 3）——需要把 keyevents stage/status 打进日志/诊断行；②MKB 打开的是否是别名的服务（例如仍按真实 kext 的类名匹配，找不到就一直等）。
