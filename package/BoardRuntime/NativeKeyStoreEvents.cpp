@@ -76,6 +76,7 @@ public:
     IOReturn clientClose() override { terminate(); return kIOReturnSuccess; }
     IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args, IOExternalMethodDispatch *,
                             OSObject *, void *) override {
+        { static unsigned n; if (n < 12) { ++n; IOLog ("P23 AKS stub: external sel=%u\n", (unsigned)selector); } }
         IOReturn rc = kAksUnsupported;
         if (!args) rc = kAksError;
         else switch (selector) {
@@ -128,13 +129,18 @@ class AppleKeyStore final : public IOService {
     OSDeclareDefaultStructors(AppleKeyStore)
     IOReturn open(task_t task, void *security, UInt32 type, OSDictionary *properties, IOUserClient **out) {
         if (out) *out = nullptr;
+        IOLog ("P23 AKS stub: open type=%u enabled=%u\n", (unsigned)type, native_aks_state_enabled ());
         if (!native_aks_state_enabled() || !out) { native_keyevents_open_refused(); return kIOReturnNotReady; }
         AppleKeyStoreUserClient *client = new AppleKeyStoreUserClient;
         if (!client) return kIOReturnNoMemory;
-        if (!client->initWithTask(task, security, type, properties) || !client->attach(this)) {
+        bool initd = client->initWithTask(task, security, type, properties);
+        bool att = initd && client->attach(this);
+        bool strt = att && client->start(this);
+        IOLog ("P23 AKS stub: client init=%u attach=%u start=%u\n", initd, att, strt);
+        if (!initd || !att) {
             client->release(); return kIOReturnError;
         }
-        if (!client->start(this)) { client->detach(this); client->release(); return kIOReturnError; }
+        if (!strt) { client->detach(this); client->release(); return kIOReturnError; }
         native_aks_opened();
         *out = client;
         return kIOReturnSuccess;
@@ -149,6 +155,7 @@ public:
             return false;
         }
         registerService();
+        IOLog ("P23 AKS stub: started and registered\n");
         return true;
     }
     IOReturn newUserClient(task_t t, void *s, UInt32 type, OSDictionary *p, IOUserClient **out) override {

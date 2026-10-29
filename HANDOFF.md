@@ -294,3 +294,4 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix61（替换真实 SEP keystore）：648 s 稳定、sig=5/panic 均为 0，但 `AKS opens/calls` 仍为 0，桩没有发布；`offline-key-events=1`、`sheng-aks=1`、`sheng-aks-sls=3` 已确认进入设备参数。logfix62 在 `native_keyevents_probe` 各返回点加 IOLog（enabled/ephemeral/class_absent/provider/handle/postModLoad），用于确认是哪一步不满足。
 - logfix62：桩注册链路**全部通过**（`enabled=1 ephemeral=1 class_absent=1 provider=… handle=… postModLoad=0`），但 `AKS opens/calls` 仍为 0，说明 MKB/backboardd 并没有打开我们的 `AppleKeyStore` 用户客户端。backboardd 末段栈是 `libsystem_kernel` 的 mach_msg（无 FP 链），无法从用户栈判断端口；keybagd 仍 1 线程 WAIT。
 - 待确认：①桩的 `start()` 是否真的成功（stage 3）——需要把 keyevents stage/status 打进日志/诊断行；②MKB 打开的是否是别名的服务（例如仍按真实 kext 的类名匹配，找不到就一直等）。
+- logfix63/64：桩 `stage=3 status=0`、`started and registered`，并在 109.6/136.8/138.7 s 被 `open type=0` 打开 3 次，但 externalMethod 从未被调用（selector 计数仍 0）。logfix64 增加 client init/attach/start 结果与 externalMethod 入口日志，用于确认客户端创建是否成功、调用是否到达。
