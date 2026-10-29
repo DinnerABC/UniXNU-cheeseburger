@@ -98,6 +98,9 @@ userland with no automatic reset is not allowed, even as a diagnostic control.
   countdown argument inside the delivered window, and the reset symbols.
 - Start `scripts/unattended/monitor.py --poll 2` for every boot, and read the
   persistent window as soon as the device returns; no sleep-based waiting.
+- The monitor probes the already-listening ADB endpoints (5037 and 5038 by
+  default) and never starts a second server; pass `--servers` if the host
+  uses other ports.
 - Cross-stage or cross-device control images (P21/P22/other boards) must be
   rebuilt with the same reset guarantees before they are booted here. If that
   is not possible, do not boot them; report the missing capability instead.

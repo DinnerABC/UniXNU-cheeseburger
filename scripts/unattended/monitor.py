@@ -4,6 +4,7 @@ device is in root Recovery. No long sleeps, no second ADB server, no partition w
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -50,6 +51,15 @@ def fastboot_present():
         return False
 
 
+def adb_port_open(endpoint):
+    host, _, port = endpoint.partition(':')[2].rpartition(':')
+    try:
+        with socket.create_connection((host or 'localhost', int(port)), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 def latest_retrieval():
     logs = sorted((R / 'out/p21/persistent-logs').glob('*/retrieval.json'), key=lambda p: p.stat().st_mtime)
     return logs[-1] if logs else None
@@ -59,13 +69,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--poll', type=int, default=2, help='seconds between ADB checks')
     ap.add_argument('--timeout', type=int, default=900, help='give up after this many seconds')
-    ap.add_argument('--server', default=os.environ.get('CHEESEBURGER_ADB_SERVER', 'tcp:localhost:5037'),
-                    help='the single ADB service in use')
+    ap.add_argument('--server', default=os.environ.get('CHEESEBURGER_ADB_SERVER', ''),
+                    help='extra ADB endpoint; existing 5037/5038 services are always considered')
+    ap.add_argument('--servers', default='tcp:localhost:5037,tcp:localhost:5038',
+                    help='comma-separated endpoints to probe; only already-listening ones are used')
     ap.add_argument('--state', default=str(R / 'out/unattended/state.json'))
     args = ap.parse_args()
     state_path = Path(args.state)
     state = json.loads(state_path.read_text()) if state_path.is_file() else {}
     last = state.get('log_window_sha256')
+    endpoints = [s.strip() for s in args.servers.split(',') if s.strip()]
+    if args.server:
+        endpoints.insert(0, args.server)
+    seen, servers = set(), []
+    for endpoint in endpoints:
+        if endpoint not in seen:
+            seen.add(endpoint)
+            servers.append(endpoint)
     deadline = time.time() + args.timeout
     polls = 0
     while time.time() < deadline:
@@ -75,10 +95,11 @@ def main():
             subprocess.run([str(FASTBOOT), 'reboot', 'recovery'], capture_output=True, text=True, timeout=30)
             time.sleep(args.poll)
             continue
-        if not in_root_recovery(args.server):
+        server = next((candidate for candidate in servers if adb_port_open(candidate) and in_root_recovery(candidate)), None)
+        if server is None:
             time.sleep(args.poll)
             continue
-        env = dict(os.environ, CHEESEBURGER_ADB_SERVER=args.server)
+        env = dict(os.environ, CHEESEBURGER_ADB_SERVER=server)
         proc = subprocess.run([sys.executable, str(READER)], env=env, capture_output=True, text=True)
         if proc.returncode:
             print(json.dumps({'result': 'LOG_READ_FAILED', 'polls': polls, 'stderr': proc.stderr[-600:]}), flush=True)
@@ -91,10 +112,10 @@ def main():
                          updated=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
             state_path.write_text(json.dumps(state, indent=2) + '\n')
             print(json.dumps({'result': 'NEW_LOG', 'sha256': sha, 'retrieval': str(retrieval),
-                              'server': args.server, 'polls': polls}), flush=True)
+                              'server': server, 'polls': polls}), flush=True)
             return 0
         print(json.dumps({'result': 'NO_NEW_LOG', 'sha256': sha, 'retrieval': str(retrieval),
-                          'server': args.server, 'polls': polls}), flush=True)
+                          'server': server, 'polls': polls}), flush=True)
         return 1
     print(json.dumps({'result': 'NO_RECOVERY', 'timeout': args.timeout, 'polls': polls}), flush=True)
     return 1
