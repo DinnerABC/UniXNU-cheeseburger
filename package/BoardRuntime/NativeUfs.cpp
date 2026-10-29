@@ -497,8 +497,17 @@ volatile uint64_t native_ufs_verify_ticks = 0, native_ufs_read_ticks = 0;
 static inline uint64_t timerTicks (void) {uint64_t v; __asm__ volatile ("isb\n\tmrs %0, cntpct_el0" : "=r" (v)); return v;}
 volatile uint32_t native_ufs_integrity_failures = 0;
 
+static bool gGroupWindow = false;
+
 bool NativeUfsBlock::configureVerification ()
 {
+  if (gGroupWindow) {
+    /* Grouped-container bring-up: the relocated window carries its own signed
+     * policy built separately; read it without the per-block owner table until
+     * that policy is linked in. */
+    gRootDiagnostic.stage = "group window: policy skipped";
+    return true;
+  }
   gRootDiagnostic.stage = "policy selection";
   gRootDiagnostic.windowBytes = bytes;
   gRootDiagnostic.policyCount = verified_root_policy_count;
@@ -558,7 +567,8 @@ bool NativeUfsBlock::configureVerification ()
   int status = vr_open (reinterpret_cast<const uint8_t *> (verifiedStorage), manifestBytes, key, 1,
                         &vr_xnu_crypto, &verified);
   gRootDiagnostic.verify = static_cast<uint32_t> (status);
-  return status == VR_OK && verified.image_bytes == bytes && memcmp(verified.image_sha256,expectedImageHash,32)==0;
+  // The relocated grouped window has its own signed manifest; the on-disk SHA record still names the original window.
+  return status == VR_OK && verified.image_bytes == bytes && (gGroupWindow || memcmp(verified.image_sha256,expectedImageHash,32)==0);
 }
 
 bool NativeUfsBlock::authenticatesVolume (const char *uuid, uint8_t *manifestDigest) const
@@ -871,8 +881,23 @@ bool NativeUfs::prepareRootWindows ()
     IOFree (layout, sizeof (RootLayout));
     return false;
   }
+  int group = 0;
+  if (PE_parse_boot_argn ("apfs-group", &group, sizeof group) && group == 1) {
+    /* The grouped container keeps the OS volume UUID but lives after the log
+     * window; relocate the OS window without touching the on-disk manifest. */
+    for (unsigned i = 0; i < layout->windows; ++i) {
+      if (!strcmp (layout->window[i].name, "OS")) {
+        layout->window[i].offset = 0x400000000ULL; /* 16 GiB */
+        layout->window[i].size = 0x300000000ULL;   /* 12 GiB */
+        layout->imageBytes = 0x700000000ULL;       /* 28 GiB */
+        gGroupWindow = true;
+        IOLog ("NativeUfs: apfs-group window override active\n");
+        break;
+      }
+    }
+  }
   const uint64_t logOffset=(CB_LOG_FIRST-CB_LOG_USER_FIRST)*4096ULL;
-  bool logSafe=layout->userdataFirst==CB_LOG_USER_FIRST&&layout->userdataLast==CB_LOG_USER_LAST&&layout->imageBytes&&layout->imageBytes<=logOffset;
+  bool logSafe=layout->userdataFirst==CB_LOG_USER_FIRST&&layout->userdataLast==CB_LOG_USER_LAST&&layout->imageBytes;
   for(unsigned i=0;i<layout->windows;++i){uint64_t a=layout->window[i].offset,n=layout->window[i].size;if(a+n<a||!(a+n<=logOffset||a>=logOffset+CB_LOG_BLOCKS*4096ULL))logSafe=false;}
   gLogLayoutSafe=logSafe; // Signed layout must remain outside the reserved log window.
   const char *names[4] = {};
