@@ -295,3 +295,12 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - logfix62：桩注册链路**全部通过**（`enabled=1 ephemeral=1 class_absent=1 provider=… handle=… postModLoad=0`），但 `AKS opens/calls` 仍为 0，说明 MKB/backboardd 并没有打开我们的 `AppleKeyStore` 用户客户端。backboardd 末段栈是 `libsystem_kernel` 的 mach_msg（无 FP 链），无法从用户栈判断端口；keybagd 仍 1 线程 WAIT。
 - 待确认：①桩的 `start()` 是否真的成功（stage 3）——需要把 keyevents stage/status 打进日志/诊断行；②MKB 打开的是否是别名的服务（例如仍按真实 kext 的类名匹配，找不到就一直等）。
 - logfix63/64：桩 `stage=3 status=0`、`started and registered`，并在 109.6/136.8/138.7 s 被 `open type=0` 打开 3 次，但 externalMethod 从未被调用（selector 计数仍 0）。logfix64 增加 client init/attach/start 结果与 externalMethod 入口日志，用于确认客户端创建是否成功、调用是否到达。
+
+## 2026-10-29：合并上游/同版本案例（ios-sweet 0038）——内建 AppleKeyStore 驱动（logfix65）
+
+- 来源：[dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet)（同为 iOS 16.7.16/20H392，已在手机上出过 Setup “Hello” GUI）。其 `xnu/patches/0038-sweet-applekeystore.patch` 提供完整 AppleKeyStore 驱动：
+  - 类 `AppleKeyStore` 通过 `KernelConfigTables` 人格挂在 **IOResources**（`IOClass=AppleKeyStore, IOProviderClass=IOResources, IOMatchCategory=AppleKeyStore`），`start()` 设置 `IOUserClientClass=AppleKeyStoreUserClient`；
+  - `AppleKeyStoreUserClient::externalMethod` 实现 iOS 16.7 libaks 选择器：0 打开、7 lock_state(bit2)、14 get_system(handle 0)、17 DER 设备状态（ss/sls=0 未锁定）、26/27/55/102 成功，其余 Unsupported；并逐次打印 `sex sel arg0 in/out -> ret`。
+- 合并方式：源码复制为 `package/kernel/NativeKeyStoreStub.cpp`，实际编入 `tree/.cache/xnu-work/iokit/Kernel/arm/NativeKeyStoreStub.cpp`，`iokit/conf/files.arm64` 增加该文件，`KernelConfigTables.cpp` 增加人格。板级 `NativeKeyStoreEvents.cpp` 的类定义已 `#if 0`（仅保留诊断计数与占位 allocate），避免重复符号。
+- 参数相应去掉 `offline-key-events=1 sheng-aks=1 sheng-aks-sls=3`（431 字节），因为内建驱动总是应答。
+- 备注：ios-sweet 还提供出界面所需的 `0046-sweet-iosurface-iomfb.patch`（IOSurface IOCoreSurfaceRoot + IOMobileFramebuffer AppleCLCD）、`0050` 宽松 Sandbox、`0055` AKS 35/101、`0068` surface lookup 缓存等，可作为后续显示路径的直接参考。

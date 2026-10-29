@@ -70,6 +70,10 @@ extern "C" size_t native_aks_encode_state(uint8_t *out, size_t capacity, uint32_
     return w.ok ? w.n : 0;
 }
 
+// The built-in kernel AppleKeyStore driver (iokit/Kernel/arm/NativeKeyStoreStub.cpp,
+// merged from the upstream ios-sweet 20H392 case) owns the class name now; the
+// board stub only keeps the diagnostic counters below.
+#if 0
 class AppleKeyStoreUserClient final : public IOUserClient {
     OSDeclareDefaultStructors(AppleKeyStoreUserClient)
 public:
@@ -166,4 +170,8 @@ public:
     }
 };
 OSDefineMetaClassAndStructors(AppleKeyStore, IOService)
-extern "C" IOService *native_keyevents_allocate(void) { return new AppleKeyStore; }
+#endif
+extern "C" IOService *native_keyevents_allocate(void) { return nullptr; }
+// KeyStoreProbe still links the file's static initializer name; the stub body is gone.
+extern "C" void native_keyevents_static_init_stub(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
+extern "C" void native_keyevents_static_init_stub(void) {}
