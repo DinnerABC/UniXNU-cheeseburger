@@ -618,6 +618,19 @@ public:
         (void)count;(void)key;(void)mask;
         return kIOReturnUnsupported;
     }
+    // Selector 15 reaches this slot with two scalars and a scalar output and is
+    // refused with kIOReturnNotPermitted. Log the first requests and forward, so
+    // the next boot names the operation without changing the original verdict.
+    IOReturn opaque180(uint32_t a, uint32_t b, void *out) override {
+        static unsigned n;
+        IOReturn status=IOMobileFramebufferLegacy::opaque180(a,b,out);
+        if(n<6) {
+            ++n;
+            printf("P23 DISP op180 #%u a=%u b=%u out=%p rc=%x\n",
+                n,(unsigned)a,(unsigned)b,out,(unsigned)status);
+        }
+        return status;
+    }
     // Selector 5 carries the 1132-byte IOMFBSwap. The family accepts it here and
     // is expected to queue and validate it afterwards; in the 20H392 trace it
     // returned success without ever reaching kickSwapQueue. Log the first

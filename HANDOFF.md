@@ -37,6 +37,14 @@
 - 候选 `out/p23/ios-16.7.16-20H392-logfix73`：内核 `2c867aee…`、payload `325ba9f9…`、固件 `d9b3cd9b…`、镜像 `f33f3e43…`，门禁通过（432 字节参数、1800 s 倒计时）。尚未启动。
 - 目的：下一次启动能看到 swap_submit 是否真的被调用、拿到什么 IOMFBSwap，以及基类实现后是否终于进入 kickSwapQueue/validateSwap。
 
+## 2026-10-29：slot 180 探针 + 空 swap 证据（logfix74）
+
+- logfix73 结果（boot `0x400d2578`，1223 s）：`P23 SWAP submit #1 swap=0xfffffff608db6434 client=0xfffffff8bbdc1f00 rc=0`，IOMFBSwap 前 6 个字全 0，整轮仅 1 次；`DISP kick` 仍 0，`frames=0`。减噪生效：msgbuf 269 KB（上一轮 719 KB），`P23 AKS:` 仅剩注册行，memorystatus 从 2150 行降到 48 行。
+- 同一启动 181.34 s：`sel=15 → e00002bc`（槽 180 拒绝）、`sel=74 → e00002c7`；全程无 vsync 客户端注册（selector 72 未出现），`VS arm=0`。
+- 静态：槽 180 的实现先调用一个内核导入（读一个全局状态，为 0 则返回 not-permitted），再经 `this+5040` 的辅助对象派发；该全局在本地为 0。
+- logfix74：把槽 180 改成只观测（打印前 6 次的 a/b/out 指针与返回码，原样转发基类），其余不变。内核 `781b0d83…`、payload `dc1a1842…`、固件 `af6691ae…`、镜像 `0e7d2737…`，门禁通过。
+- 最短观察窗口：显示客户端 148–222 s 打开，slot 180 与 supportedFrameInfo 在约 181 s，首次 swap 提交约 191 s（首轮）或 1062 s（本轮）。**跑满 ≈300 s 即可手动重启**；日志每秒落盘，手动复位不会丢已写部分。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。

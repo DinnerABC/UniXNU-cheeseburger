@@ -78,7 +78,9 @@ public:
  // from the donor's own IOMobileFramebufferLegacy::swap_submit type string.
  virtual IOReturn swap_submit(IOMFBSwap *, IOUserClient *);
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque179();
- virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque180();
+ // Selector 15 forwards two scalars and one scalar output here; the original
+ // implementation refuses with kIOReturnNotPermitted when its precondition fails.
+ virtual IOReturn opaque180(uint32_t, uint32_t, void *);
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque181();
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque182();
  virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque183();
