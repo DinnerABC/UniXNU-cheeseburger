@@ -231,6 +231,10 @@ volatile unsigned cheeseburger_unattended_remaining = 0;
 
 extern "C" void cheeseburger_unattended_reset_start(void) {
  static bool started=false;if(started)return;
+ /* Parse the panic hold here as well: bsd_init calls this before PMGR, and an
+  * early panic must still keep its screen/log before the reset. */
+ { int hold=0;
+   if(PE_parse_boot_argn("cheeseburger-panic-hold",&hold,sizeof hold)&&hold>0&&hold<=120)board_panic_hold_seconds=(uint32_t)hold; }
  int seconds=0;
  if(!PE_parse_boot_argn("cheeseburger-unattended-reset",&seconds,sizeof seconds)||seconds<=0)return;
  thread_t thread=nullptr;

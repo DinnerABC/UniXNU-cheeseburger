@@ -892,6 +892,10 @@ bool NativeUfs::prepareRootWindows ()
         layout->imageBytes = 0x700000000ULL;       /* 28 GiB */
         gGroupWindow = true;
         IOLog ("NativeUfs: apfs-group window override active\n");
+        for (unsigned i = 0; i < layout->windows; ++i) {
+          IOLog ("NativeUfs: window %s offset=%llx size=%llx\n", layout->window[i].name,
+                 layout->window[i].offset, layout->window[i].size);
+        }
         break;
       }
     }
@@ -938,8 +942,15 @@ bool NativeUfs::prepareRootWindows ()
 #if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK
       for (unsigned i = 0; i < gPending; ++i) {
         gRootDiagnostic.publicationWindow = i;
-        if (!gPendingDevice[i]->signedVolumeUuid (gPendingUuid[i])) return false;
-        if (!strcmp(gPendingDevice[i]->windowLabel(),"OS")&&!p12RootMatchingEquals(gPendingUuid[i])) return false;
+        if (!gPendingDevice[i]->signedVolumeUuid (gPendingUuid[i])) {
+          IOLog ("NativeUfs: identity %s volume uuid unavailable\n", gPendingDevice[i]->windowLabel ());
+          return false;
+        }
+        if (!strcmp(gPendingDevice[i]->windowLabel(),"OS") && !p12RootMatchingEquals (gPendingUuid[i])) {
+          IOLog ("NativeUfs: identity OS uuid %s is not the root-matching volume\n", gPendingUuid[i]);
+          return false;
+        }
+        IOLog ("NativeUfs: identity %s uuid %s\n", gPendingDevice[i]->windowLabel (), gPendingUuid[i]);
         for (unsigned j = 0; j < i; ++j) if (!strcmp (gPendingUuid[i], gPendingUuid[j])) return false;
       }
       return true;

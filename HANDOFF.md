@@ -238,3 +238,9 @@ CHEESEBURGER_ADB_SERVER=tcp:localhost:5037 /opt/homebrew/bin/python3.13 scripts/
 - 操作者手动执行了 12 GiB 写入：userdata `/dev/block/sda14` 偏移 16 GiB、长度 12 GiB（`dd bs=1M seek=16384`），来源 `apfs-group/os-writable.dmg`。
 - 回读校验（`scripts/p23-verify-group-window.py --hash`）：GPT 保护 MBR、GPT 头、APFS `NXSB` 均正确；12,884,901,888 字节全窗口 SHA-256 = `66372f415b1cb1183ae2fc6d06698aea8f9cc7cd1de8fd0d12b6369060707df1`，与签名清单一致。校验脚本此前误报是因为只读了 8 KiB（分区起点在 0x4400），已改为按 GPT 条目动态定位。
 - logfix48（镜像 `aa34b564…`、内核 `b840680f…`、固件 `7e7938d5…`、`apfs-group=1`、486 字节、`PREBOOT_GATE_PASS`）于 03:03:24Z 临时启动。待确认：`NativeUfs: apfs-group window override active`、root 从新容器挂载、以及同容器 Data 卷是否被 APFS 识别。
+
+## 2026-10-29：panic 现场保留时间调整（logfix50）
+
+- 现象：logfix48 在 root 身份阶段失败后 panic，约 20 s 内即重启，持久日志没写入 panic 文本；窗口末尾 note 块仍是旧的 `owner fail=104`（说明 panic 路径的 `boot_log_panic_flush_text` 未成功落盘）。
+- 改动：①`cheeseburger-panic-hold` 由 20 提升到 **60 s**；②`cheeseburger_unattended_reset_start()` 里也解析 `cheeseburger-panic-hold`（bsd_init 早期调用，PMGR 之前的 panic 也能保留现场）；倒计时复位不变。
+- logfix50：镜像 `f0ed5571…`、内核 `55ffd756…`、固件 `c80043d8…`，同时包含 root 身份阶段的新诊断（`NativeUfs: identity …`、窗口 offset/size 列表），03:10:30Z 启动。
