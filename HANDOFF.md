@@ -53,6 +53,13 @@
 - logfix75：只在启动参数末尾加回 `debug=0x8`（442 字节），内核与 logfix74 相同（`781b0d83…`），payload `9cc000c9…`、固件 `e7e7620d…`、镜像 `74b5564e…`，门禁通过。
 - 注意：`debug=0x8` 是 DB_KPRT（kprintf 镜像到调试口），不设 DB_HALT；早期 P23 参数组曾使用该值并正常启动。
 
+## 2026-10-29：debug_enabled 的真实来源是设备树（logfix76）
+
+- logfix75（加 `debug=0x8`）无效：op180 仍 `e00002bc`。查 `pexpert/arm/pe_init.c:468-480`：`debug_enabled` **只**从 `/chosen/debug-enabled`（u32）复制，`debug=` 启动参数不改它。
+- 处理：撤销 `debug=0x8`；新增 `scripts/add-chosen-debug-enabled.py` 在 ADT 的 `/chosen` 写入 `debug-enabled = 1`（ADT 变为 `5e812749…`），内核不变（`781b0d83…`）。
+- 候选 logfix76：payload `b995948b…`、固件 `fa905120…`、镜像 `166a17d2…`，门禁通过。
+- 说明：零售设备的 `debug-enabled` 通常也是 0，因此 slot 180 的 not-permitted 可能本来就是正常行为；本轮用于确认打开该开关后 op180 是否变为 0、以及 backboardd 是否因此注册 vsync/开始出帧。
+
 ## 2026-10-28：nosync 候选与最新日志
 
 - 用户要求暂时停用 panic 自动重启以保留现场：`CheeseburgerPlatformPower.cpp` 的 `board_panic_reset` 暂用 `#if 0` 保留并屏蔽原 PSCI 重启代码，停住并提示；独立的 300 秒无人值守计时线程在看到 panic parked 后跳过重启。板级运行时 33 个对象编译通过，尚未重新链接、打包或实机测试；现有 dotup 镜像不包含该修改。panic 保持期间、早期或其他重启路径以及硬件看门狗仍可能复位，不能保证绝不重启；可能需手动返回 Recovery。原重启代码需恢复时取消条件编译并移除对应停机措施。
