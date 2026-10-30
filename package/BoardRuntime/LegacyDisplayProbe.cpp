@@ -335,8 +335,18 @@ void native_legacy_client_enter(task_t task,uint32_t type) {
 // and registerNotificationPort(port,type,refCon), slot 175) are pointed at wrappers that count and forward to the original function. The original code
 // is not touched; only this object's vptr names the copy. XNU's ARM64 vptr points at slot 0 (the original code dispatches with ldr x8,[vptr,#slot*8]).
 enum {kSeenClients=8,kSelectors=96,kRegEvents=8,kVtableSlots=256};
+// Bounded event ring for the selectors that decide whether the render server
+// ever configures the display. Read-only: wrappers never change a return value.
+// The ring records ticks, pid, client generation, selector, up to four scalar
+// inputs and outputs (bounded copies), and the original return.
+enum {kEventSlots=32,kEventWords=4};
+struct FbEvent {uint64_t ticks;int32_t pid;uint16_t gen;uint8_t sel,inN,outN,valid,pad;uint64_t in[kEventWords],out[kEventWords];int32_t rc;uint32_t pad2;};
+static FbEvent fbEvents[kEventSlots];
+static volatile uint32_t fbEventNext,fbEventDropped;
+static unsigned fbGeneration;
+static bool fbEventWanted(uint32_t selector){return selector==4||selector==5||selector==6||selector==8||selector==15||selector==50;}
 struct ClientStat {
-    uintptr_t object;int pid;uint32_t calls,fails;uint32_t selector_calls[kSelectors],selector_fails[kSelectors],selector_status[kSelectors];
+    uintptr_t object;int pid;unsigned gen;uint32_t calls,fails;uint32_t selector_calls[kSelectors],selector_fails[kSelectors],selector_status[kSelectors];
     unsigned regs;struct {uint32_t type;uint64_t port;uint32_t ref,status;} reg[kRegEvents];
     uint64_t sel6_first[3],sel6_last[3];uint32_t sel6_distinct;uint64_t sel6_seen[8][3];uint32_t sel6_calls[8],sel6_fails[8],sel6_status[8];
     uint32_t seq_count;struct {uint32_t a,b,c,status,done,presented;} seq[24];
@@ -350,10 +360,26 @@ static ClientStat *statFor(IOUserClient *client) {
     for(unsigned i=0;i<seenClientCount;++i)if(seenClients[i].object==(uintptr_t)client)return &seenClients[i];
     return nullptr;
 }
+static uint64_t fbTicks(void){uint64_t v;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(v));return v;}
+static void fbRecord(int pid,unsigned gen,uint32_t selector,const IOExternalMethodArguments *args,IOReturn status){
+    if(!fbEventWanted(selector))return;
+    uint32_t slot=__atomic_fetch_add(&fbEventNext,1,__ATOMIC_RELAXED);
+    if(slot>=kEventSlots){__atomic_add_fetch(&fbEventDropped,1,__ATOMIC_RELAXED);return;}
+    FbEvent &e=fbEvents[slot];
+    e.ticks=fbTicks();e.pid=pid;e.gen=(uint16_t)gen;e.sel=(uint8_t)selector;e.rc=(int32_t)status;e.pad=0;e.pad2=0;
+    e.inN=e.outN=0;
+    for(unsigned i=0;i<kEventWords;++i){e.in[i]=e.out[i]=0;}
+    if(args){
+        if(args->scalarInput && args->scalarInputCount){unsigned n=args->scalarInputCount;if(n>kEventWords)n=kEventWords;e.inN=(uint8_t)n;for(unsigned i=0;i<n;++i)e.in[i]=args->scalarInput[i];}
+        if(args->scalarOutput && args->scalarOutputCount){unsigned n=args->scalarOutputCount;if(n>kEventWords)n=kEventWords;e.outN=(uint8_t)n;for(unsigned i=0;i<n;++i)e.out[i]=args->scalarOutput[i];}
+    }
+    __atomic_store_n(&e.valid,1,__ATOMIC_RELEASE);
+}
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
     if(stat){__atomic_add_fetch(&stat->entries,1,__ATOMIC_RELAXED);__atomic_add_fetch(&stat->active,1,__ATOMIC_RELAXED);stat->last_enter=selector;}
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
+    if(stat)fbRecord(stat->pid,stat->gen,selector,args,status);
     if(stat) {
         stat->last_leave=selector;stat->last_rc=(uint32_t)status;__atomic_add_fetch(&stat->exits,1,__ATOMIC_RELAXED);__atomic_sub_fetch(&stat->active,1,__ATOMIC_RELAXED);
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
@@ -389,7 +415,7 @@ static void interpose(IOUserClient *client,int pid) {
     uintptr_t *copy=static_cast<uintptr_t *>(IOMalloc(kVtableSlots*sizeof(uintptr_t)));
     if(!copy)return;
     memcpy(copy,vtable,kVtableSlots*sizeof(uintptr_t));
-    stat.object=(uintptr_t)client;stat.pid=pid;proc_name(pid,stat.name,sizeof stat.name);stat.original_external=copy[168];stat.original_register=copy[175];
+    stat.object=(uintptr_t)client;stat.pid=pid;stat.gen=++fbGeneration;proc_name(pid,stat.name,sizeof stat.name);stat.original_external=copy[168];stat.original_register=copy[175];
     copy[168]=(uintptr_t)&wrappedExternal;copy[175]=(uintptr_t)&wrappedRegister;
     ++seenClientCount;
     *reinterpret_cast<uintptr_t **>(client)=copy;
@@ -401,6 +427,27 @@ extern "C" unsigned native_legacy_state_words(char *out,unsigned cap) {
     if(!object)return 0;
     unsigned at=snprintf(out,cap,"d+5808:");
     for(unsigned o=5808;o<5872 && at+16<cap;o+=4){uint32_t v;memcpy(&v,object+o,4);at+=snprintf(out+at,cap-at," %x",v);}
+    return at;
+}
+// One row per recorded framebuffer selector event, oldest first. The tick column
+// is cntpct_el0 divided by cntfrq_el0, so it shares the persistent log's clock.
+extern "C" unsigned native_legacy_event_rows(char *out,unsigned cap) {
+    if(!out||!cap)return 0;
+    unsigned at=0;out[0]=0;
+    uint64_t f=0;__asm__ volatile("mrs %0, cntfrq_el0":"=r"(f));if(!f)f=19200000;
+    uint32_t next=__atomic_load_n(&fbEventNext,__ATOMIC_ACQUIRE);
+    if(next>kEventSlots)next=kEventSlots;
+    for(uint32_t i=0;i<next && at+120<cap;++i){
+        if(!__atomic_load_n(&fbEvents[i].valid,__ATOMIC_ACQUIRE))continue;
+        FbEvent &e=fbEvents[i];
+        at+=snprintf(out+at,cap-at,"E%02u t=%llu.%02llu p%d g%u s%u",i,
+            (unsigned long long)(e.ticks/f),(unsigned long long)((e.ticks%f)*100/f),
+            (int)e.pid,(unsigned)e.gen,(unsigned)e.sel);
+        if(e.inN){at+=snprintf(out+at,cap-at," in%u=",(unsigned)e.inN);for(unsigned k=0;k<e.inN && at+20<cap;++k)at+=snprintf(out+at,cap-at,"%s%llx",k?"/":"",(unsigned long long)e.in[k]);}
+        if(e.outN){at+=snprintf(out+at,cap-at," out%u=",(unsigned)e.outN);for(unsigned k=0;k<e.outN && at+20<cap;++k)at+=snprintf(out+at,cap-at,"%s%llx",k?"/":"",(unsigned long long)e.out[k]);}
+        at+=snprintf(out+at,cap-at," rc=%x\n",(unsigned)e.rc);
+    }
+    at+=snprintf(out+at,cap-at,"E dropped=%u limit=%u\n",(unsigned)__atomic_load_n(&fbEventDropped,__ATOMIC_RELAXED),(unsigned)kEventSlots);
     return at;
 }
 extern "C" unsigned native_legacy_clients_dump(char *out,unsigned cap) {

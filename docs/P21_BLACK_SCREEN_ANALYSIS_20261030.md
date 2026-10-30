@@ -1,5 +1,16 @@
 # P21 黑屏分支日志分析报告（2026-10-30）
 
+> **勘误（2026-10-30 晚，本段优先于下文旧判断）**
+>
+> 1. `0xe00002c7` 是 **kIOReturnUnsupported**，不是 NotOpen；`kIOReturnNotOpen` 是 `0xe00002cd`。已在固定 XNU 的导出头 `build/xnu/obj/EXPORT_HDRS/iokit/IOKit/IOReturn.h` 中核对：`0x2c7 Unsupported`、`0x2cd NotOpen`、`0x2bc Error`、`0x2d5 Busy`、`0x2f0 NotFound`。下文第 3、6 节把 selector 50 的 Unsupported 当作失败特征是**错误**的。
+> 2. 成功 d2（`20261029T172431Z`）的 backboardd 里 selector 50 同样两次返回 `0xe00002c7`，但 selector 4/5 各有 14 次成功并出帧（`[mfb clients]`：`sel 4:14/0/0 5:14/0/0`）。**selector 50 的返回本身不是黑屏根因**。
+> 3. 新的分界证据来自 `[mfb clients]` 全量行与 `[display state]`：
+>    - 成功：`sel 6:27/11`，其中 `(n,0x80000001,0) → 0` 成功并把显示对象的 `[5820]/[5824]` 累加到 `0xe`（d2）或 `0x2b`（window2g）；`(n,0x80000000,0) → 0xe00002d5 (Busy)`；随后 `sel 4`、`sel 5` 各 14 次成功。
+>    - 失败：`sel 6` 只被调用一次（`(0,0x80000003,0) → 0`），之后没有 4/5，`[display state]` 的 `5816/5820/5824/5828` 全为 0，`[display]` 的 `Current Display` 为空、`Last Swaps Array` 为空。
+>    - 结论改写：差异是 **backboardd 在最后一个成功查询之后没有进入显示配置**，而不是 selector 50 被拒。下一步要抓的是 selector 6/8 的 **scalarOutput**（当前未采集）。
+> 4. 上游证据：官方 sheng `package/MobileDisplayProviderProbe.cpp` 用 **selector 8 + `scalarOutputCount=2`** 读取宽高，说明 selector 8 是尺寸查询；这为“失败轮可能拿到不同尺寸/输出”提供了可验证方向。
+> 5. `20261030T052133Z`（boot `0x4bd8fea6`，962 s / 192 轮 / 0 写错误）是 window2g 之后的又一次黑屏 run；日志本身不含镜像哈希，镜像归属只能靠启动记录推断，不能当作独立证明。
+
 目的：把“同一张镜像有时进系统、有时黑屏”的现象整理成可复核的证据链，供另一位 agent 独立核对。
 所有结论都标注 **已确认 / 推断 / 未验证**；原始数据都在 `out/p21/persistent-logs/<UTC>/`，未提交到 Git。
 
@@ -17,6 +28,7 @@
 | 8 | `out/p21/phone-ui-d2`（复跑） | `1999371c` | `fe6be784` | iPhone10,3 + `/buttons` | `20261030T050326Z` | `0x50e2b156` | 黑屏（`frames=0`） |
 | 9 | `out/p21/r17`（时间对应，boot-once 日志缺失） | `57a505ea` | — | iPad7,1 | `20261026T054456Z` | `0x3b368de7` | 黑屏（`frames=0`） |
 | 10 | 同上 | `57a505ea` | — | iPad7,1 | `20261026T061553Z` | `0x392053dd` | 黑屏（`frames=0`） |
+| 11 | window2g 之后的一次启动（日志不含镜像哈希，归属为推断） | — | — | — | `20261030T052133Z` | `0x4bd8fea6` | 黑屏（`frames=0`，962 s / 192 轮） |
 
 说明：#9/#10 是触摸、身份、2 GiB 窗口这些改动**之前**的历史 run，用来证明失败签名不是新引入的（镜像对应依据启动时间，属**推断**）。
 #5 与 #8 是**同一张镜像**，结果不同，这是本报告的核心对照。
@@ -56,7 +68,7 @@
 
 要点：
 
-1. **所有黑屏 run 都有 `kIOReturnNotOpen`（`0xe00002c7`）**，且最后一次外部方法调用的 selector 是 **50**；所有成功 run 的 backboardd 都走到了 **selector 5（swap_submit）并返回 0**。
+1. ~~所有黑屏 run 都有 `kIOReturnNotOpen`…selector 50…~~ **该判断已被文首勘误推翻**：`0xe00002c7` 是 Unsupported，成功 run 的 selector 50 同样返回它；真正的分界是 selector 6 的 `0x80000001` 序列与随后是否出现 selector 4/5（见勘误第 3 条）。
 2. 黑屏 run 的 backboardd 要么一次方法都没发出（`in/out=0/0`，由 bics_dae / FDR_Load 代它去试），要么试到 selector 50 就被 `NotOpen` 拒绝；`prepare calls=0` 说明连我们自己实现的 scanout 准备都没被调用过。
 3. 这条签名在 **2026-10-26 的 R17 run** 里已经存在（#9/#10），与触摸、手机身份、2 GiB 窗口、`kIOMapWriteCombineCache` 都无关。
 
@@ -75,10 +87,10 @@
 
 ## 6. 候选原因（按证据强度）
 
-### A. framebuffer 用户客户端 open 的连接时序竞态（推断，证据最强）
-失败分支里客户端拿到 `kIOReturnNotOpen` 后不再成功连接；成功分支里 backboardd 正常拿到 selector 5。
-内核侧发布时序、kext 加载、payload 都相同，所以变量落在“客户端发起请求时服务是否已可 open”。
-**可证伪**：如果失败 run 里 selector 50 的调用发生在 `native_legacy_stage` 已经到 10 之后很久（服务早已发布），则说明不是“发布太晚”，而是 open 路径本身返回 NotOpen。
+### A. 显示配置握手未进入（推断，证据最强）
+失败分支里 backboardd 在首个 selector 6 查询后不再发起 `(n,0x80000001,0)` 配置序列，因而 `[5820]/[5824]` 保持 0、`Current Display` 为空、也没有 selector 4/5。成功分支同一镜像会完成该序列并进入 4/5。
+内核侧发布时序、kext 加载、payload、参数都相同，差异落在“首次查询的返回内容”或“查询后的等待/通知”上。
+**可证伪**：采集 selector 6 与 8 的 scalarOutput；若失败轮这两个查询的返回与成功轮不同（例如宽高为 0 或能力位不同），即指向 provider 状态；若完全相同，则指向 notification/等待路径。
 
 ### B. 用户态启动节奏 / 数据卷状态（推断，与 A 可能叠加）
 失败 run 的进程退出数只有成功 run 的 55%–62%，SpringBoard 停在 8 线程（成功 17），msgbuf 里 datamigrator、语言服务、bluetoothd 反复重启。可能让“就绪窗口”与客户端重试策略错开。

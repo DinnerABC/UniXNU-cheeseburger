@@ -44,6 +44,11 @@ static size_t compose_official(char *out, size_t cap, uint32_t slot, unsigned no
     static char words[240];
     if (native_legacy_state_words(words, sizeof words)) {at = put(out, at, cap, "[display state]", 16); at = put(out, at, cap, words, sizeof words);}
   }
+  if (&native_legacy_event_rows) {
+    static char events[2560];
+    unsigned n = native_legacy_event_rows(events, sizeof events);
+    if (n) {at = put(out, at, cap, "[fb events]", 12); at = put_report(out, at, cap, events, n);}
+  }
   if (&native_legacy_prepare_report) {
     char row[130];
     native_legacy_prepare_report(row, sizeof row);

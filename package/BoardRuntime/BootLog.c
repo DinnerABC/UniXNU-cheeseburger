@@ -85,6 +85,7 @@ extern unsigned native_legacy_swap_timeline(char *, unsigned) __attribute__((wea
 extern unsigned native_legacy_prepare_report(char *, unsigned) __attribute__((weak_import));
 extern char native_adreno_metal_rows[48][96] __attribute__((weak_import));
 extern unsigned native_legacy_state_words(char *, unsigned) __attribute__((weak_import));
+extern unsigned native_legacy_event_rows(char *, unsigned) __attribute__((weak_import));
 extern volatile uint32_t native_adreno_view_diag[6] __attribute__((weak_import));
 extern int boot_reset_probe(char *, unsigned) __attribute__((weak_import));
 extern int boot_reset_bootloader(char *, unsigned) __attribute__((weak_import));
