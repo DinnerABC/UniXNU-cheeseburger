@@ -200,8 +200,12 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(touch,sizeof touch,"TOUCH14 fifo=%llu/%llu blk=%llu/%llu pre=%llx pdt=%lld cnt=%llx/%llx",
     cb_touch_extra[40],cb_touch_extra[41],cb_touch_extra[42],cb_touch_extra[43],cb_touch_extra[44],
     (long long)(int32_t)cb_touch_extra[46],cb_touch_extra[38]&0xffffffff,cb_touch_extra[38]>>32);at=put(out,at,cap,touch,sizeof touch);
-  snprintf(touch,sizeof touch,"TOUCH15 pg0=%llx pg1=%llx one=%02llx e8=%llx ee=%llx",
-    cb_touch_extra[48],cb_touch_extra[49],cb_touch_extra[50]&0xff,cb_touch_extra[51],cb_touch_extra[52]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH15 pg0=%llx pg1=%llx one=%02llx ff=%llx split=%llx",
+    cb_touch_extra[48],cb_touch_extra[49],cb_touch_extra[50]&0xff,cb_touch_extra[62],cb_touch_extra[63]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH17 dd=%llx dd2=%llx dd3=%llx map=%llx%08llx",
+    cb_touch_extra[26],cb_touch_extra[60],cb_touch_extra[61],cb_touch_extra[57],cb_touch_extra[56]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH18 e9=%llx e92=%llx map=%llx%08llx",
+    cb_touch_extra[27],cb_touch_extra[28],cb_touch_extra[59],cb_touch_extra[58]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH16 f12q=%llx f12c=%llx at f01n=%llx f12n=%llx f01r=%llx f12r=%llx",
     cb_touch_extra[53],cb_touch_extra[54],
     cb_touch_extra[55]&0xff,(cb_touch_extra[55]>>8)&0xff,(cb_touch_extra[55]>>16)&0xff,(cb_touch_extra[55]>>24)&0xff);at=put(out,at,cap,touch,sizeof touch);

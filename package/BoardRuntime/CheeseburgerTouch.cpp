@@ -278,24 +278,41 @@ static int hardware(){
    cb_touch_extra[37]=rd(qup,0x404);
    cb_touch_extra[38]=(uint64_t)(rd(qup,0x150))|((uint64_t)(rd(qup,0x208))<<32);
   }
-  // Byte-order and address-latch probes. The PDT entries read above match the
-  // stock boot log (F12 query 0x47 / control 0x15 / data 0x06, F34 query 0x26)
-  // once the six bytes are reversed, so first decide whether the read stream or
-  // the register layout is the one that is reversed: the page register at 0xFF
-  // must show up as the last byte of a read at 0xFC when bytes arrive in order.
+  // Register-map probes. The last round returned different bytes for the same
+  // address on different accesses (0xE3 read as ...2a once and as fn=01 later),
+  // so this pass fixes the access model instead of guessing an orientation:
+  // 1. the page register at 0xFF must stay 0x00 across repeated single-byte
+  //    reads (a rolling internal pointer would advance);
+  // 2. single-byte reads at consecutive addresses build the map without any
+  //    multi-byte ordering question;
+  // 3. the same six bytes are read twice around the map to show whether the
+  //    multi-byte result is repeatable at all;
+  // 4. the address is also written with STOP and the block read started with
+  //    no address, the way a device that latches only on STOP would need.
   {
-   uint8_t pg0[2]={0xff,0x00},pg1[2]={0xff,0x01},ad[1];
-   uint8_t r4[4]={0},r1=0,r6[6]={0};
+   uint8_t pg0[2]={0xff,0x00},pg1[2]={0xff,0x01},ad[1],z=0,m[12];
+   uint8_t r4[4]={0},r1=0;
    qupTransfer(0x20,pg0,2,nullptr,0);
    ad[0]=0xfc;qupTransfer(0x20,ad,1,r4,4);cb_touch_extra[48]=packBytes(r4,4);
    ad[0]=0xfc;qupTransfer(0x20,ad,1,&r1,1);cb_touch_extra[50]=r1;
    qupTransfer(0x20,pg1,2,nullptr,0);
    ad[0]=0xfc;qupTransfer(0x20,ad,1,r4,4);cb_touch_extra[49]=packBytes(r4,4);
    qupTransfer(0x20,pg0,2,nullptr,0);
-   ad[0]=0xe8;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[51]=packBytes(r6,6);
-   ad[0]=0xee;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[52]=packBytes(r6,6);
-   ad[0]=0x47;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[53]=packBytes(r6,6);
-   ad[0]=0x15;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[54]=packBytes(r6,6);
+   ad[0]=0xdd;qupTransfer(0x20,ad,1,m,6);cb_touch_extra[26]=packBytes(m,6);
+   ad[0]=0xdd;qupTransfer(0x20,ad,1,m,6);cb_touch_extra[60]=packBytes(m,6);
+   for(unsigned i=0;i<12;++i){uint8_t a1=(uint8_t)(0xdd+i);qupTransfer(0x20,&a1,1,&z,1);m[i]=z;}
+   cb_touch_extra[56]=packBytes(m,8);cb_touch_extra[57]=packBytes(m+8,4);
+   ad[0]=0xdd;qupTransfer(0x20,ad,1,m,6);cb_touch_extra[61]=packBytes(m,6);
+   ad[0]=0xe9;qupTransfer(0x20,ad,1,m,6);cb_touch_extra[27]=packBytes(m,6);
+   for(unsigned i=0;i<12;++i){uint8_t a1=(uint8_t)(0xe9+i);qupTransfer(0x20,&a1,1,&z,1);m[i]=z;}
+   cb_touch_extra[58]=packBytes(m,8);cb_touch_extra[59]=packBytes(m+8,4);
+   ad[0]=0xe9;qupTransfer(0x20,ad,1,m,6);cb_touch_extra[28]=packBytes(m,6);
+   {uint8_t p3[3]={0};for(unsigned i=0;i<3;++i){uint8_t a1=0xff;qupTransfer(0x20,&a1,1,&p3[i],1);}cb_touch_extra[62]=packBytes(p3,3);}
+   ad[0]=0xe9;qupTransfer(0x20,ad,1,nullptr,0);      // address write with STOP
+   qupTransfer(0x20,nullptr,0,m,6);cb_touch_extra[63]=packBytes(m,6);  // pointer read
+   qupTransfer(0x20,pg0,2,nullptr,0);
+   ad[0]=0x47;qupTransfer(0x20,ad,1,m,6);cb_touch_extra[53]=packBytes(m,6);
+   ad[0]=0x15;qupTransfer(0x20,ad,1,m,6);cb_touch_extra[54]=packBytes(m,6);
    // Where either field order would see F01 (0x01) and F12 (0x12): normal uses
    // byte 5 as the function number, reversed uses byte 0.
    unsigned f01n=0xff,f12n=0xff,f01r=0xff,f12r=0xff;
