@@ -9,6 +9,9 @@
 extern "C" {
 extern volatile uint32_t native_hid_input_command;
 volatile uint64_t cb_keys[13]; // stage,version,reads,failures,raw,mask,edges,sink-deliveries,APIDs x3,last status
+// Read-only touch-rail snapshot: stage, then apid/vset/enable for pm8998 l6 and
+// l28, then the per-rail read errors. Nothing here writes the PMIC.
+volatile uint64_t cb_rails[8];
 static void (*sink)(void *,uint32_t);
 static void *sinkContext;
 void native_buttons_set_sink(void (*fn)(void *,uint32_t),void *context) {
@@ -44,6 +47,23 @@ static void keysThread(void *,wait_result_t) {
    const uint32_t ppids[3]={0x008,0x0c4,0x0c5};int apids[3]={-1,-1,-1};
    for(unsigned i=0;i<512;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(!entry)continue;
     for(unsigned k=0;k<3;++k)if(apids[k]<0 && ((entry>>8)&0xfff)==ppids[k])apids[k]=i;
+   }
+   // Touch rail state, read-only: pm8998 l6 (ldoa 6) and l28 (ldoa 0x1c) are the
+   // two RPM-SMD supplies of the S3320; VSET +0x40 and enable +0x46 of the PMIC4
+   // LDO page are read through the same observer channel as the keys below.
+   {
+    const uint32_t railPpids[2]={0x045,0x05b};
+    cb_rails[0]=1;
+    for(unsigned r=0;r<2;++r){int apid=-1;
+     for(unsigned i=0;i<512;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(entry && ((entry>>8)&0xfff)==railPpids[r]){apid=(int)i;break;}}
+     cb_rails[1+r*3]=(uint64_t)(int64_t)apid;
+     if(apid<0){cb_rails[7]|=1ull<<(r*2);continue;}
+     Window ch;uint8_t vset=0,en=0;
+     if(!mapWindow(ch,cb_observer_address((unsigned)apid),0x1000)){cb_rails[7]|=2ull<<(r*2);continue;}
+     if(readStatus(ch,0x40,vset))cb_rails[7]|=4ull<<(r*2);
+     if(readStatus(ch,0x46,en))cb_rails[7]|=8ull<<(r*2);
+     cb_rails[2+r*3]=vset;cb_rails[3+r*3]=en;unmap(ch);
+    }
    }
    ready=true;
    for(unsigned k=0;k<3;++k){cb_keys[8+k]=(uint64_t)(int64_t)apids[k];
