@@ -176,7 +176,7 @@ static void publish(const CbTouchFrame &f){
  for(unsigned i=0;i<f.count;++i){native_touch_xs[i]=f.x[i];native_touch_ys[i]=f.y[i];native_touch_ids[i]=f.id[i];}
  __atomic_add_fetch(&native_touch_seq,1,__ATOMIC_RELEASE);cb_touch[6]=f.count;++cb_touch[7];
  IOLockLock(sinkLock);auto fn=sink;OSObject *owner=fn?static_cast<OSObject*>(sinkCtx):nullptr;if(owner)owner->retain();IOLockUnlock(sinkLock);
- if(fn)fn(owner);if(owner)owner->release();
+ if(fn){++cb_touch_extra[74];fn(owner);}if(owner)owner->release();
 }
 static void interrupt(void*){
  // Mask only this GPIO immediately; all I2C/HID work stays in worker context.

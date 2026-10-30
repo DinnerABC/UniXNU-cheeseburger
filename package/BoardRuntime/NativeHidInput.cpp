@@ -20,6 +20,8 @@ extern "C" void native_buttons_set_sink(void (*)(void *, uint32_t), void *) __at
 extern "C" {
 extern volatile uint32_t native_touch_seq, native_touch_count, native_touch_hid_reports;
 extern volatile int native_touch_xs[12], native_touch_ys[12], native_touch_ids[12];
+// Ownership of the touch diagnostics belongs to the touch producer; only count here.
+extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
 }
 // Keyboard Application collection ensures the original generic keyboard
 // personality can match. Report 2 carries the Consumer buttons, bit 0 Menu (Home),
@@ -158,7 +160,8 @@ class NativeHidInput : public IOHIDDevice {
     void touchSend() {
 #if UNIXNU_HID_TOUCH_SOURCE
         NativeHidInput *self=this;
-        if(!self->hasEventDriverCached())return;
+        if(&cb_touch_extra[0])++cb_touch_extra[75];
+        if(!self->hasEventDriverCached()){if(&cb_touch_extra[0])++cb_touch_extra[76];return;}
         uint32_t before=native_touch_seq;
         if((before&1) || before==self->lastSeq)return;
         __asm__ volatile("dmb ish":::"memory");
@@ -206,6 +209,7 @@ class NativeHidInput : public IOHIDDevice {
         IOReturn result=buffer?self->handleReport(buffer,0,0):kIOReturnNoMemory;
         OSSafeReleaseNULL(buffer);
         native_hid_input_observed(6,result);
+        if(&cb_touch_extra[0])++cb_touch_extra[77];
         native_touch_hid_reports=native_touch_hid_reports+1;
     
 #endif
