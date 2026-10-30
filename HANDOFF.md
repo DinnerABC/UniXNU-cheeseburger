@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-pmic（XNU 只读读取 L6/L28 状态）已启动一次
+
+- 目的：前一轮 UEFI 侧开 L6/L28 后触摸仍是 `-30`，且 UEFI 打印未进持久日志；本轮在 XNU 内用**只读**方式读回两路 LDO 状态，直接把证据写进持久日志。
+- 实现（提交 `b4197a7`）：`CheeseburgerButtons.cpp` 在既有 SPMI arbiter 线程里，按 PPID `0x045`/`0x05B` 找 APID，读 PMIC4 LDO 页 `+0x40`(VSET)/`+0x46`(enable)，结果存 `cb_rails[8]`；`BootLog.c` 新增 `RAILS stage=.. l6 apid=.. vset=.. en=.. l28 apid=.. vset=.. en=.. err=..` 行。**不做任何 PMIC 写。**
+- 候选 `out/p21/fb-pmic`（基于 fb-rail，保留 UEFI 侧 rail 代码）：内核 `b9125cef…`、payload `bcba2d02…`、固件 `6bb562d9…`、镜像 `out/p21/fb-pmic/uefi/boot-p21-up1.img` `d2374f97…`（82,595,840 bytes）；pins 三项命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 Sending/Booting OKAY，未写分区；监视器已挂起。
+- 判读方式：`RAILS` 行里 `en` 的 bit7 若为 1 而触摸仍 `-30`，说明供电已开但 NACK 另有原因；若为 0，说明 UEFI 写入没有生效或供电不在这两路；`err` 位标记 APID 未找到/映射失败/读失败。
+- 关于“未进桌面是否与固件改动有关”：本次之前失败轮的签名与 10-26 R17 一致，且固件改动只涉及 PMIC 读/写、不触及显示路径；目前判断为该偶发分支，但需更多成功/失败对照才能定量。
+
 ## 2026-10-30：fb-rail 结果——落回已知黑屏分支，触摸 NACK 未变
 
 - 回收 `out/p21/persistent-logs/20261030T064815Z/`：boot ID `0x4f96c356`，140 轮，写入错误 0。
