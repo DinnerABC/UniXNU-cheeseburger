@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：HID=0 的真因是独立 digitizer 设备覆盖了合并设备的 sink
+
+- 日志 `20261030T170145Z`（boot `0x50...`，用户已触摸）：触摸解出 `contacts=1 publish=363`（`raw=77800000000`），但 `HID=0`；同一轮 `DISPLAY frames=0`，`[fb events]` 是已知的间歇分支 `E03 sel6 (0,0x80000003)` → `E04 rc=e00002c7`，与触摸改动无关（同镜像会翻转，此前基线也是这样）。
+- 代码核对：`cheeseburger_touch_hid_start()` 走的是 `native_hid_touch_allocate()`（`touchOnly`），而 `NativeHidInput` 注释写明：实机上事件驱动附着的是**键盘+digitizer 合并设备**（`sheng-touch-hid=1`），独立 digitizer 设备是 opt-in 的 `sheng-touch-split`。`HidInputProbe` 先启动合并设备并装上 sink，触摸 worker 随后又启动独立设备，把 sink 覆盖成那个没有事件驱动的设备，于是 `touchSend` 早退、`HID` 永远 0。
+- 修正（提交 `...`）：新增 `cheeseburger_touch_sink_ready()`；worker 在 `native_hid_stage==3` 之后**已有 sink 就不再创建独立设备**。同时加了四个计数器区分路径：`TOUCH19 sink/send/nodrv/rep`（sink 安装后的 publish 次数、touchSend 次数、因无事件驱动早退次数、成功取报告次数）。
+- 候选镜像 `674381a9…`（内核 `b354e0ad…`、payload `e940c727…`、固件 `d6352763…`），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区。
+- 判读：下一轮 `TOUCH19 sink>0 send>0 nodrv=0 rep>0` 且 `HID>0` 即打通；若 `nodrv>0`，说明合并设备的事件驱动也没附着，需要回到 HID 描述符/匹配属性；若桌面本轮仍不亮，属显示间歇分支，同镜像再启动一次即可对照。
+
 ## 2026-10-31：触摸已解出坐标；HID 只是因为缺 `sheng-touch-hid=1` 没被启用
 
 - 日志 `20261030T164836Z`（boot `0x501a...`，用户已实际触摸）：`TOUCH stage=4 error=0 i2c=20674/0 F01=2a F12=47`、`range=1079x1919 objects=10 data=6/80`、`frames=10317`、**`publish=348`**，最后一帧 `raw=69c00000284` 即 x=644、y=1692（都在 0..1079 / 0..1919 内），`mapped` 也已生成；`TOUCH19 nz=0` 说明所有非零数据包都成功解码，没有“有数据但解不出”的情况。
