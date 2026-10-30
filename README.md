@@ -1,6 +1,6 @@
 # UniXNU-cheeseburger
 
-Device repository for the OnePlus 5 (cheeseburger, Qualcomm MSM8998 / Snapdragon 835), built on [UniXNU](https://github.com/UniXNU/UniXNU). The current `ipados-17.7.11` branch targets iPadOS 17.7.11 (21H461) and XNU 10063.141.1.
+Device repository for the OnePlus 5 (cheeseburger, Qualcomm MSM8998 / Snapdragon 835), built on [UniXNU](https://github.com/UniXNU/UniXNU). The `main` branch targets iPadOS 17.7.11 (21H461) and XNU 10063.141.1. The experimental iOS 16.7.16 port is retained on `ios-16.7.16`.
 
 The device owner has confirmed the original iPadOS interface on hardware. A later run recorded eight CPUs online, 2 GiB managed memory and display transfers. Touch and phone-style UI remain in development.
 
@@ -19,14 +19,14 @@ The device owner has confirmed the original iPadOS interface on hardware. A late
 | Storage / root | Partial | Native UFS reads and owner-authorized OS / SystemOS root mounting |
 | Data | Partial | Writable APFS RAM Data from a seed; persistent user Data is not established |
 | Display | Partial | Original iPadOS UI appeared on hardware using CPU framebuffer presentation |
-| Phone-style UI | Experimental | Phone identity with an iPadOS root; latest candidate reached a system screen but still showed a tablet layout |
+| Phone-style UI | Not working | Phone identity with an iPadOS root reached a system screen but still showed a tablet layout |
 | Touch | Not working | Synaptics S3320 / QUP5 driver integrated; reset input remains low before I²C initialization |
 | Buttons | Partial | Power and volume adapter, with a volume-key Home chord; full physical interaction is not qualified |
-| GPU / Metal | Not available | No qualified Adreno 540 acceleration |
+| GPU / Metal | Not working | No qualified Adreno 540 acceleration |
 | KeyStore | Partial | Development compatibility; no SEP-backed security claim |
 | Logs | Partial | Bounded persistent log window and Recovery retrieval; automatic host collection requires a running monitor |
-| Wi-Fi / Bluetooth / cellular / audio / camera / sensors | Not qualified | No hardware support claim |
-| Power management / USB | Not qualified | Deep suspend, charging and XNU USB are not established |
+| Wi-Fi / Bluetooth / cellular / audio / camera / sensors | Not tested | No hardware support claim |
+| Power management / USB | Not tested | Deep suspend, charging and XNU USB are not established |
 
 Fastboot acceptance, kernel execution, user-space startup and usable hardware are separate milestones. The phone-style identity experiment uses an iPadOS root and differs from the matching OS/identity configuration recommended by upstream.
 
