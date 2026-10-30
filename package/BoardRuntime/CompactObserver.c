@@ -9,6 +9,7 @@
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 #include <string.h>
+#include "BoardBootArgs.h"
 
 extern volatile uint64_t p6_diag_record[];
 extern unsigned char iso_font[];
@@ -174,7 +175,7 @@ static void monitor(void *arg, wait_result_t result) {
 
 void p20_observer_start(void) {
     unsigned enabled = 0;
-    PE_parse_boot_argn("p20-observe", &enabled, sizeof(enabled));
+    cb_board_arg("p20-observe", &enabled, sizeof(enabled));
     if (enabled != 1 || started) return;
     started = 1;
     p20_diag_enabled = 1;

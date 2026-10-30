@@ -10,6 +10,7 @@
 #include <IOKit/IOTimerEventSource.h>
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSIterator.h>
+#include "BoardBootArgs.h"
 extern "C" void native_hid_input_observed(unsigned,int);
 extern "C" void native_hid_live_checkpoint(IOService *);
 extern "C" bool native_hid_input_requested(void);
@@ -296,14 +297,14 @@ public:
     bool start(IOService *provider) override {
 #if !UNIXNU_HID_TOUCH_SOURCE
         unsigned unsupportedTouch=0;
-        if(touchOnly || (PE_parse_boot_argn("sheng-touch-hid",&unsupportedTouch,sizeof(unsupportedTouch)) && unsupportedTouch))return false;
+        if(touchOnly || (cb_board_arg("sheng-touch-hid",&unsupportedTouch,sizeof(unsupportedTouch)) && unsupportedTouch))return false;
 #endif
         inputLoop=IOWorkLoop::workLoop();if(!inputLoop)return false;
         // Request the normal generic HID event personality for this owned
         // keyboard. This is a matching property, not a client entitlement.
         if(!setProperty("HIDDefaultBehavior",true))return false;
         unsigned touch=0;
-        touchEnabled=PE_parse_boot_argn("sheng-touch-hid",&touch,sizeof(touch)) && touch==1;
+        touchEnabled=cb_board_arg("sheng-touch-hid",&touch,sizeof(touch)) && touch==1;
         // DigitizerCollectionDispatch: IOHIDEventDriver (setDigitizerProperties) reads it up the service plane and then sends each
         // report's fingers as one digitizer collection with a child per finger. Without it a touch screen gets one event per finger,
         // and backboardd takes each as the whole touch set, so no two fingers are ever down together for UIKit (no pinch, no

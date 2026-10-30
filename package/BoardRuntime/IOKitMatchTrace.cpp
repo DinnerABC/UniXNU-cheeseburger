@@ -9,6 +9,7 @@
 #include <machine/machine_routines.h>
 #include <sys/proc.h>
 #include <pexpert/pexpert.h>
+#include "BoardBootArgs.h"
 namespace {
 enum { Events=128, First=16, Recent=Events-First, Handles=64 };
 struct Event {uint64_t seq,ticks,handle;int pid,status;unsigned done,hits;char who[20],kind[20],query[168],result[40];};
@@ -20,7 +21,7 @@ static unsigned index(uint64_t seq){return seq<=First?(unsigned)seq-1:First+(uns
 static bool enter(){return !__atomic_exchange_n(&lockword,1,__ATOMIC_ACQUIRE);}
 static void leave(){__atomic_store_n(&lockword,0,__ATOMIC_RELEASE);}
 static bool selected(char *name,int *pid){
- if(!initialized){unsigned arg=0;PE_parse_boot_argn("p21-iokit-trace",&arg,sizeof(arg));enabled=arg==1;initialized=1;}
+ if(!initialized){unsigned arg=0;cb_board_arg("p21-iokit-trace",&arg,sizeof(arg));enabled=arg==1;initialized=1;}
  if(!enabled)return false;*pid=proc_selfpid();proc_name(*pid,name,20);
  return !strcmp(name,"SpringBoard")||!strcmp(name,"backboardd")||!strcmp(name,"PreBoard")||!strcmp(name,"lsd")||!strcmp(name,"datamigrator")||!strcmp(name,"usermanagerd")||!strcmp(name,"containermanagerd")||!strncmp(name,"com.apple.datamigr",18)||!strncmp(name,"migrationplugin",15);
 }

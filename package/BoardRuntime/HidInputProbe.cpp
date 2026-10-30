@@ -9,6 +9,7 @@
 #include <libkern/c++/OSKext.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
+#include "BoardBootArgs.h"
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_hid_static_init(void) __asm__("__GLOBAL__sub_I_NativeHidInput.cpp");
 extern "C" IOService *native_hid_input_allocate(void);
@@ -144,7 +145,7 @@ void native_hid_input_observed(unsigned event,int result) {
 __attribute__((noinline)) void native_hid_checkpoint(void) { __asm__ volatile("" ::: "memory"); }
 void native_hid_input_probe(void) {
     unsigned enabled=0;
-    if(!PE_parse_boot_argn("offline-hid-input",&enabled,sizeof(enabled)) || enabled!=1)return;
+    if(!cb_board_arg("offline-hid-input",&enabled,sizeof(enabled)) || enabled!=1)return;
     if(native_hid_stage)return;
     native_hid_stage=1;
     native_hid_load_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOHIDFamily");
@@ -163,7 +164,7 @@ void native_hid_input_probe(void) {
         OSDictionary *match=IOService::serviceMatching("IOHIDResource");
         IOService *resource=match?IOService::waitForMatchingService(match,5000000000ULL):nullptr;
         native_hid_resource_found=resource!=nullptr;
-        unsigned sendHome=0;PE_parse_boot_argn("offline-hid-home",&sendHome,sizeof(sendHome));
+        unsigned sendHome=0;cb_board_arg("offline-hid-home",&sendHome,sizeof(sendHome));
         if(resource && sendHome==1 && native_hid_class_sizes[4]==208) {
             void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
             if(handle) {
@@ -184,7 +185,7 @@ void native_hid_input_probe(void) {
                     unsigned touchHid=0;
                     unsigned split=0;
                     PE_parse_boot_argn("sheng-touch-split",&split,sizeof(split));
-                    if(started && split==1 && PE_parse_boot_argn("sheng-touch-hid",&touchHid,sizeof(touchHid)) && touchHid==1) {
+                    if(started && split==1 && cb_board_arg("sheng-touch-hid",&touchHid,sizeof(touchHid)) && touchHid==1) {
                         // Separate digitizer service (primary usage Digitizer/Touch Screen, Built-In).
                         IOService *touch=native_hid_touch_allocate();
                         bool touchStarted=touch && touch->metaCast("IOHIDDevice") && touch->init() && touch->attach(resource) && touch->start(resource);

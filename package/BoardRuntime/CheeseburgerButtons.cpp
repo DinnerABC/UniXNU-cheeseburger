@@ -6,6 +6,7 @@
 #include <kern/sched_prim.h>
 #include <pexpert/pexpert.h>
 #include "CheeseburgerKeys.h"
+#include "BoardBootArgs.h"
 extern "C" {
 extern volatile uint32_t native_hid_input_command;
 volatile uint64_t cb_keys[13]; // stage,version,reads,failures,raw,mask,edges,sink-deliveries,APIDs x3,last status
@@ -87,7 +88,7 @@ static void keysThread(void *,wait_result_t) {
  unmap(core);
  if(!ready){cb_keys[0]=UINT64_MAX;for(auto &c:channels)unmap(c);return;}
  cb_keys[0]=2;
- unsigned homeChord=0;PE_parse_boot_argn("cheeseburger-home-chord",&homeChord,sizeof homeChord);
+ unsigned homeChord=0;cb_board_arg("cheeseburger-home-chord",&homeChord,sizeof homeChord);
  unsigned failures=0,stable=0;uint32_t candidate=0,last=0;bool released=false;
  for(;;){uint8_t raw[3]={};int rc=0;for(unsigned k=0;k<3 && !rc;++k)rc=readStatus(channels[k],0x10,raw[k]);
   if(rc){cb_keys[3]=cb_keys[3]+1;if(++failures>=3){deliver(0);cb_keys[0]=UINT64_MAX-1;break;}IOSleep(10);continue;}
@@ -105,7 +106,7 @@ static void keysThread(void *,wait_result_t) {
 }
 }
 extern "C" void cheeseburger_buttons_probe(void) {
- unsigned enabled=0;if(!PE_parse_boot_argn("cheeseburger-buttons",&enabled,sizeof enabled)||enabled!=1||cb_keys[0])return;
+ unsigned enabled=0;if(!cb_board_arg("cheeseburger-buttons",&enabled,sizeof enabled)||enabled!=1||cb_keys[0])return;
  cb_keys[0]=1;thread_t thread=nullptr;
  if(kernel_thread_start(keysThread,nullptr,&thread)==KERN_SUCCESS)thread_deallocate(thread);else cb_keys[0]=UINT64_MAX-2;
 }

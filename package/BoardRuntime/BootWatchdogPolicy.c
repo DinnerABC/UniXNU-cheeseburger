@@ -12,14 +12,15 @@ volatile int cheeseburger_watchdog_policy_status=-1;
 volatile int cheeseburger_watchdog_policy_requested;
 volatile int cheeseburger_watchdog_policy_applied;
 #include "BootUserlandPolicy.h"
+#include "BoardBootArgs.h"
 volatile int cheeseburger_upstream_policy_requested,cheeseburger_upstream_policy_applied;
 volatile int cheeseburger_upstream_policy_status=-1;
 int cheeseburger_boot_watchdog_policy(void *process, uint64_t scratch) {
  cheeseburger_watchdog_policy_status=0;
 #if DEVELOPMENT || DEBUG
  proc_t p=process;int enabled=0,upstream=0,error=0,fd=-1;int32_t result=0;
- PE_parse_boot_argn("cheeseburger-disable-watchdogd",&enabled,sizeof(enabled));
- PE_parse_boot_argn("cheeseburger-upstream-userland",&upstream,sizeof(upstream));
+ cb_board_arg("cheeseburger-disable-watchdogd",&enabled,sizeof(enabled));
+ cb_board_arg("cheeseburger-upstream-userland",&upstream,sizeof(upstream));
  unsigned mask=cheeseburger_policy_mask(enabled,upstream);
  if(!mask)return 0;
  const char *policy=(mask==7)?cheeseburger_upstream_xml:cheeseburger_watchdog_xml;

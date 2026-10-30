@@ -32,6 +32,7 @@ extern "C" { extern const struct vr_crypto vr_xnu_crypto; extern const uint8_t v
 #include "ResponsePolicy.h"
 #include "TransferPoll.h"
 #include "RootTransportLayout.h"
+#include "BoardBootArgs.h"
 
 class NativeUfs;
 class NativeUfsLun : public IOBlockStorageDevice {
@@ -293,7 +294,7 @@ bool NativeUfs::logOpen(const char **why){
  if(logOpened){*why="already open";return true;}
  extern volatile int native_owner_cache_authorized;
  if(native_owner_cache_authorized!=1||!gLogLayoutSafe){*why="no root layout";return false;}
- unsigned enabled=0;PE_parse_boot_argn("sheng-log",&enabled,sizeof(enabled));
+ unsigned enabled=0;cb_board_arg("sheng-log",&enabled,sizeof(enabled));
  if(enabled!=1||logFault||logGptCheck()){*why="log geometry/auth refused";return false;}
  UInt8 *buf=(UInt8*)IOMalloc(kDataMax);if(!buf){*why="allocation failed";return false;}
  bool ok=readRaw4k(0,CB_LOG_FIRST,1,buf)==kIOReturnSuccess;

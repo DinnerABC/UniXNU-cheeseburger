@@ -8,6 +8,7 @@
 #include <kern/sched_prim.h>
 #include <pexpert/pexpert.h>
 #include "SynapticsRMI4.h"
+#include "BoardBootArgs.h"
 extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
@@ -385,5 +386,5 @@ extern "C" void native_touch_set_sink(void(*fn)(void*),void *ctx){if(!sinkLock){
 // driver on hardware; the standalone digitizer device (sheng-touch-split) does
 // not, so a sink installed by the combined device must not be replaced.
 extern "C" int cheeseburger_touch_sink_ready(void){return sink?1:0;}
-extern "C" void cheeseburger_touch_probe(void){unsigned enabled=0;if(!PE_parse_boot_argn("cheeseburger-touch",&enabled,sizeof enabled)||enabled!=1||cb_touch[0])return;cb_touch[0]=1;sinkLock=IOLockAlloc();if(!sinkLock){cb_touch[0]=UINT64_MAX;return;}
+extern "C" void cheeseburger_touch_probe(void){unsigned enabled=0;if(!cb_board_arg("cheeseburger-touch",&enabled,sizeof enabled)||enabled!=1||cb_touch[0])return;cb_touch[0]=1;sinkLock=IOLockAlloc();if(!sinkLock){cb_touch[0]=UINT64_MAX;return;}
  if(pendingSink){sink=pendingSink;sinkCtx=pendingCtx;pendingSink=nullptr;cb_touch_extra[78]=1;}thread_t t=nullptr;if(kernel_thread_start(worker,nullptr,&t)==KERN_SUCCESS)thread_deallocate(t);else{cb_touch[5]=uint64_t(-60);cb_touch[0]=UINT64_MAX;}}

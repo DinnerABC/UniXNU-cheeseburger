@@ -8,6 +8,7 @@
 #include <libkern/c++/OSSymbol.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
+#include "BoardBootArgs.h"
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);
@@ -28,7 +29,7 @@ bool native_aks_state_enabled(void) {
     static int cached = -1;
     if (cached < 0) {
         unsigned value = 0;
-        cached = PE_parse_boot_argn("sheng-aks", &value, sizeof(value)) && value == 1;
+        cached = cb_board_arg("sheng-aks", &value, sizeof(value)) && value == 1;
     }
     return cached == 1;
 }
@@ -37,7 +38,7 @@ uint32_t native_aks_lock_state(void) {
     static int cached = -1;
     if (cached < 0) {
         unsigned value = 0;
-        if (!PE_parse_boot_argn("sheng-aks-sls", &value, sizeof(value)) || value > 7) value = 0;
+        if (!cb_board_arg("sheng-aks-sls", &value, sizeof(value)) || value > 7) value = 0;
         cached = (int)value;
     }
     return (uint32_t)cached;
@@ -75,7 +76,7 @@ void native_aks_call(uint32_t selector, int32_t result) {
 }
 static void native_keyevents_probe(void) {
     unsigned enabled = 0, original = 0;
-    if (!PE_parse_boot_argn("offline-key-events", &enabled, sizeof(enabled)) || enabled != 1 ||
+    if (!cb_board_arg("offline-key-events", &enabled, sizeof(enabled)) || enabled != 1 ||
         native_keyevents_stage) return;
     native_keyevents_stage = 1;
     PE_parse_boot_argn("offline-keystore", &original, sizeof(original));

@@ -14,6 +14,7 @@
 #include <string.h>
 #include <pexpert/pexpert.h>
 #include <IOKit/IOLib.h>
+#include "BoardBootArgs.h"
 
 extern int native_ufs_log_open(uint64_t *, uint64_t *, const char **) __attribute__((weak_import));
 extern int native_ufs_log_write(uint64_t, uint32_t, const void *) __attribute__((weak_import));
@@ -352,7 +353,7 @@ void boot_log_tick(unsigned now) {
   if (boot_log_started) return;
   boot_log_started = 1;
   uint32_t mode = 0;
-  if (!PE_parse_boot_argn("sheng-log", &mode, sizeof mode) || mode != 1) return;
+  if (!cb_board_arg("sheng-log", &mode, sizeof mode) || mode != 1) return;
   if (!&native_ufs_log_open || !&native_ufs_log_write || !&native_ufs_log_sync) return;
   boot_log_buffer = (uint8_t *)IOMallocAligned(LogMsgBlocks * LogBlock, LogBlock);
   if (!boot_log_buffer) return;
