@@ -12,7 +12,7 @@ extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 volatile uint64_t cb_touch[28];
-volatile uint64_t cb_touch_extra[48];
+volatile uint64_t cb_touch_extra[64];
 extern volatile uint32_t native_hid_stage;
 int cheeseburger_touch_hid_start(void);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
@@ -77,6 +77,7 @@ static int qupInit(){
 static void qupPush(const uint8_t *p,unsigned n){
  for(unsigned i=0;i<n;i+=4){uint32_t w=0;for(unsigned k=0;k<4&&i+k<n;++k)w|=uint32_t(p[i+k])<<(8*k);wr(qup,0x110,w);}
 }
+static uint64_t packBytes(const uint8_t *p,unsigned n){uint64_t v=0;for(unsigned i=0;i<n&&i<8;++i)v|=uint64_t(p[i])<<(8*i);return v;}
 static int qupErrors(){
  uint32_t st=rd(qup,0x404),er=rd(qup,0x1c);cb_touch[17]=st;cb_touch[18]=er;
  if(st&QP_STATUS_MASK){wr(qup,0x404,st&QP_STATUS_MASK);return (st&QP_STATUS_NACK)?-6:-7;}
@@ -276,6 +277,35 @@ static int hardware(){
    cb_touch_extra[36]=(uint64_t)(rd(qup,0x4)&0xffff)|((uint64_t)(rd(qup,0x18)&0xffff)<<16)|((uint64_t)(rd(qup,0x1c)&0xffff)<<32);
    cb_touch_extra[37]=rd(qup,0x404);
    cb_touch_extra[38]=(uint64_t)(rd(qup,0x150))|((uint64_t)(rd(qup,0x208))<<32);
+  }
+  // Byte-order and address-latch probes. The PDT entries read above match the
+  // stock boot log (F12 query 0x47 / control 0x15 / data 0x06, F34 query 0x26)
+  // once the six bytes are reversed, so first decide whether the read stream or
+  // the register layout is the one that is reversed: the page register at 0xFF
+  // must show up as the last byte of a read at 0xFC when bytes arrive in order.
+  {
+   uint8_t pg0[2]={0xff,0x00},pg1[2]={0xff,0x01},ad[1];
+   uint8_t r4[4]={0},r1=0,r6[6]={0};
+   qupTransfer(0x20,pg0,2,nullptr,0);
+   ad[0]=0xfc;qupTransfer(0x20,ad,1,r4,4);cb_touch_extra[48]=packBytes(r4,4);
+   ad[0]=0xfc;qupTransfer(0x20,ad,1,&r1,1);cb_touch_extra[50]=r1;
+   qupTransfer(0x20,pg1,2,nullptr,0);
+   ad[0]=0xfc;qupTransfer(0x20,ad,1,r4,4);cb_touch_extra[49]=packBytes(r4,4);
+   qupTransfer(0x20,pg0,2,nullptr,0);
+   ad[0]=0xe8;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[51]=packBytes(r6,6);
+   ad[0]=0xee;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[52]=packBytes(r6,6);
+   ad[0]=0x47;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[53]=packBytes(r6,6);
+   ad[0]=0x15;qupTransfer(0x20,ad,1,r6,6);cb_touch_extra[54]=packBytes(r6,6);
+   // Where either field order would see F01 (0x01) and F12 (0x12): normal uses
+   // byte 5 as the function number, reversed uses byte 0.
+   unsigned f01n=0xff,f12n=0xff,f01r=0xff,f12r=0xff;
+   for(int off=0xe9;off>=5;off-=6){uint8_t d[6]={0},a[1]={(uint8_t)off};
+    if(qupTransfer(0x20,a,1,d,6))continue;
+    if(d[5]==1&&f01n==0xff)f01n=unsigned(off);
+    if(d[5]==0x12&&f12n==0xff)f12n=unsigned(off);
+    if(d[0]==1&&f01r==0xff)f01r=unsigned(off);
+    if(d[0]==0x12&&f12r==0xff)f12r=unsigned(off);}
+   cb_touch_extra[55]=f01n|(f12n<<8)|(f01r<<16)|(f12r<<24);
   }
  }
  cb_touch_extra[6]=rd(qup,0x0)|((uint64_t)rd(qup,0x4)<<32);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
