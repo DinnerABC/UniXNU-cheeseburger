@@ -30,33 +30,70 @@ static bool map(Window &w,uint64_t pa,unsigned size){IODeviceMemory *m=IODeviceM
 static uint32_t rd(Window &w,unsigned off){uint32_t x=w.v[off/4];__asm__ volatile("dmb sy":::"memory");return x;}
 static void wr(Window &w,unsigned off,uint32_t x){w.v[off/4]=x;__asm__ volatile("dsb sy":::"memory");}
 static int state(unsigned s){for(unsigned i=0;i<200;++i){if(rd(qup,4)&4){wr(qup,4,s);for(unsigned j=0;j<200;++j){if((rd(qup,4)&7)==(s|4))return 0;IODelay(1);}break;}IODelay(1);}return -2;}
-static int transfer(const uint8_t *tx,unsigned nt,uint8_t *rx,unsigned nr){
- if(!nt||nt>16||nr>257||nt>txFifo)return -3;
- // Every transaction is bounded; a failed transaction gets one controller reset,
- // never a sensor reset or unbounded retry.
- wr(qup,0xc,1);wire.page=256;int e=state(0);if(e)return e;
+// QUP v1 I2C programming taken from the reference i2c-qup.c: every OUT FIFO
+// word carries two 16-bit halves, each half is (tag<<8)|byte, with START 0x100,
+// DATA 0x200, STOP 0x300 and REC 0x400. A register read is two transactions:
+// write the register address (START..STOP), then a separate read transaction
+// (START|addrR plus a REC tag). The previous code pushed raw data words with no
+// tags or slave address, so nothing was ever addressed.
+enum {QUP_CFG_WRITE=0x28F, QUP_CFG_READ=0x20F, QUP_IO_REPACK=0xC000u, QUP_IO_OUT_BLK=0x400u, QUP_IO_IN_BLK=0x1000u};
+static int qupPrepare(unsigned config,unsigned io,unsigned outCnt,unsigned writeCnt,unsigned inputCnt,unsigned readCnt){
+ int e;
+ wr(qup,0xc,1);wire.page=256;if((e=state(0)))return e;
  if(rd(qup,0x404)&0x100)return -4;
- wr(qup,0,0x207|(nr?0:0x80));wr(qup,0x408,1);
- if(!(rd(qup,4)&16))return -5;
- bool block=nr>rxFifo;wr(qup,8,0xc000|(block?0x1000:0));
- wr(qup,0x100,0);wr(qup,0x150,nt);wr(qup,0x200,block?nr:0);wr(qup,0x208,block?0:nr);
- wr(qup,0x20,0);wr(qup,0x28,0);wr(qup,0x1c,0x7c);
- if((e=state(1)))return e;wr(qup,0x400,clockCtl);if((e=state(3)))return e;
- for(unsigned a=0;a<nt;a+=4){uint32_t v=0;for(unsigned k=0;k<4 && a+k<nt;++k)v|=uint32_t(tx[a+k])<<(8*k);wr(qup,0x110,v);}
+ wr(qup,0,config);wr(qup,8,io);
+ wr(qup,0x100,outCnt);wr(qup,0x150,writeCnt);wr(qup,0x200,inputCnt);wr(qup,0x208,readCnt);
+ wr(qup,0x18,0);wr(qup,0x1c,0x7c);
  if((e=state(1)))return e;
- unsigned got=0;
- for(unsigned ms=0;ms<50;++ms){uint32_t op=rd(qup,0x18),status=rd(qup,0x404),err=rd(qup,0x1c);cb_touch[17]=status;cb_touch[18]=err;cb_touch[19]=op;
+ wr(qup,0x400,clockCtl);
+ if((e=state(3)))return e;
+ return 0;
+}
+static int qupFinish(unsigned nr,uint8_t *rx,unsigned &got){
+ int e=0;
+ for(unsigned ms=0;ms<50;++ms){
+  uint32_t op=rd(qup,0x18),status=rd(qup,0x404),err=rd(qup,0x1c);
+  cb_touch[17]=status;cb_touch[18]=err;cb_touch[19]=op;
   if((status&0x38000fc)||(err&0x7c)){e=(status&8)?-6:-7;break;}
   if(op&0x100)wr(qup,0x18,0x100);
-  if(nr && (op&0x200)){
-   wr(qup,0x18,0x200);
-   unsigned take=block?((op&0x2000)?rxBlock:0):rxFifo;if(take>nr-got)take=nr-got;
-   for(unsigned i=0;i<take;i+=4){uint32_t word=rd(qup,0x218);for(unsigned k=0;k<4 && i+k<take;++k)rx[got++]=(word>>(8*k))&255;}
-  }
-  if((!nr || got==nr) && (op&0x400) && !(status&0x100)){state(0);++cb_touch[1];return 0;}
+  if(nr && (op&0x200)){wr(qup,0x18,0x200);
+   if(got<nr){uint32_t w=rd(qup,0x218);rx[got++]=(uint8_t)w;if(got<nr)rx[got++]=(uint8_t)(w>>16);}}
+  if((!nr || got==nr) && (op&0x400) && !(status&0x100)){state(0);return 0;}
   IOSleep(1);
  }
- if(!e)e=-8;wr(qup,0xc,1);wire.page=256;++cb_touch[2];return e;
+ if(!e){e=-8;}
+ return e;
+}
+static int qupWrite(const uint8_t *tx,unsigned nt){
+ // addr + data halves; block mode only when they do not fit the OUT FIFO.
+ unsigned halves=nt+1;bool blk=halves>txFifo;int e;
+ if((e=qupPrepare(QUP_CFG_WRITE,QUP_IO_REPACK|(blk?QUP_IO_OUT_BLK:0),blk?halves:0,blk?0:halves,0,0)))return e;
+ for(unsigned h=0;h<halves;h+=2){
+  uint32_t low,high=0;
+  if(h==0)low=0x100u|0x40u;                       // START | slave address (write)
+  else{unsigned k=h-1;low=(h==halves-1?0x300u:0x200u)|tx[k];}
+  if(h+1<halves){unsigned k=h;high=(h+1==halves-1?0x300u:0x200u)|tx[k];}
+  wr(qup,0x110,low|(high<<16));
+ }
+ if((e=state(1)))return e;
+ unsigned got=0;return qupFinish(0,nullptr,got);
+}
+static int qupRead(uint8_t *rx,unsigned nr){
+ bool blk=nr>rxFifo;int e;
+ if((e=qupPrepare(QUP_CFG_READ,QUP_IO_REPACK|(blk?QUP_IO_IN_BLK:0),0,0,blk?nr:0,blk?0:nr)))return e;
+ wr(qup,0x110,(0x100u|0x41u)|((uint32_t)(0x400u|(nr==256?0:nr))<<16));  // START|addrR, REC len
+ if((e=state(1)))return e;
+ unsigned got=0;e=qupFinish(nr,rx,got);
+ if(!e && got!=nr)e=-8;
+ return e;
+}
+static int transfer(const uint8_t *tx,unsigned nt,uint8_t *rx,unsigned nr){
+ if(nt>16||nr>256)return -3;
+ int e=0;
+ if(nt)e=qupWrite(tx,nt);
+ if(!e && nr)e=qupRead(rx,nr);
+ if(!e){++cb_touch[1];return 0;}
+ wr(qup,0xc,1);wire.page=256;++cb_touch[2];return e;
 }
 static int wireTransfer(void*,const uint8_t *t,unsigned nt,uint8_t *p,unsigned np){return transfer(t,nt,p,np);}
 static int readRmi(void*,uint16_t a,uint8_t *p,unsigned n){return cb_wire_read(wire,a,p,n);}
