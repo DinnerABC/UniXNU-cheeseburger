@@ -19,7 +19,7 @@
 | `sheng-aks` | 1 | `KeyStoreProbe.cpp` | AKS 兼容层 |
 | `sheng-aks-sls` | 3 | `KeyStoreProbe.cpp` | AKS 兼容层模式 |
 | `offline-key-events` | 1 | `KeyStoreProbe.cpp` | 离线按键事件 |
-| `sheng-log` | 1 | `NativeUfs.cpp`, `BootLog.c` | 持久日志窗口 |
+| `sheng-log` | 1 | `NativeUfs.cpp`, `BootLog.c` | 持久日志窗口（同时保留在启动参数里，离线门禁用它判定“可诊断”） |
 | `p20-observe` | 1 | `CompactObserver.c` | 进程/显示观察器 |
 | `p21-iokit-trace` | 1 | `IOKitMatchTrace.cpp` | IOKit 匹配追踪 |
 | `cheeseburger-upstream-userland` | 1 | `BootWatchdogPolicy.c` | 使用上游用户态（不做手机身份） |
