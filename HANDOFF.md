@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-touch（成功版 + S3320 复位修复）已启动一次
+
+- 在实机验证可进入桌面的 `fb-diag` 基础上同步触摸修复（`CheeseburgerTouch.cpp`：GPIO89 mux 0、输出电平写 IO bit 1，提交 `b42b68a`），其余源码、ADT（`775d411b…`）、启动参数（644 字节）与 `fb-diag` 逐字一致。
+- 候选 `out/p21/fb-touch`：内核编译 `6507872e…` → 预链接 → panic-screen 后 `96102686…`；payload `09c1e9b1…`；固件 `486db499…`；镜像 `out/p21/fb-touch/uefi/boot-p21-up1.img` `30345d4f…`（82,591,744 bytes）；pins 三项命中、门禁 PASS。目标 `3b25cc7c` 临时 boot 一次 Sending/Booting OKAY，未写分区；监视器已挂起。
+- 预期：若 `TOUCH error` 从 `-54` 变为 `-30`/`i2c>0`，说明复位修复在这条基线上同样生效、且停在触摸芯片未上电（pm8998 l6/l28 未在 iOS 运行时开启）。同时验证触摸改动不会改变显示分支（`[fb events]` 仍应出现 `s8 out=438/780` 与 `s4/s5` 成对）。
+- 观测窗口：成功轮首个 `sel 4` 在 t≈370 s，建议跑满 ≥600 s。
+- 已推送 `main` 至 `origin`（`35936aa..1d6cd0e` 之后的本轮提交以本地为准）。
+
 ## 2026-10-30：fb-diag 成功进入桌面（14 帧），事件环拿到首个成功样本
 
 - 回收 `out/p21/persistent-logs/20261030T055325Z/`：boot ID `0x50c0cf75`，79 轮，写入错误 0；`DISPLAY clients=57 frames=14`、`SWAP check=14 transfer=14 rc=0`、`EXITS 696`；用户报告**成功进入桌面**。
