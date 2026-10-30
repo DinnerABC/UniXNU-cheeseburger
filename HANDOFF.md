@@ -2,6 +2,19 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-diag3 结果——arbiter 计数来源错误；fb-diag4 已启动
+
+- fb-diag3 日志 `20261030T081640Z`（boot `0x515f1c03`，69 轮）：进桌面 `frames=6`；触摸仍 `-30`。
+- `PMIC core0=30000000 core1=3` + `PMIC map0 24b00 51400 51500 51600 800 900 27400 3c000`、`map8 20800 2400 2800 51e00 3100 6100 3400 3500`：
+  - arbiter 版本是 **v3**，`core1&0x7ff=3` 不是 APID 数量（之前据此只扫 3 条，才得出"表里没有 0x45"的错误结论）；
+  - 按 `entry>>8` 解码，前 16 项里 SID0 只有 `0x008(PON)/0x009/0x024/0x028/0x031/0x034/0x035/0x061`，**没有 0x045/0x05B**——说明 PM8998 的 regulator 页很可能不归 AP 这个 EE，而是 RPM 拥有，从 AP 侧写 PMIC LDO 这条路大概率不通。
+- `TOUCH4 pullup sda=0 scl=0 rst=0 int=0`：内部上拉也拉不高（线被钳低）；但该采样点在复位仍为 0 时，需要排除复位态的影响。
+- fb-diag4（提交 `89ce640`）修正两点并保留其他诊断：
+  1. arbiter 改为**扫到第一个 0 表项为止**（上限 512），日志 `PMIC entries=.. sid0=.. pages=.. core0=.. core1=..` + 两行 `PMIC sid0ppid ...`，并对其中 0x40–0x7f 的页读 VSET/enable（`PMIC page ppid=.. vset=.. en=..`）；
+  2. 把内部上拉实验**移到复位释放之后**（`rst=1`）再采样，排除复位态混淆。
+- 候选 `out/p21/fb-diag4`：内核 `0c0c8235…`、payload `6253a84b…`、固件 `42eb3d8c…`、镜像 `out/p21/fb-diag4/uefi/boot-p21-up1.img` `e8423e29…`（82,583,552 bytes）；pins 命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+- 若 sid0 列表仍无 regulator 页，则确认必须走 RPM 投票；若出现且 en=0，则可在 AP 侧写使能位。
+
 ## 2026-10-30：fb-diag2 结果——arbiter 解码本身是错的；fb-diag3 原始 dump + 上拉实验已启动
 
 - fb-diag2 日志 `20261030T075820Z`（boot `0x47fe5973`，80 轮）：进桌面 `frames=8`；触摸仍 `error=-30 i2c=0/1`。
