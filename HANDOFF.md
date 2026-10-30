@@ -2,6 +2,19 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：PDT 一直是对的；真正卡点是 F12 函数号写成了十进制 12
+
+- fb-qup3 日志 `20261030T161738Z`（boot `0x500700cb`）的寄存器图（`TOUCH17/18`，单字节连续读）：
+  - `0xDD..0xE2` = `47 00 15 06 01 12` → **F12**（query 0x47 / control 0x15 / data 0x06 / fn=0x12），与整机 dmesg 的 `F12_2D_QUERY_BASE=47 … DATA_BASE=6` 逐项一致；
+  - `0xE3..0xE8` = `2a 25 0e 04 01 01` → **F01**（fn=0x01）；
+  - `0xE9..0xEE` = `26 00 0a 00 21 34` → **F34 flash**（query 0x26 / ctrl 0x0a / data 0x00），与 dmesg 的 `F34_FLASH_*` 一致。
+  - `0xFF` 连续三次回读都是 0，分体事务（地址写带 STOP + 无地址指针读）与合并事务返回相同 6 字节 → 寻址、锁存、字节序都正常。
+- **更正上一轮判断**：之前说“6 字节反序”是我把打包值按高位优先解码的误判。`packBytes` 是低位在前，`0x120106150047` 就是 `47 00 15 06 01 12`；PDT 从 v2 重写后一直读得对，不需要任何反转。
+- **真正阻塞**：`SynapticsRMI4.h` 的 PDT 扫描写成 `if(p[5]==12)r.f12=f;`，十进制 12 = 0x0C，永远匹配不到 fn=0x12，于是 `f12.query=0`，`cb_discover` 直接返回 `-32`。已改为 `p[5]==0x12`（F01 同时写 0x01），提交 `9b467b0`。
+- 候选镜像 `c9739407…`（内核 `e111ae32…`、payload `a9d2f14e…`、固件 `68ff6168…`），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区。
+- 本轮耗时（本机构建树）：增量内核 34 s、预链接 8 s、补丁 5 s、payload 10 s、VM 固件 70 s、打包+门禁 15 s ≈ **2.5 分钟**。
+- 判读：下轮日志 `TOUCH` 行应从 `stage=2/error=-32` 前进到 `stage=3` 且 `F01/F12` 非零；若停在 `-33/-34`，看 F01 identity/status；停在 `-35/-36` 看 F12 query 与三个寄存器描述符；进入 `stage=4` 后看 `frames/publish/HID`。
+
 ## 2026-10-31：构建树搬到本机，单轮构建从约 28 分钟降到约 4 分钟
 
 - **位置**：构建树在本机 `/Users/dinnerabc/unixnu-p21/fb-qup3/source-tree`（1.3 GB，构建后约 2 GB；本机剩余约 79 GB）。NAS 的 `out/p21/fb-qup3/source-tree` 保留一份源码副本，候选的 `kernel/ payload/ uefi/ config/ logs/` 仍全部在 NAS，证据链不变。
