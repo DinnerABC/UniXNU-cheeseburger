@@ -2,6 +2,13 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：触摸在实机上可用（用户确认）
+
+- 修复的最后一环（提交 `4ca8bc1`）：HID 探测阶段合并键盘设备先调用 `native_touch_set_sink()`，此时触摸驱动尚未分配 `sinkLock`，请求被丢弃；随后 worker 又创建了没有事件驱动的独立 digitizer 设备，导致 `TOUCH19 nodrv` 每次 +1 而 `HID=0`。现在把早到的 sink 请求挂起，`cheeseburger_touch_probe()` 分配锁后补装（`pend=1`）。
+- 镜像 `out/p21/fb-qup3/uefi/boot-p21-up1.img` `5ce1d727…`（内核 `3dfbe6bd…`、payload `68e2be27…`、固件 `f9c4cccd…`），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区；用户确认**触摸可用**。
+- 触摸通路全貌：GPIO87/88 → `qcom,i2c-qup-v2.2.1`（0x207 + 0x408=1 + 0x81/0x82/0x83/0x87 字节 tag）→ F01(0x2a)/F12(0x47) 发现 → 10 指 80 字节包经 IN block 握手读取 → `cb_decode` → HID 合并设备（`sheng-touch-hid=1`）digitizer 报告。轮询 25 ms；GPIO125 中断仍未启用。
+- 待补：回到 Recovery 后读取本轮日志，把 `TOUCH19 pend/sink/send/nodrv/rep` 与 `HID` 的最终数值写进 HANDOFF；其余未验证项（多点手势、边缘手势、休眠唤醒后恢复）不在本轮结论内。
+
 ## 2026-10-31：触摸 HID 的 sink 早到问题（时序）已修
 
 - 日志 `20261030T171838Z`（用户已触摸、桌面正常 14 帧）：`TOUCH19 sink=503 send=503 nodrv=503 rep=0` —— sink 已安装，publish 每次都会调用 `touchSend`，但**每次**都因为 `hasEventDriverCached()` 为空而早退。

@@ -2,7 +2,7 @@
 
 Device repository for the OnePlus 5 (cheeseburger, Qualcomm MSM8998 / Snapdragon 835), built on [UniXNU](https://github.com/UniXNU/UniXNU). The `main` branch targets iPadOS 17.7.11 (21H461) and XNU 10063.141.1. The experimental iOS 16.7.16 port is retained on `ios-16.7.16`.
 
-The device owner has confirmed the original iPadOS interface on hardware. A later run recorded eight CPUs online, 2 GiB managed memory and display transfers. Touch and phone-style UI remain in development.
+The device owner has confirmed the original iPadOS interface on hardware, and touch input now works on the panel: the Synaptics S3320 is driven over BLSP1 QUP5 with the I2C v2.2.1 programming, F01/F12 are discovered, 80-byte multi-touch packets are decoded and published through the HID keyboard+digitizer device. A later run recorded eight CPUs online, 2 GiB managed memory and display transfers. The phone-style UI and GPU acceleration remain in development; the first frame is intermittent (a known pre-first-frame stall that varies between boots of the same image).
 
 - [UniXNU documentation](https://unixnu.com)
 - [Porting guide](https://unixnu.com/porting/)
@@ -18,9 +18,9 @@ The device owner has confirmed the original iPadOS interface on hardware. A late
 | CPU / memory | Partial | Eight CPUs online and 2 GiB managed memory recorded; long-term stability remains under test |
 | Storage / root | Partial | Native UFS reads and owner-authorized OS / SystemOS root mounting |
 | Data | Partial | Writable APFS RAM Data from a seed; persistent user Data is not established |
-| Display | Partial | Original iPadOS UI appeared on hardware using CPU framebuffer presentation |
+| Display | Partial | Original iPadOS UI appears on hardware using CPU framebuffer presentation; the first frame is intermittent across boots of the same image |
 | Phone-style UI | Not working | Phone identity with an iPadOS root reached a system screen but still showed a tablet layout |
-| Touch | Not working | Synaptics S3320 / QUP5 driver integrated; reset input remains low before I²C initialization |
+| Touch | Working | Synaptics S3320 over BLSP1 QUP5 (`qcom,i2c-qup-v2.2.1`): v2 byte tags, repeated-start register reads, F01/F12 discovery, 10-finger 80-byte F12 packets read through the IN block handshake, HID digitizer on the combined keyboard+digitizer device, 25 ms polling (attention IRQ not enabled). Confirmed by the device owner |
 | Buttons | Partial | Power and volume adapter, with a volume-key Home chord; full physical interaction is not qualified |
 | GPU / Metal | Not working | No qualified Adreno 540 acceleration |
 | KeyStore | Partial | Development compatibility; no SEP-backed security claim |
