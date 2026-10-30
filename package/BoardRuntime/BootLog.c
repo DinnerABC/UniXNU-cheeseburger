@@ -231,7 +231,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    at=put(out,at,cap,usb,sizeof usb);
   }
  }
- if (&cb_disp[0] && cb_disp[123]) {
+ if (&cb_disp[0] && (cb_disp[124] || cb_disp[125])) {
   char disp[240];
   snprintf(disp,sizeof disp,"DISP layout: 0 mdss_hw,1 mdp_hw,2-6 ctl top,7-11 ctl flush,12-16 ctl op,17-21 ctl start,22-27 lm out_size,28-33 lm blend0,34-45 pp tear/sync/height,46-51 intf,52-75 pipes addr/stride/fmt,76-99 pipes xy/out/opmode,100-102 dsi0,120-122 gop");
   at=put(out,at,cap,disp,sizeof disp);
@@ -243,7 +243,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    }
    at=put(out,at,cap,disp,sizeof disp);
   }
-  snprintf(disp,sizeof disp,"DISP gop=%llx stride=%llx w/h=%llx",cb_disp[120],(cb_disp[121]>>32)&0xffffffff,cb_disp[122]);at=put(out,at,cap,disp,sizeof disp);
+  snprintf(disp,sizeof disp,"DISP gop=%llx stride=%llx w/h=%llx stage=%llu call=%llu",cb_disp[120],(cb_disp[121]>>32)&0xffffffff,cb_disp[122],cb_disp[124],cb_disp[125]);at=put(out,at,cap,disp,sizeof disp);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];

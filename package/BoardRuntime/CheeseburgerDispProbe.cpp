@@ -38,41 +38,50 @@ static const unsigned dmaBase[2]={0x24000,0x26000};
 static const unsigned lmBase[6]={0x44000,0x45000,0x46000,0x47000,0x48000,0x49000};
 static const unsigned ppBase[4]={0x70000,0x70800,0x71000,0x71800};
 static void worker(void*,wait_result_t){
+ cb_disp[124]=1;
  unsigned delay=60;PE_parse_boot_argn("cheeseburger-disp-probe",&delay,sizeof delay);
  if(delay>600)delay=600;if(delay<1)delay=1;
  for(unsigned i=0;i<delay;++i)IOSleep(1000);
- W md;if(!mapw(md,0xc900000,0x100000)){cb_disp[123]=0xffffffff;return;}
+ cb_disp[124]=2;
+ W md;if(!mapw(md,0xc900000,0x100000)){cb_disp[123]=0xffffffff;cb_disp[124]=3;return;}
+ cb_disp[124]=4;
  unsigned n=0;
  cb_disp[n++]=rd(md,0x0);                       // MDSS top HW version
  cb_disp[n++]=rd(md,0x1000);                    // MDP HW version at MDP base+0
+ cb_disp[124]=5;
  for(unsigned i=0;i<5;++i)cb_disp[n++]=rd(md,0x1000+ctlBase[i]+0x00);   // CTL TOP
  for(unsigned i=0;i<5;++i)cb_disp[n++]=rd(md,0x1000+ctlBase[i]+0x18);   // CTL FLUSH
  for(unsigned i=0;i<5;++i)cb_disp[n++]=rd(md,0x1000+ctlBase[i]+0x14);   // CTL OP
  for(unsigned i=0;i<5;++i)cb_disp[n++]=rd(md,0x1000+ctlBase[i]+0x1c);   // CTL START
+ cb_disp[124]=6;
  for(unsigned i=0;i<6;++i)cb_disp[n++]=rd(md,0x1000+lmBase[i]+0x04);    // LM OUT_SIZE
  for(unsigned i=0;i<6;++i)cb_disp[n++]=rd(md,0x1000+lmBase[i]+0x00);    // LM blend0
  for(unsigned i=0;i<4;++i){cb_disp[n++]=rd(md,0x1000+ppBase[i]+0x00);cb_disp[n++]=rd(md,0x1000+ppBase[i]+0x04);cb_disp[n++]=rd(md,0x1000+ppBase[i]+0x08);}
+ cb_disp[124]=7;
  cb_disp[n++]=rd(md,0x1000+0x6a000);cb_disp[n++]=rd(md,0x1000+0x6a004);   // INTF eDP
  cb_disp[n++]=rd(md,0x1000+0x6a800);cb_disp[n++]=rd(md,0x1000+0x6a804);   // INTF DSI0
  cb_disp[n++]=rd(md,0x1000+0x6b000);cb_disp[n++]=rd(md,0x1000+0x6b004);   // INTF DSI1
  // Pipes: address/stride/format/xy/out_xy/op_mode for VIG0-3, RGB0-1, DMA0-1.
+ cb_disp[124]=8;
  const unsigned pipes[8]={vigBase[0],vigBase[1],vigBase[2],vigBase[3],rgbBase[0],rgbBase[1],dmaBase[0],dmaBase[1]};
  for(unsigned p=0;p<8;++p){unsigned b=0x1000+pipes[p];
   cb_disp[n++]=rd(md,b+0x14);cb_disp[n++]=rd(md,b+0x24);cb_disp[n++]=rd(md,b+0x30);}
  for(unsigned p=0;p<8;++p){unsigned b=0x1000+pipes[p];
   cb_disp[n++]=rd(md,b+0x08);cb_disp[n++]=rd(md,b+0x10);cb_disp[n++]=rd(md,b+0x200);}
+ cb_disp[124]=9;
  // DSI0 controller state (video vs command mode, clock control).
  cb_disp[n++]=rd(md,0xc994000);cb_disp[n++]=rd(md,0xc994004);cb_disp[n++]=rd(md,0xc994008);
  PE_Video video={};if(PE_current_console(&video))video.v_baseAddr=0;
  cb_disp[120]=video.v_baseAddr;cb_disp[121]=(uint64_t)video.v_rowBytes<<32|video.v_width;
  cb_disp[122]=video.v_height;
- cb_disp[123]=1;
+ cb_disp[123]=1;cb_disp[124]=10;
 }
 }
 extern "C" void cheeseburger_disp_probe(void){
  unsigned delay=60;
  if(!PE_parse_boot_argn("cheeseburger-disp-probe",&delay,sizeof delay)||!delay)return;
+ cb_disp[125]=1;
  thread_t t=nullptr;
- if(kernel_thread_start(worker,nullptr,&t)==KERN_SUCCESS)thread_deallocate(t);
+ if(kernel_thread_start(worker,nullptr,&t)==KERN_SUCCESS){thread_deallocate(t);cb_disp[125]=2;}
  else cb_disp[123]=0xfffffffe;
 }
