@@ -181,7 +181,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(touch,sizeof touch,"TOUCH lines sda=%llu scl=%llu rst=%llu int=%llu",cb_touch[27]&1,(cb_touch[27]>>1)&1,(cb_touch[27]>>2)&1,(cb_touch[27]>>3)&1);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH2 post gcc=%llx rcg=%llx mode=%llx status=%llx op=%llx pins=%llx",
     cb_touch_extra[0],cb_touch_extra[1],cb_touch_extra[2],cb_touch_extra[3],cb_touch_extra[4],cb_touch_extra[5]);at=put(out,at,cap,touch,sizeof touch);
-  snprintf(touch,sizeof touch,"TOUCH3 pre qup0=%llx qupver=%llx gcc52004=%llx",
+  snprintf(touch,sizeof touch,"TOUCH3 pre qup0state=%llx qupver=%llx gcc52004=%llx",
     cb_touch_extra[6],cb_touch_extra[7],cb_touch_extra[21]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH4 pullup sda=%llu scl=%llu rst=%llu int=%llu after=%llx",
     cb_touch_extra[12]&1,(cb_touch_extra[12]>>1)&1,(cb_touch_extra[12]>>2)&1,(cb_touch_extra[12]>>3)&1,cb_touch_extra[13]);at=put(out,at,cap,touch,sizeof touch);
@@ -191,6 +191,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     cb_touch_extra[16],cb_touch_extra[17],cb_touch_extra[18],cb_touch_extra[19]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH7 post qup0=%llx qup400=%llx qup408=%llx qupc=%llx",
     cb_touch_extra[8],cb_touch_extra[9],cb_touch_extra[10],cb_touch_extra[11]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH8 drive=%llx bc=%llx",cb_touch_extra[22],cb_touch_extra[23]);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];

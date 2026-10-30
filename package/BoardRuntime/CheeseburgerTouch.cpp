@@ -130,6 +130,20 @@ static int hardware(){
   wr(pins[0],0,a0);wr(pins[1],0,a1);
   cb_touch_extra[13]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1);
  }
+ // Drive test: push both pads high as GPIO outputs for about a millisecond.
+ // Reading 0 back means something outside the SoC holds the bus low; reading 1
+ // means the pads are free and the earlier low level came from our own
+ // controller configuration. The pads are restored immediately.
+ {
+  unsigned d0=rd(pins[0],0),d1=rd(pins[1],0);
+  wr(pins[0],0,(d0&~(0x3fu|(7u<<6)))|(3u<<6)|0x200u);
+  wr(pins[1],0,(d1&~(0x3fu|(7u<<6)))|(3u<<6)|0x200u);
+  wr(pins[0],4,2);wr(pins[1],4,2);IOSleep(1);
+  cb_touch_extra[22]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1);
+  wr(pins[0],0,d0);wr(pins[1],0,d1);
+  wr(pins[0],4,0);wr(pins[1],4,0);
+ }
+ cb_touch_extra[23]=rd(gcc,0x21000);   // GCC_BLSP1_QUP5_BCR (block reset)
  cb_touch_extra[0]=rd(gcc,0x21008);cb_touch_extra[1]=rd(gcc,0x21024);
  cb_touch_extra[16]=rd(pins[0],0);cb_touch_extra[17]=rd(pins[1],0);cb_touch_extra[18]=rd(pins[2],0);cb_touch_extra[19]=rd(pins[3],0);
  if(!map(qup,0xc179000,0x1000))return -55;
@@ -137,7 +151,7 @@ static int hardware(){
  if(ob>2||ib>2)return -56;txFifo=sizes[ob]*(2<<((mode>>2)&7));rxBlock=sizes[ib];rxFifo=rxBlock*(2<<((mode>>7)&7));
  cb_touch_extra[2]=mode;
  clockCtl=0x300|93;
- cb_touch_extra[6]=rd(qup,0x0);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
+ cb_touch_extra[6]=rd(qup,0x0)|((uint64_t)rd(qup,0x4)<<32);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
  return 0; // 19.2MHz / (2*(93+3)) = 100kHz.
 }
 static void worker(void*,wait_result_t){
