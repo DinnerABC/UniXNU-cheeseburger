@@ -51,13 +51,30 @@ static void keysThread(void *,wait_result_t) {
    for(unsigned i=0;i<512;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(!entry)continue;
     for(unsigned k=0;k<3;++k)if(apids[k]<0 && ((entry>>8)&0xfff)==ppids[k])apids[k]=i;
    }
-   // Raw read-only arbiter dump. The touch-rail page scan is kept but its
-   // decode is known to be wrong for this version (apids read as 3), so the raw
-   // core registers and map words are logged for an offline decode first.
+   // Read-only arbiter walk. Earlier runs limited the scan to core[1]&0x7ff,
+   // which reads 3 on this v3 arbiter and hid the real table; walk until the
+   // first zero entry instead (bounded), collect the EE-visible SID0 pages and
+   // read VSET/enable for any regulator page that is actually mapped.
    {
     for(unsigned i=0;i<8;++i)cb_pmic_dump[i]=core.va[i];
-    for(unsigned i=0;i<16;++i)cb_pmic_dump[8+i]=core.va[(0x800+4*i)/4];
-    cb_rails[0]=1;
+    unsigned total=0,nown=0;
+    for(unsigned i=0;i<512;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(!entry)break;++total;
+      if(nown<12){uint32_t ppid=(entry>>8)&0xfff;if(ppid<0x100)cb_pmic_dump[8+nown++]=ppid;}
+    }
+    cb_rails[0]=1;cb_rails[1]=total;cb_rails[2]=nown;
+    // Only pages this EE can see can be touched through the arbiter; if the
+    // regulator pages are absent here they belong to the RPM and need a vote.
+    unsigned pages=0;
+    for(unsigned i=4;i<16 && pages<8;++i){uint32_t ppid=(uint32_t)cb_pmic_dump[i];if(ppid<0x40||ppid>0x7f)continue;
+      int apid=-1;
+      for(unsigned j=0;j<total;++j){uint32_t e=core.va[(0x800+4*j)/4];if(((e>>8)&0xfff)==ppid){apid=(int)j;break;}}
+      if(apid<0)continue;
+      uint8_t vset=0,en=0;Window ch;
+      if(!mapWindow(ch,cb_observer_address((unsigned)apid),0x1000))continue;
+      readStatus(ch,0x40,vset);readStatus(ch,0x46,en);unmap(ch);
+      cb_pmic_dump[16+pages]=(uint64_t)ppid|((uint64_t)vset<<12)|((uint64_t)en<<20);++pages;
+    }
+    cb_rails[3]=pages;
    }
    ready=true;
    for(unsigned k=0;k<3;++k){cb_keys[8+k]=(uint64_t)(int64_t)apids[k];

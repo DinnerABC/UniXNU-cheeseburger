@@ -187,11 +187,15 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[160];
-  for(unsigned i=0;i<8;i+=4){snprintf(rails,sizeof rails,"PMIC core%u=%llx core%u=%llx core%u=%llx core%u=%llx",
-      i,cb_pmic_dump[i],i+1,cb_pmic_dump[i+1],i+2,cb_pmic_dump[i+2],i+3,cb_pmic_dump[i+3]);at=put(out,at,cap,rails,sizeof rails);}
-  for(unsigned i=8;i<24;i+=8){snprintf(rails,sizeof rails,"PMIC map%u %llx %llx %llx %llx %llx %llx %llx %llx",
-      i-8,cb_pmic_dump[i],cb_pmic_dump[i+1],cb_pmic_dump[i+2],cb_pmic_dump[i+3],cb_pmic_dump[i+4],cb_pmic_dump[i+5],cb_pmic_dump[i+6],cb_pmic_dump[i+7]);
-      at=put(out,at,cap,rails,sizeof rails);}
+  snprintf(rails,sizeof rails,"PMIC entries=%llu sid0=%llu pages=%llu core0=%llx core1=%llx",
+    cb_rails[1],cb_rails[2],cb_rails[3],cb_pmic_dump[0],cb_pmic_dump[1]);
+  at=put(out,at,cap,rails,sizeof rails);
+  for(unsigned i=8;i<20;i+=6)snprintf(rails,sizeof rails,"PMIC sid0ppid %llx %llx %llx %llx %llx %llx",
+      cb_pmic_dump[i],cb_pmic_dump[i+1],cb_pmic_dump[i+2],cb_pmic_dump[i+3],cb_pmic_dump[i+4],cb_pmic_dump[i+5]),
+    at=put(out,at,cap,rails,sizeof rails);
+  for(unsigned i=16;i<24;++i){uint64_t v=cb_pmic_dump[i];if(!v)continue;
+    snprintf(rails,sizeof rails,"PMIC page ppid=%llx vset=%02llx en=%02llx",v&0xfffull,(v>>12)&0xffull,(v>>20)&0xffull);
+    at=put(out,at,cap,rails,sizeof rails);}
  }
  at=put(out,at,cap,"[display-clients-live]",32);
  char clients[6][91],aks[2][91];p21_client_rows(clients);p21_aks_rows(aks);
