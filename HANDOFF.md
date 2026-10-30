@@ -2,6 +2,20 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：双帧取样定因——QUP 传输本身不符合上游编程
+
+- fb-frame 结果（`20261030T112102Z`，boot `0x4d540669`）：`TOUCH9 plain=fffffff9 old=a002600000000`
+  - 纯地址帧：返回码 **-7**（QUP 控制器错误），数据全 0；
+  - 旧帧：返回码 0，但数据 `00 26 0A 00` 不是合法 PDT 头。
+- 对照 `out/p22/reference/drivers_i2c_busses_i2c-qup.c`（设备原厂驱动）逐项核对，发现我们的 QUP 编程有多处偏差，这才是 RMI 读不出来的根因：
+  1. `QUP_CONFIG` 的 `I2C_N_VAL` 应为 **15**（`I2C_MINI_CORE|15 = 0x20F`，只写时再 `|0x80`）；我们写的是 `0x207`；
+  2. OUT/IN FIFO 的每个 32 位字必须带 **tag**：低半字 `START(0x100)|addr8`，数据 `DATA(0x200)`/`STOP(0x300)`，读请求 `REC(0x400)|len`，第二个字节在 bit16 起；我们的代码直接往 FIFO 写裸数据，没有 tag、也没有从机地址；
+  3. 读是**独立的 QUP 事务**：OUT FIFO 写一个字 `(START|addrR) | ((REC|len)<<16)`，`MX_READ_CNT(0x208)=len`；我们从未这样编程；
+  4. `QUP_IO_MODE(0x8)` 应为 `REPACK_EN(0xC000)` 加必要的 `OUTPUT_BLK_MODE(1<<10)`/`INPUT_BLK_MODE(1<<12)`；我们只写 `0xC000|0x1000`；
+  5. 状态时序：RESET→RUN→(写 clockCtl)→PAUSE→(写 FIFO tags)→RUN→等待完成；我们的顺序接近但 FIFO 内容错误。
+  - 结论：之前所谓的"21 次 ACK 成功"是没有真正寻址的完成事件，不能当作总线可用。
+- 下一步（新候选）：按上述 5 点重写 `CheeseburgerTouch.cpp` 的 `transfer()` 为上游 write_op/read_op 两个事务（含 tag 编码、按 FIFO 大小分块、IN FIFO 每字读 2 字节），然后 `cb_wire_page`/`cb_wire_read`/`writeRmi` 用"写地址（独立事务）+ 读（独立事务）"的 RMI 标准访问。完成后仍用 `TOUCH9` 和 `TOUCH` 行验证。
+
 ## 2026-10-30：标准 RMI 帧反而更早失败；双帧取样探针已启动
 
 - fb-rmi 结果（`20261030T110354Z`，boot `0x4e5a3ae7`）：NPA 投票仍成功（捕获块同前），SDA/SCL 仍为 1/1，但触摸在第一次 RMI 读就失败：`error=-30 i2c=0/1`、`status=c960000`（旧帧时是 `1321c4`，且能完成 21 次 ACK）。说明"标准地址帧"在我们这套 QUP 传输上没有正确发出，而旧的 `0x81/0x82/0x87` 帧虽能 ACK 但返回数据不可用。
