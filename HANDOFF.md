@@ -2,6 +2,17 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：NPA/DAL 逆向进展 + DisplayPwr 实验
+
+- 更正上一轮的 GUID 归属（重新核对 `/tmp` 反汇编与二进制）：
+  - `79D6C870-725E-489E-A0A1-27E7A5D0CB35` 是 **NpaDxe 安装的协议**（PmicDxe 定位它、变量名叫 NpaProtocol；表在 NpaDxe `.data:0x180F0`，`+0x90 = 0x1864` 是进入 `0x48f0` 的 thunk，参数按对象而非字符串解释——说明它先要资源对象，再建客户端）；
+  - `AE37B942-457F-4C91-A196-D9669FD347A3` 由 **DALSys 安装**（`.data:0x1B050`，接口表 `0x1B090`）；
+  - `276732AB-BB39-4DCE-B5D9-2746CDD6D518` 也是 NpaDxe 安装（接口表 `0x182A0`）。
+- **DALSys 内含现成的电源节点**（`.efi` 字符串）：`/pmic/device/ldo/A/ldo6/vec`、`/pmic/device/ldo/A/ldo28/vec`、`/node/pmic/client/disp_prim_touch`、`/pmic/client/touch_screen`——即固件 DAL 配置里已经知道这两路 LDO 和触摸供电路径；缺的是从我们的 DXE 调用 DAL 的方式。
+- 已找到并采用**有本地头文件依据**的接口：`EFI_DISPLAY_POWER_PROTOCOL`（GUID `F352021D-9593-4432-BF04-67B9F3B76008`，结构 `{Revision, SetDisplayPowerState, GetDisplayPowerState}`，来自 `Silicon/Qualcomm/QcomPkg/Include/Protocol/EFIDisplayPwr.h`）。本轮固件在启动时读取显示电源状态，若存在且不为 On 就请求 On，让其面板上电路径（含 `disp_prim_touch` 客户端）执行；结果写入日志窗口第 8161 块（`UP1NPA2 ... disp=.. get=.. set=..`）。
+- 分支提交：`717edf5`（NPA 可用）、`57edcfd`（DisplayPwr 探测）。镜像 `out/p21/fb-diag8/uefi/boot-p21-up1.img` `e6bc9806…`；固件 `7b9d2042…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：若回收块里 `disp` 从非 2 变为请求 On 且 XNU 侧 `TOUCH lines sda=1 scl=1`，说明面板上电路径确实包含触摸轨；若仍为 0，则下一步按 NpaDxe/DAL 的对象式 API 继续（需要先找到资源对象获取函数，再 issue request）。
+
 ## 2026-10-30：NPA 协议运行时可用（捕获块读取）
 
 - `20261030T102044Z` 的 `window.bin` 第 8161 块（UEFI 写入的保留块）内容：
