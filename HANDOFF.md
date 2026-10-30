@@ -2,6 +2,18 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-touch 进桌面正常，触摸停在 I2C NACK（供电）
+
+- 回收 `out/p21/persistent-logs/20261030T061244Z/`：boot ID `0x4feb4fc9`，86 轮，写入错误 0；`DISPLAY frames=14`、`SWAP check=14 transfer=14 rc=0`，用户确认进入桌面；`[fb events]` 与 fb-diag 相同（`s8 out2=438/780` → t≈377 s `s4/s5` 成对），说明触摸改动没有改变显示分支。
+- 触摸进度（已确认）：`reset=1`（GPIO89 回读高，复位已释放）、`hw=0x20070000`（QUP v2）、`clock=0`（GCC XO 配置检查通过）、`gpio=0/e2`、`status=0x1321c4`（含 bit8，NACK）、`op=0x90`；`error=-30 i2c=0/1`——第一次 I2C 传输被从机 NACK。
+- 判读：地址 0x20 在 Recovery 2.4 s 能正常探测（`out/p21/phone-ui/evidence/recovery-touch-dmesg.txt`，固件 ID `0xeb101035`），所以不是地址/接线/复位问题，最可能是**触摸供电未开启**。
+- 供电事实（设备自身 FDT）：`pm8998_l6`、`pm8998_l28` 是 **RPM-SMD regulator**（`qcom,rpm-smd`，`resource-name=ldoa`，`resource-id=6 / 0x1c`，1.808 V / 3.008 V，`qcom,set=3`），不是可直接用 SPMI 打开的 LDO 节点；当前 fastboot → UEFI → XNU 路径没有任何 RPM 投票。
+- 下一步（三选一，均需新候选与门禁）：
+  1. **UEFI 侧**在 ExitBootServices 前用固件自带的 PmicDxe/SPMIDxe 打开 LDO6/LDO28（改动最小；本机固件含这两个 DXE）；
+  2. **XNU 侧**直接写 PM8998 LDO 寄存器（需要 PMIC4 寄存器表；RPM 可能覆盖，风险较高，不推荐先做）；
+  3. 实现 RPM-SMD 请求（最正统，工作量最大）。
+- 验收：`TOUCH i2c` 计数增加且 `error` 不再是 `-30`、F01/F12 出现，随后 HID 安装；触摸方向仍待实机核对。
+
 ## 2026-10-30：fb-touch（成功版 + S3320 复位修复）已启动一次
 
 - 在实机验证可进入桌面的 `fb-diag` 基础上同步触摸修复（`CheeseburgerTouch.cpp`：GPIO89 mux 0、输出电平写 IO bit 1，提交 `b42b68a`），其余源码、ADT（`775d411b…`）、启动参数（644 字节）与 `fb-diag` 逐字一致。
