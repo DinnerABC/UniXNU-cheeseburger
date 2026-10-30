@@ -11,7 +11,7 @@ extern volatile uint32_t native_hid_input_command;
 volatile uint64_t cb_keys[13]; // stage,version,reads,failures,raw,mask,edges,sink-deliveries,APIDs x3,last status
 // Read-only touch-rail snapshot: stage, then apid/vset/enable for pm8998 l6 and
 // l28, then the per-rail read errors. Nothing here writes the PMIC.
-volatile uint64_t cb_rails[8];
+volatile uint64_t cb_rails[16];
 static void (*sink)(void *,uint32_t);
 static void *sinkContext;
 void native_buttons_set_sink(void (*fn)(void *,uint32_t),void *context) {
@@ -54,6 +54,11 @@ static void keysThread(void *,wait_result_t) {
    {
     const uint32_t railPpids[2]={0x045,0x05b};
     cb_rails[0]=1;
+    // Which PMIC4 peripheral pages this arbiter actually exposes in the 0x4x/0x5x
+    // regulator range: the two rail PPIDs above are only a guess until this list
+    // shows them.
+    {unsigned n=0;for(unsigned i=0;i<512 && n<8;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(!entry)continue;
+      uint32_t ppid=(entry>>8)&0xfff;if(ppid>=0x040 && ppid<=0x07f)cb_rails[8+n++]=ppid;}}
     for(unsigned r=0;r<2;++r){int apid=-1;
      for(unsigned i=0;i<512;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(entry && ((entry>>8)&0xfff)==railPpids[r]){apid=(int)i;break;}}
      cb_rails[1+r*3]=(uint64_t)(int64_t)apid;

@@ -89,6 +89,10 @@ static int hardware(){
  if((rd(gcc,0x21008)|rd(gcc,0x17004))&0x80000000)return -52;
  const unsigned gp[]={87,88,89,125};for(unsigned i=0;i<4;++i)if(!map(pins[i],0x3400000+0x900000+gp[i]*0x1000,0x1000))return -53;
  for(unsigned i=0;i<2;++i)wr(pins[i],0,(rd(pins[i],0)&~(0x3cu|0x200u))|(3u<<2));
+ // Read-only idle levels of the I2C pads: with the bus muxed but the controller
+ // still disabled they show whether the sensor's IO rail (and its pull-ups) is
+ // powered. bit0 SDA87, bit1 SCL88, bit2 reset89, bit3 attention125.
+ cb_touch[27]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1);
  // Captured FDT ts_reset_active: GPIO89, function gpio (mux 0), 8 mA, bias-pull-up.
  // msm8998 gpio89 has no i2c/blsp alternate: mux 3 would hand the pad to nothing.
  // pinctrl-msm reads the pad in IO bit 0 and drives it from bit 1, so the level
@@ -102,6 +106,7 @@ static int hardware(){
  if(!(cb_touch[14]&1)) { wr(pins[2],0,cfg89);return -58; }
  wr(pins[3],0,rd(pins[3],0)&~(0x3cu|0x200u));
  cb_touch[15]=rd(pins[3],0);cb_touch[16]=rd(pins[3],8);
+ cb_touch[27]|=((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
  if(!map(qup,0xc179000,0x1000))return -55;
  cb_touch[12]=rd(qup,0x30);unsigned mode=rd(qup,8),sizes[]={4,16,32};unsigned ob=mode&3,ib=(mode>>5)&3;
  if(ob>2||ib>2)return -56;txFifo=sizes[ob]*(2<<((mode>>2)&7));rxBlock=sizes[ib];rxFifo=rxBlock*(2<<((mode>>7)&7));

@@ -154,7 +154,7 @@ extern volatile uint32_t native_legacy_stage;
 extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
-extern volatile uint64_t cb_rails[8] __attribute__((weak_import));
+extern volatile uint64_t cb_rails[16] __attribute__((weak_import));
 extern volatile int native_legacy_unit_scale_status;
 extern volatile uint32_t native_legacy_unit_scale_calls,native_legacy_chosen_scale,native_legacy_chosen_rotation;
 extern volatile uint32_t armcpu_smp_running,armcpu_core_timer[8],armcpu_core_sgi[8],armcpu_smp_step[8],armcpu_smp_fail[8],armcpu_smp_mpidr[8];
@@ -175,12 +175,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(touch,sizeof touch,"TOUCH stage=%llu error=%lld i2c=%llu/%llu F01=%llx F12=%llx frames=%llu contacts=%llu publish=%llu HID=%u",cb_touch[0],(int64_t)cb_touch[5],cb_touch[1],cb_touch[2],cb_touch[3],cb_touch[4],cb_touch[24],cb_touch[6],cb_touch[7],native_touch_hid_reports);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH range=%llux%llu objects=%llu data=%llx/%llu irq=%llu polls=%llu mode=%llu raw=%llx mapped=%llx",cb_touch[8],cb_touch[9],cb_touch[20],cb_touch[21],cb_touch[22],cb_touch[10],cb_touch[11],cb_touch[23],cb_touch[25],cb_touch[26]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH hw=%llx clock=%llx reset=%llx gpio=%llx/%llx status=%llx errors=%llx op=%llx",cb_touch[12],cb_touch[13],cb_touch[14],cb_touch[15],cb_touch[16],cb_touch[17],cb_touch[18],cb_touch[19]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH lines sda=%llu scl=%llu rst=%llu int=%llu",cb_touch[27]&1,(cb_touch[27]>>1)&1,(cb_touch[27]>>2)&1,(cb_touch[27]>>3)&1);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[160];
   snprintf(rails,sizeof rails,"RAILS stage=%llu l6 apid=%lld vset=%02llx en=%02llx l28 apid=%lld vset=%02llx en=%02llx err=%llx",
     cb_rails[0],(long long)(int64_t)cb_rails[1],cb_rails[2],cb_rails[3],(long long)(int64_t)cb_rails[4],cb_rails[5],cb_rails[6],cb_rails[7]);
   at=put(out,at,cap,rails,sizeof rails);
+  char ppids[128];size_t pn=snprintf(ppids,sizeof ppids,"RAILS2 ppid4x5x=");
+  for(unsigned i=8;i<16 && cb_rails[i];++i)pn+=snprintf(ppids+pn,sizeof ppids-pn,"%s%llx",pn>16?"/":"",cb_rails[i]);
+  at=put(out,at,cap,ppids,sizeof ppids);
  }
  at=put(out,at,cap,"[display-clients-live]",32);
  char clients[6][91],aks[2][91];p21_client_rows(clients);p21_aks_rows(aks);
