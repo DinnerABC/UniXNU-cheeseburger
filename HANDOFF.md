@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：确认“USB 之后不进桌面”是间歇性早期卡死；启动参数内置化
+
+- 对照实验（同一镜像 `214ba057…` 连开两次）：第一次 `backboardd absent`、`EXITS total=50`、`clients=0 frames=0`；第二次（日志 `20261030T193108Z`）`clients=51 frames=14`、`EXITS total=612`、`backboardd p56 threads=16`、触摸 `sink/send/rep=287` 全部正常。结论：**不是 USB/探针改动引入的回归**，是该端口已知的间歇性早期用户态卡死（与首帧停顿不同一阶段）。
+- 参数串截断证据：`214ba057` 的 args 为 714 字节，尾部的 `cheeseburger-disp-probe` 未生效（日志无 `DISP` 行），而中段 `offline-legacy-gop=1` 生效。
+- 参数内置化（提交 `2818695`、`7cefac6`）：新增 `package/BoardRuntime/BoardBootArgs.cpp`/`.h`，`cb_board_arg()` 先读启动参数再落回编译期默认值；14 项只被本仓库读取的参数写死（触摸/按键/HID/AKS/日志/观察器等），官方框架与内核早期读取的参数仍留在 payload。说明见 `docs/P21_BAKED_BOOT_ARGS.md`。参数串 **714 → 440 字节**，探针参数移到串首。
+- 新镜像用于取 MDSS 数据：`bbb31127…`（内核 `e2d96f51…`、payload `527c57fa…`、固件 `a5c04ad2…`，args 440），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区；`cheeseburger-disp-probe=60`、`cheeseburger-usb-probe=0`。
+- 判读：下一轮日志应出现 `DISP layout` + `DISP1..DISP7` + `DISP gop=`，用其中 `PIPE_SRC0_ADDR` 与 `gop` 对比即可确认固件扫描用的是哪条 pipe/LM/CTL。
+
 ## 2026-10-31：CPU 渲染卡顿 → 改走 MDP5 直扫（零拷贝页翻转）
 
 - 现象与现有实现：`NativeLegacyDisplay` 每帧把 IOSurface 逐行 64 位存储拷进固件 GOP 缓冲（单缓冲），日志记录 143–285 ms/次；屏幕逐行刷新正是“边写边扫”的撕裂。上游 UniXNU 的 `NativeMobileDisplay` 也是同一套 GOP 拷贝，没有 MDP 支持，所以这部分要自己写。
