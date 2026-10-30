@@ -2,6 +2,19 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：根因更正——QUP5 是 v2.2.1，改用 v2 字节 tag 与重复起始读
+
+- fb-probe2 日志 `20261030T133244Z`（boot `0x4ff8d59c`，93 rounds）：`TOUCH12 ack=0,0 w=0 r=-8 b=0`、`TOUCH10 pdt=0/0/0`、`TOUCH13 status=c110000`、`TOUCH hw=20070000`。写事务"完成"但整条总线没有任何地址 ACK、读超时，和 v1 编程的预期不符。
+- **根因**：本机参考 DTS `out/p22/reference/arch_arm64_boot_dts_qcom_msm8998.dtsi` 中 `blsp1_i2c5` 的 compatible 是 `qcom,i2c-qup-v2.2.1`，同一份 `i2c-qup.c` 因此走 `qup_i2c_xfer_v2`，而不是上一轮照抄的 v1 路径：
+  - `QUP_CONFIG = I2C_MINI_CORE|I2C_N_VAL_V2 = 0x207`（不是 0x20F），只写时 `|0x80`；
+  - `QUP_I2C_MASTER_GEN(0x408)=1` 使能 v2 tag；缺这一步 tag 不会被解释；
+  - FIFO 字节流是 `0x81 addr`、`0x82`(无 STOP)/`0x83`(STOP) `+len`、`0x87`(读 STOP)`+len`，数据按 4 字节/字裸排；v1 的 16-bit tag 半字在这里完全无效；
+  - 寄存器读是**一次 transfer 的两条消息**：写地址（不 STOP）+ 读（STOP，重复起始），与 `rmi_i2c.c` 一致；上一轮拆成两次独立事务。
+- 重写（提交 `925cc56`、`13b26cf`）：复位/状态机按参考实现（RESET→配置→RUN→写 clock_ctl→PAUSE→写 FIFO→RUN→等完成），reset 态读 IO_MODE 计算 FIFO/块大小，大读用 `IN_BLOCK_READ_REQ` 块握手，RX 首 2 字节是收到的 tag 需丢弃，第二个子传输的计数字段带 `QUP_I2C_MX_CONFIG_DURING_RUN(BIT31)`，结束前等待 `BUS_ACTIVE` 清零。诊断行同步为 `TOUCH12 … page=`、`TOUCH13 st/op/err/status`、`TOUCH14 fifo/blk/pre/pdt/cnt`。
+- 构建链注意：候选树的 `tree/kits/cheeseburger` 是指向上一个候选 `package` 的绝对软链，复制候选后必须重指；预链接/门禁脚本需要 `python3.13`（`tomllib`）；固件复用 guest overlay `unixnu-up1-fb-touch`，pin 扫描显示 kernel/payload/ADT 三个哈希都进入 `FVMAIN.Fv` 与 `P9Probe.efi`/`DarwinBoot.efi`。
+- 候选 `out/p21/fb-qup3`：内核 `fbdbb96043e451b2…`、payload `e6fa821a704ab466…`、固件 `1668d94d4249c8e9…`、镜像 `out/p21/fb-qup3/uefi/boot-p21-up1.img` `1c054d5e19a21dcd…`；pins 命中、门禁 PASS；设备 `3b25cc7c` 临时 boot 一次 Sending/Booting OKAY，未写分区，`out/p21/fb-qup3/boot-once.log`；监视器 `scripts/unattended/monitor.py --timeout 3600` 已启动等待回收。
+- 判读：`TOUCH12 ack` 中地址 0x20（从 0x08 起第 24 位，即 `m0` 的 `0x1000000`）应置位；`TOUCH10 pdt` 应出现 `fn=01`/`fn=12` 的合法条目；`TOUCH` 行 `i2c` 成功计数增长、`F01/F12` 非零；若 ACK 正常但 PDT 仍全 0，下一步查页选择与读块握手（`TOUCH14` 的 `fifo/blk` 与 `cnt`）。
+
 ## 2026-10-30：三轮审计发现探针根本错误（时钟未设），已修正并重测
 
 - fb-probe 结果（`20261030T130947Z`，boot `0x50f62b74`）：`TOUCH12 ack=0,0 w=-6 r=-6`、`TOUCH10/11` 全 0、`i2c=0/12`。
