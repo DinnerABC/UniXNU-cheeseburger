@@ -2,6 +2,19 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：QUP 传输已按上游重写（tag 化写 + 独立读事务），fb-qup 已启动
+
+- 依据上一轮的 5 点差异（提交 `6feceba`），把 `CheeseburgerTouch.cpp` 的 I2C 层重写为上游 `i2c-qup.c` 的 v1 编程：
+  - `QUP_CONFIG`：写 `0x28F`（`I2C_MINI_CORE|15|NO_INPUT`），读 `0x20F`；
+  - `QUP_IO_MODE 0x8`：`REPACK_EN(0xC000)`，块模式才加 `OUTPUT_BLK_MODE(1<<10)` / `INPUT_BLK_MODE(1<<12)`；
+  - OUT FIFO 每 32 位字装两个半字，半字 = `(tag<<8)|byte`：START `0x100`（含从机地址 0x40/0x41）、DATA `0x200`、STOP `0x300`、REC `0x400`；
+  - 写事务：START|addrW、数据/STOP tag，`MX_WRITE_CNT=len+1`；
+  - 读事务：OUT FIFO 写 `(START|addrR)|((REC|len)<<16)`，`MX_READ_CNT=len`，IN FIFO 每字取 2 字节；
+  - 顺序：RESET → RUN(写 clockCtl) → PAUSE(写 tag) → RUN → 轮询完成；错误位与 cb_touch 计数保持原有诊断。
+- 这样 `cb_wire_page`/`cb_wire_read`/`writeRmi` 的既有语义（页选 + 写地址 + 读）在 RMI 标准下才成立。
+- 候选 `out/p21/fb-qup`：内核 `13eeb0ae…`、payload `84f9d893…`、固件 `31a54194…`、镜像 `out/p21/fb-qup/uefi/boot-p21-up1.img` `26f4a3c9…`（82,575,360 bytes）；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：`TOUCH` 行出现 `i2c>0` 且 `F01/F12` 非零 → RMI 通了；若 `TOUCH9 plain` 仍为负，说明写事务或 tag 仍有偏差，下一步用 `TOUCH` 的 `status/errors/op` 三元组定位到具体阶段。
+
 ## 2026-10-30：双帧取样定因——QUP 传输本身不符合上游编程
 
 - fb-frame 结果（`20261030T112102Z`，boot `0x4d540669`）：`TOUCH9 plain=fffffff9 old=a002600000000`
