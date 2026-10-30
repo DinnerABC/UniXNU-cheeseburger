@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-rail 结果——落回已知黑屏分支，触摸 NACK 未变
+
+- 回收 `out/p21/persistent-logs/20261030T064815Z/`：boot ID `0x4f96c356`，140 轮，写入错误 0。
+- 显示：`DISPLAY clients=5 frames=0`、`SWAP check=0 rc=ffffffffffffffff`、`[fb events]` 只有 `s6 (0,0x80000003)` 与 `s50`，没有 `s4/s5`——与 `050326Z`/`052133Z` 相同的**首帧前黑屏分支**；本次与固件改动无因果证据（该分支同镜像会翻转，见前几条记录）。
+- 触摸：与 fb-touch **逐项相同**：`error=-30 i2c=0/1`、`reset=1`、`hw=0x20070000`、`status=0x1321c4`、`op=0x90`。说明 UEFI 侧对 L6/L28 的读/写**没有改变触摸结果**：可能是写入未生效、RPM 覆盖，或供电不在 L6/L28。
+- 缺口：UEFI 的 `UniXNU rails:` 行只出现在屏幕控制台，持久日志只含内核控制台尾部，未捕获；本轮不能判断 UEFI 代码是否找到 APID、是否写入成功。
+- 下一步（尚未执行，建议）：在 XNU 板级运行时增加**只读** PMIC 探针——用与按键驱动相同的 arbiter 读路径，按 PPID `0x045`/`0x05B` 找 APID，读 `+0x40`(VSET)/`+0x46`(enable) 并写进持久日志；这样不依赖 UEFI 屏幕输出，可直接判断供电状态与 UEFI 写入是否生效。不做任何 PMIC 写。
+
 ## 2026-10-30：fb-rail（UEFI 打开 pm8998 L6/L28）已启动一次
 
 - 目标：触摸在 `reset=1` 后第一次 I2C 传输被 NACK，判断为传感器未供电；按用户选择在 **UEFI 侧**打开 `pm8998_l6`（ldoa 6，1.808 V）与 `pm8998_l28`（ldoa 0x1c，3.008 V）。
