@@ -2,6 +2,15 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：NPA 协议运行时可用（捕获块读取）
+
+- `20261030T102044Z` 的 `window.bin` 第 8161 块（UEFI 写入的保留块）内容：
+  `UP1NPA1 npaA=0 ifA=1B57BC090 npaB=0 ifB=1B57660F0 npaC=0 ifC=1B57662A0`
+- `npaA/B/C = 0` = EFI_SUCCESS：`AE37B942-457F-4C91-A196-D9669FD347A3`（PmicDxe 称为 NpaProtocol）、`79D6C870-725E-489E-A0A1-27E7A5D0CB35`、`276732AB-BB39-4DCE-B5D9-2746CDD6D518` 在运行时**都已安装**；NPA 接口指针 `0x1B57BC090`。
+- 同轮 `20261030T101551Z`（boot `0x510d8b69`）进入桌面 `frames=8`；触摸仍 `-30`、SDA/SCL 仍为 0。
+- 结论：**方案 A 可行**——下一轮可按 PmicDxe 的方式（`LocateProtocol(AE37B942)` → `[iface+0x90]` 三参数）创建 NPA 客户端，再找到 issue-request 的 vtable 偏移与 LDO 资源名，向 RPM 请求 L6/L28 上电。
+- 通道已固化：UEFI 结果写窗口第 8161 块（绝对 LBA 5071073），无需看屏幕；本轮验证了写入与回收链路都正常。
+
 ## 2026-10-30：方案 A 启动——离线确认 NPA/PMIC 接口，fb-diag8 只读探测已启动
 
 - 触摸供电结论（已确认）：Recovery 里原厂内核把 `pm8998_l6`（1,808,000 µV）和 `pm8998_l28`（3,008,000 µV）置为 enabled、各有 1 个使用者；而我们的 fastboot→UEFI→XNU 路径没有任何 RPM 投票，SDA/SCL 在未写之前就是低、~50 kΩ 内部上拉拉不动、8 mA 强驱动能顶高——未上电芯片钳位。AP 的 SPMI arbiter（v3，244 项）看不到 0x40–0x5f 的 LDO 页，**从 AP 直接写 PMIC 不可行**。
