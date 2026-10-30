@@ -2,6 +2,16 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-rail（UEFI 打开 pm8998 L6/L28）已启动一次
+
+- 目标：触摸在 `reset=1` 后第一次 I2C 传输被 NACK，判断为传感器未供电；按用户选择在 **UEFI 侧**打开 `pm8998_l6`（ldoa 6，1.808 V）与 `pm8998_l28`（ldoa 0x1c，3.008 V）。
+- 实现（提交 `8e4f3f4`，回滚 tag `rollback-before-fb-rail` = `390a608`）：`rebuild/ipados-up1/fb-rail/UniXNURails.c` + `apply.py`，装进项目自有的 `UniXNUPkg/Driver/UniXNUDxe`，在 BDS 之前执行：
+  - 通过 SPMI PMIC arbiter（core `0x0800f000`、chnls `0x08400000`、obsrvr `0x09400000`，来自设备 FDT）按 PPID `0x045`/`0x05B` 找 APID；
+  - 先只读 VSET（`+0x40`）与 enable（`+0x46`）；仅当 VSET 非 0 且 bit7 为 0 时置 bit7，随后回读并打印 `UniXNU rails: ...`；
+  - 命令格式依据上游 sheng 固件 SPMI 读实现与 Linux `spmi-pmic-arb.c` v2 `(opcode<<27)|((addr&0xff)<<4)|(bc&7)`；不读/写其它 PMIC 寄存器、不改电压。
+- 候选 `out/p21/fb-rail`：内核/payload/ADT 与 fb-touch 完全相同（`96102686…` / `09c1e9b1…` / `775d411b…`），仅固件不同；FD `952c603f…`，镜像 `out/p21/fb-rail/uefi/boot-p21-up1.img` `87b07b0c…`（82,591,744 bytes）；pins 三项命中、门禁 PASS；FVMAIN 内确认含 `UniXNU rails` 字符串；目标 `3b25cc7c` 临时 boot 一次 Sending/Booting OKAY，未写分区。
+- 验收：若供电确实缺失，下一轮 `TOUCH error` 应从 `-30` 变为 0 或更后面的阶段（F01/F12 出现）；若仍是 `-30`，说明供电不在 L6/L28 或写入未生效，需读回 `UniXNU rails` 控制台行判断。
+
 ## 2026-10-30：fb-touch 进桌面正常，触摸停在 I2C NACK（供电）
 
 - 回收 `out/p21/persistent-logs/20261030T061244Z/`：boot ID `0x4feb4fc9`，86 轮，写入错误 0；`DISPLAY frames=14`、`SWAP check=14 transfer=14 rc=0`，用户确认进入桌面；`[fb events]` 与 fb-diag 相同（`s8 out2=438/780` → t≈377 s `s4/s5` 成对），说明触摸改动没有改变显示分支。
