@@ -12,6 +12,7 @@ extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 volatile uint64_t cb_touch[28];
+volatile uint64_t cb_touch_extra[16];
 extern volatile uint32_t native_hid_stage;
 int cheeseburger_touch_hid_start(void);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
@@ -107,10 +108,17 @@ static int hardware(){
  wr(pins[3],0,rd(pins[3],0)&~(0x3cu|0x200u));
  cb_touch[15]=rd(pins[3],0);cb_touch[16]=rd(pins[3],8);
  cb_touch[27]|=((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
+ cb_touch_extra[0]=rd(gcc,0x21008);cb_touch_extra[1]=rd(gcc,0x21024);
  if(!map(qup,0xc179000,0x1000))return -55;
  cb_touch[12]=rd(qup,0x30);unsigned mode=rd(qup,8),sizes[]={4,16,32};unsigned ob=mode&3,ib=(mode>>5)&3;
  if(ob>2||ib>2)return -56;txFifo=sizes[ob]*(2<<((mode>>2)&7));rxBlock=sizes[ib];rxFifo=rxBlock*(2<<((mode>>7)&7));
- clockCtl=0x300|93;return 0; // 19.2MHz / (2*(93+3)) = 100kHz.
+ cb_touch_extra[2]=mode;cb_touch_extra[3]=rd(qup,0x404);cb_touch_extra[4]=rd(qup,0x18);
+ cb_touch_extra[5]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1)|((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
+ clockCtl=0x300|93;
+ cb_touch_extra[6]=rd(qup,0x0);cb_touch_extra[7]=rd(qup,0x30);
+ cb_touch_extra[8]=rd(qup,0x400);cb_touch_extra[9]=rd(qup,0x408);
+ cb_touch_extra[10]=rd(gcc,0x52004);cb_touch_extra[11]=rd(qup,0xc);
+ return 0; // 19.2MHz / (2*(93+3)) = 100kHz.
 }
 static void worker(void*,wait_result_t){
  thread_set_thread_name(current_thread(),"cheeseburger-S3320");int e=hardware();if(e)goto fail;

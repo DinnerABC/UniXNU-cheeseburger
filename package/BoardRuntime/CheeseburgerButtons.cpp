@@ -11,7 +11,7 @@ extern volatile uint32_t native_hid_input_command;
 volatile uint64_t cb_keys[13]; // stage,version,reads,failures,raw,mask,edges,sink-deliveries,APIDs x3,last status
 // Read-only touch-rail snapshot: stage, then apid/vset/enable for pm8998 l6 and
 // l28, then the per-rail read errors. Nothing here writes the PMIC.
-volatile uint64_t cb_rails[16];
+volatile uint64_t cb_rails[24];
 static void (*sink)(void *,uint32_t);
 static void *sinkContext;
 void native_buttons_set_sink(void (*fn)(void *,uint32_t),void *context) {
@@ -48,27 +48,35 @@ static void keysThread(void *,wait_result_t) {
    for(unsigned i=0;i<512;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(!entry)continue;
     for(unsigned k=0;k<3;++k)if(apids[k]<0 && ((entry>>8)&0xfff)==ppids[k])apids[k]=i;
    }
-   // Touch rail state, read-only: pm8998 l6 (ldoa 6) and l28 (ldoa 0x1c) are the
-   // two RPM-SMD supplies of the S3320; VSET +0x40 and enable +0x46 of the PMIC4
-   // LDO page are read through the same observer channel as the keys below.
+   // One read-only pass over the PMIC arbiter for the touch supplies:
+   //  [0] stage, [1] APID count, [2] PMIC revision (PPID 0x001, regs 0x00..0x03),
+   //  [3] errors/pages in the low/high byte,
+   //  [4..15] one word per regulator page in 0x040..0x07f:
+   //          ppid | vset<<12 | enable<<20 | readerrors<<28 (regs 0x40 and 0x46).
+   // Nothing is written: these pages are RPM-owned and the address is still
+   // being verified against real data.
    {
-    const uint32_t railPpids[2]={0x045,0x05b};
-    cb_rails[0]=1;
-    // Which PMIC4 peripheral pages this arbiter actually exposes in the 0x4x/0x5x
-    // regulator range: the two rail PPIDs above are only a guess until this list
-    // shows them.
-    {unsigned n=0;for(unsigned i=0;i<512 && n<8;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(!entry)continue;
-      uint32_t ppid=(entry>>8)&0xfff;if(ppid>=0x040 && ppid<=0x07f)cb_rails[8+n++]=ppid;}}
-    for(unsigned r=0;r<2;++r){int apid=-1;
-     for(unsigned i=0;i<512;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(entry && ((entry>>8)&0xfff)==railPpids[r]){apid=(int)i;break;}}
-     cb_rails[1+r*3]=(uint64_t)(int64_t)apid;
-     if(apid<0){cb_rails[7]|=1ull<<(r*2);continue;}
-     Window ch;uint8_t vset=0,en=0;
-     if(!mapWindow(ch,cb_observer_address((unsigned)apid),0x1000)){cb_rails[7]|=2ull<<(r*2);continue;}
-     if(readStatus(ch,0x40,vset))cb_rails[7]|=4ull<<(r*2);
-     if(readStatus(ch,0x46,en))cb_rails[7]|=8ull<<(r*2);
-     cb_rails[2+r*3]=vset;cb_rails[3+r*3]=en;unmap(ch);
+    uint32_t apids=core.va[1]&0x7ffu;if(!apids || apids>1024u)apids=512u;
+    cb_rails[0]=1;cb_rails[1]=apids;
+    {int a=-1;for(unsigned i=0;i<apids;++i){uint32_t entry=core.va[(0x800+4*i)/4];
+      if(entry && ((entry>>8)&0xfff)==0x001){a=(int)i;break;}}
+     if(a<0)cb_rails[3]|=2;
+     else{Window ch;if(mapWindow(ch,cb_observer_address((unsigned)a),0x1000)){
+       uint8_t b[4]={0,0,0,0};for(unsigned k=0;k<4;++k)readStatus(ch,(uint8_t)k,b[k]);
+       cb_rails[2]=(uint64_t)b[0]|((uint64_t)b[1]<<8)|((uint64_t)b[2]<<16)|((uint64_t)b[3]<<24);unmap(ch);
+      }else cb_rails[3]|=1;}}
+    unsigned n=0;
+    for(unsigned i=0;i<apids && n<12;++i){uint32_t entry=core.va[(0x800+4*i)/4];if(!entry)continue;
+     uint32_t ppid=(entry>>8)&0xfff;if(ppid<0x040 || ppid>0x07f)continue;
+     uint8_t vset=0,en=0;unsigned err=0;
+     Window ch;if(mapWindow(ch,cb_observer_address(i),0x1000)){
+       if(readStatus(ch,0x40,vset))err|=1;
+       if(readStatus(ch,0x46,en))err|=2;
+       unmap(ch);
+     }else err|=4;
+     cb_rails[4+n++]=(uint64_t)ppid|((uint64_t)vset<<12)|((uint64_t)en<<20)|((uint64_t)err<<28);
     }
+    cb_rails[3]|=((uint64_t)n)<<8;
    }
    ready=true;
    for(unsigned k=0;k<3;++k){cb_keys[8+k]=(uint64_t)(int64_t)apids[k];
