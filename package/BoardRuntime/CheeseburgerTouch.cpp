@@ -12,7 +12,7 @@ extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 volatile uint64_t cb_touch[28];
-volatile uint64_t cb_touch_extra[64];
+volatile uint64_t cb_touch_extra[80];
 extern volatile uint32_t native_hid_stage;
 int cheeseburger_touch_hid_start(void);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
@@ -358,6 +358,11 @@ static void worker(void*,wait_result_t){
    if(!e)e=readRmi(nullptr,rmi.data1,buf,rmi.packet);
    if(e){publish(CbTouchFrame{});cb_touch[5]=(uint64_t)(int64_t)e;if(++failures>=3)break;IOSleep(25);continue;}
    failures=0;CbTouchFrame frame;e=cb_decode(rmi,buf,rmi.packet,transform,frame);if(e)break;++cb_touch[24];if(frame.count){cb_touch[25]=cb_le16(buf+1)|(uint64_t(cb_le16(buf+3))<<32);cb_touch[26]=unsigned(frame.x[0])|(uint64_t(unsigned(frame.y[0]))<<32);}
+   // Keep the first non-zero packet seen without a decoded contact: this tells a
+   // silent panel apart from a status/offset mismatch in the decoder.
+   if(!frame.count){bool nz=false;for(unsigned i=0;i<rmi.packet;++i)if(buf[i]){nz=true;break;}
+    if(nz){++cb_touch_extra[72];cb_touch_extra[64]=packBytes(buf,8);cb_touch_extra[65]=packBytes(buf+8,8);}}
+   if(status[0]&&!cb_touch_extra[73])cb_touch_extra[73]=status[0];
    publish(frame);if(irqMode)wr(pins[3],8,rd(pins[3],8)|1);
   }}
  fail:

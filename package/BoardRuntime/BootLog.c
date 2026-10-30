@@ -154,7 +154,7 @@ extern volatile uint32_t native_legacy_stage;
 extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
-extern volatile uint64_t cb_touch_extra[64] __attribute__((weak_import));
+extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -209,6 +209,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(touch,sizeof touch,"TOUCH16 f12q=%llx f12c=%llx at f01n=%llx f12n=%llx f01r=%llx f12r=%llx",
     cb_touch_extra[53],cb_touch_extra[54],
     cb_touch_extra[55]&0xff,(cb_touch_extra[55]>>8)&0xff,(cb_touch_extra[55]>>16)&0xff,(cb_touch_extra[55]>>24)&0xff);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH19 nz=%llu p0=%llx p1=%llx f01=%llx",
+    cb_touch_extra[72],cb_touch_extra[64],cb_touch_extra[65],cb_touch_extra[73]);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];
