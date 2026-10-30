@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：触摸链路打通到 stage=4；只差接触数据
+
+- 日志 `20261030T163537Z`（boot `0x5018e76c`）：`TOUCH stage=4 error=0 i2c=30285/0 F01=2a F12=47`，`range=1079x1919 objects=10 data=6/80`，`frames=15122`。F01/F12 发现成功，F12 的 80 字节数据包（10 指 ×8，跨 64 字节 FIFO 的块模式读）连续 6 分钟 30285 次传输、0 失败。
+- 车 `max_x=1079 / max_y=1919` 与原厂 dmesg 的 `max_x=1080, max_y=1920`（最大索引 1079/1919）一致，`data1=0x06` 也与 F12 data base 一致。
+- `contacts=0 publish=0 HID=0`：没有任何一次解出接触。此时无法区分“没摸屏幕”和“状态字节/偏移对不上”，因此加了一个极小探针（提交 `ff...`：「Capture the first non-zero F12 packet when no contact decodes」）：只要包里有非零字节但没解出接触，就把前 16 字节和 F01 status 记到 `TOUCH19 nz/p0/p1/f01`；不影响原有读写路径。
+- 新镜像 `d10f0d1c…`（内核 `b1269b4e…`、payload `f26f7f0c…`、固件 `546f1ba1…`），pins 命中、门禁 PASS，临时 boot 一次 OKAY。
+- 判读：本轮回 Recovery 后若 `TOUCH19 nz>0`，直接看 `p0/p1` 的对象状态字节（bit0=present，0x01 手指、0x02 笔、0x03 手掌、0x04 未分类），据此修正 `cb_decode` 的状态判断或对象偏移；若 `nz=0`，说明面板根本没上报，下一步查 F01 control/IRQ 使能与扫描使能。
+
 ## 2026-10-31：PDT 一直是对的；真正卡点是 F12 函数号写成了十进制 12
 
 - fb-qup3 日志 `20261030T161738Z`（boot `0x500700cb`）的寄存器图（`TOUCH17/18`，单字节连续读）：
