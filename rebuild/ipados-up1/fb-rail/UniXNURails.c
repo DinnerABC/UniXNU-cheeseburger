@@ -85,6 +85,18 @@ typedef struct {
 
 STATIC CONST EFI_GUID gDisplayPwrGuid = {0xF352021D,0x9593,0x4432,{0xBF,0x04,0x67,0xB9,0xF3,0xB7,0x60,0x08}};
 
+// NPA protocol table as used by UsbConfigDxe (same GUID 79D6C870): the first
+// qword is the revision, +0x10 creates a client (resource, client name, type,
+// param, extra, &handle) and +0x28 issues a request (handle, state).
+typedef struct {
+  UINT64     Revision;
+  VOID      *Reserved08;
+  EFI_STATUS (*CreateClient) (const char *Resource, const char *ClientName, UINT32 Type, UINT32 Param, VOID *Extra, VOID **Handle);
+  VOID      *Reserved18;
+  VOID      *Reserved20;
+  EFI_STATUS (*Request) (VOID *Handle, UINT32 State);
+} RAIL_NPA;
+
 STATIC
 INT32
 RailFindApid (
@@ -299,6 +311,10 @@ UniXnuEnableTouchRails (
   EFI_STATUS           DispGet;
   EFI_STATUS           DispSet;
   EFI_STATUS           Status;
+  VOID                *NpaCliHandle;
+  EFI_STATUS           NpaCliCreate;
+  EFI_STATUS           NpaCliRequest;
+  const char          *NpaCliName;
   CHAR8                Line[224];
   UINTN                Len;
 
@@ -330,15 +346,37 @@ UniXnuEnableTouchRails (
   RailEnable (L"pm8998_l6", RAIL_PPID_LOA6);
   RailEnable (L"pm8998_l28", RAIL_PPID_L28);
 
+  // Vote the board's touch supply through the same NPA client API UsbConfigDxe
+  // uses for its own rail. Two resource names exist in the firmware config; the
+  // first that creates a client is asked for the active state (2).
+  NpaCliCreate = EFI_UNSUPPORTED;
+  NpaCliRequest = EFI_UNSUPPORTED;
+  NpaCliHandle = NULL;
+  NpaCliName = "none";
+  if (!EFI_ERROR (SB) && IfB != NULL) {
+    static const char *names[2] = {"/pmic/client/touch_screen", "/pmic/client/disp_prim_touch"};
+    for (unsigned i = 0; i < 2; ++i) {
+      EFI_STATUS Create;
+      NpaCliHandle = NULL;
+      Create = ((RAIL_NPA *)IfB)->CreateClient (names[i], "UniXNU", 0x40, 0, NULL, &NpaCliHandle);
+      NpaCliCreate = Create;
+      if (!EFI_ERROR (Create) && NpaCliHandle != NULL) {
+        NpaCliName = names[i];
+        NpaCliRequest = ((RAIL_NPA *)IfB)->Request (NpaCliHandle, 2);
+        break;
+      }
+    }
+  }
+  Print (L"UniXNU npa client: %a create=%r req=%r\n", NpaCliName, NpaCliCreate, NpaCliRequest);
+
   // One ASCII line in the log window so the result survives without the screen.
   Len = AsciiSPrint (
           Line,
           sizeof Line,
-          "UP1NPA2 npaA=%x ifA=%lx npaB=%x ifB=%lx npaC=%x ifC=%lx disp=%x get=%x set=%x\n",
-          (UINT32)SA, (UINT64)(UINTN)IfA,
-          (UINT32)SB, (UINT64)(UINTN)IfB,
-          (UINT32)SC, (UINT64)(UINTN)IfC,
-          (UINT32)DispState, (UINT32)DispGet, (UINT32)DispSet
+          "UP1NPA3 npaA=%x npaB=%x npaC=%x disp=%x get=%x set=%x cli=%a cre=%x h=%lx req=%x\n",
+          (UINT32)SA, (UINT32)SB, (UINT32)SC,
+          (UINT32)DispState, (UINT32)DispGet, (UINT32)DispSet,
+          NpaCliName, (UINT32)NpaCliCreate, (UINT64)(UINTN)NpaCliHandle, (UINT32)NpaCliRequest
           );
   Status = (Len == 0) ? EFI_BAD_BUFFER_SIZE : RailWriteCapture (Line, Len);
   Print (L"UniXNU npa: capture %r\n", Status);
