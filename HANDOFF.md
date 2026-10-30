@@ -2,6 +2,19 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-lines 结果 + fb-diag2（一次性全链诊断）已启动一次
+
+- fb-lines 日志 `20261030T073143Z`（boot `0x50006662`，108 轮）：进桌面 `frames=13`；触摸 `error=-30 i2c=0/1`；新增行 `TOUCH lines sda=0 scl=0 rst=1 int=0`——**复位已释放但 I2C 两线空闲为低**，与上拉所在的 `vcc_i2c_1v8`（pm8998_l6）未供电一致；`RAILS2 ppid4x5x=61/62/73/50/74/55/60/54`（列表被截断在 8 个，未覆盖整表）。
+- 按用户要求改为**一次把触摸链路的日志加全**（提交 `21e1ed6`），本轮不再逐条追加：
+  1. `TOUCH lines`：I2C 复用后、控制器使能前的 sda/scl/rst/int 电平；
+  2. `TOUCH2`：GCC BLSP5 CBCR/RCG、QUP mode、控制器使能后的 QUP status/op、以及此时的四线电平；
+  3. `TOUCH3`：QUP 0x0/0x400/0x408/0xC、GCC 0x52004、QUP 版本；
+  4. `PMIC apids=.. revid=.. pages=.. err=..`：arbiter APID 总数、PMIC revision（PPID 0x001）、0x040–0x07f 段页面数与错误位；
+  5. 每个 regulator 页一行 `PMIC page ppid=.. vset=.. en=.. err=..`（最多 12 页，读 +0x40/+0x46），用于直接识别 L6/L28 是否存在及是否已编程/使能。
+  本轮仍然**只读**，不写任何 PMIC 寄存器。
+- 候选 `out/p21/fb-diag2`：内核 `d1c5b5d2…`、payload `01ac7eda…`、固件 `3c0ce46b…`、镜像 `out/p21/fb-diag2/uefi/boot-p21-up1.img` `15a110f9…`（82,591,744 bytes）；pins 命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+- 判读：`revid` 能确认 arbiter 读取路径与 PMIC 身份；若页面列表里出现 VSET≈0xE2（1.808 V）与对应 enable bit7，则 L6 实际已开、问题转向 QUP/时序；若全部 en=0 或页面缺失，则供电假设成立，下一步按真实页面写使能或走 RPM。
+
 ## 2026-10-30：fb-pmic 结果 + fb-lines（总线电平 / PPID 页）诊断已启动一次
 
 - fb-pmic 日志 `20261030T070854Z`（boot `0x5133a1d8`，71 轮）：进入桌面（`frames=10`），触摸 `error=-30 i2c=0/1` 不变；`RAILS stage=1 l6 apid=-1 vset=00 en=00 l28 apid=146 vset=00 en=00 err=1`。
