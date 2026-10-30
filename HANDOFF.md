@@ -2,6 +2,16 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：触摸供电已解决（NPA 投票成功），RMI 传输按上游修正
+
+- NPA 投票结果（`20261030T104504Z`，boot `0x50d41a7b`）：
+  `UP1NPA3 ... cli=/pmic/client/touch_screen cre=0 h=1B44F2ADC req=0` → 客户端创建成功、请求被接受；
+  XNU 侧 `TOUCH lines sda=1 scl=1 rst=1 int=0`（此前一直 0/0），`TOUCH2 pins=7`，**I2C 传输 21 次成功 0 次失败**。**触摸供电问题解决。**
+- 新的失败点：`TOUCH error=-32 i2c=21/0 F01=0 F12=0` → `cb_discover` 的 `if(!r.f01.query||!r.f12.query)return -32;`，即 PDT 扫描没找到 F01/F12。核对 `out/p22/reference/drivers_input_rmi4_rmi_driver.c`：PDT 字段（buf[0]=query、buf[5]=function number、buf[4]&0x1f=中断数）与扫描方向（0xE9→0x05，步长 6）**我们的实现与上游一致**；差别在 I2C 帧格式。
+- 修正（提交 `ab0614f`）：`SynapticsRMI4.h`/`CheeseburgerTouch.cpp` 的 RMI 传输改为上游 `rmi_i2c.c` 的标准帧——页选写 `{0xFF, page}`，读为"写低地址字节 + 读 n"，写为"低地址字节 + 数据"，替换原先自定义的 `0x81/0x82/0x87` 帧。
+- 候选 `out/p21/fb-rmi`：内核 `1d2730ad…`、payload `f9bafc4d…`、固件 `ab7dd8d7…`、镜像 `out/p21/fb-rmi/uefi/boot-p21-up1.img` `2c3f9f5f…`（82,587,648 bytes）；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：若 `TOUCH` 行出现 `F01`/`F12` 非零、`stage=4`、`HID>0`，则 RMI 与 HID 都通了，可以开始验证触摸坐标；若仍 `-32`，下一步在固件侧或驱动里直接读 PDT 头 6 字节做原始核对（页面 0 的 0xE9 项）。
+
 ## 2026-10-30：DisplayPwr 未安装；从 UsbConfigDxe 拿到 NPA 客户端 ABI，已投票触摸供电
 
 - 上一轮结果（`20261030T103345Z`，boot `0x50872df8`）：捕获块 `UP1NPA2 ... disp=FFFFFFFF get=E set=3` → **DisplayPwr 协议未安装**（`E` = NOT_FOUND），该路径关闭；XNU 触摸仍 `-30`、SDA/SCL 仍 0。
