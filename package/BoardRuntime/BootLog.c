@@ -195,6 +195,9 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(touch,sizeof touch,"TOUCH9 plain=%llx old=%llx",cb_touch_extra[24],cb_touch_extra[25]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH10 pdt=%llx/%llx/%llx",cb_touch_extra[26],cb_touch_extra[27],cb_touch_extra[28]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH11 pdt2=%llx/%llx/%llx",cb_touch_extra[29],cb_touch_extra[30],cb_touch_extra[31]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH12 ack=%llx,%llx w=%lld r=%lld b=%llx",
+    cb_touch_extra[32],cb_touch_extra[39],(long long)(int32_t)cb_touch_extra[33],(long long)(int32_t)cb_touch_extra[34],cb_touch_extra[35]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH13 st=%llx cnt=%llx/%llx",cb_touch_extra[36],cb_touch_extra[37],cb_touch_extra[38]);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];

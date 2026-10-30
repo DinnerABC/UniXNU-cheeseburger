@@ -55,6 +55,7 @@ static int qupFinish(unsigned nr,uint8_t *rx,unsigned &got){
   uint32_t op=rd(qup,0x18),status=rd(qup,0x404),err=rd(qup,0x1c);
   cb_touch[17]=status;cb_touch[18]=err;cb_touch[19]=op;
   if((status&0x38000fc)||(err&0x7c)){e=(status&8)?-6:-7;break;}
+  if(status&0x100){e=-6;break;}   // NACK: the device did not acknowledge
   if(op&0x100)wr(qup,0x18,0x100);
   if(nr){
    // One REC tag of len bytes: when the input service flag rises the whole
@@ -67,13 +68,13 @@ static int qupFinish(unsigned nr,uint8_t *rx,unsigned &got){
  }
  return e?e:-8;
 }
-static int qupWrite(const uint8_t *tx,unsigned nt){
+static int qupWrite(uint8_t addr,const uint8_t *tx,unsigned nt){
  // addr + data halves; block mode only when they do not fit the OUT FIFO.
  unsigned halves=nt+1;bool blk=halves>txFifo;int e;
  if((e=qupPrepare(QUP_CFG_WRITE,QUP_IO_REPACK|(blk?QUP_IO_OUT_BLK:0),blk?halves:0,blk?0:halves,0,0)))return e;
  for(unsigned h=0;h<halves;h+=2){
   uint32_t low,high=0;
-  if(h==0)low=0x100u|0x40u;                       // START | slave address (write)
+  if(h==0)low=0x100u|addr;                        // START | slave address (write)
   else{unsigned k=h-1;low=(h==halves-1?0x300u:0x200u)|tx[k];}
   if(h+1<halves){unsigned k=h;high=(h+1==halves-1?0x300u:0x200u)|tx[k];}
   wr(qup,0x110,low|(high<<16));
@@ -81,10 +82,10 @@ static int qupWrite(const uint8_t *tx,unsigned nt){
  if((e=state(1)))return e;
  unsigned got=0;return qupFinish(0,nullptr,got);
 }
-static int qupRead(uint8_t *rx,unsigned nr){
+static int qupRead(uint8_t addr,uint8_t *rx,unsigned nr){
  bool blk=nr>rxFifo;int e;
  if((e=qupPrepare(QUP_CFG_READ,QUP_IO_REPACK|(blk?QUP_IO_IN_BLK:0),0,0,blk?nr:0,blk?0:nr)))return e;
- wr(qup,0x110,(0x100u|0x41u)|((uint32_t)(0x400u|(nr==256?0:nr))<<16));  // START|addrR, REC len
+ wr(qup,0x110,(0x100u|addr)|((uint32_t)(0x400u|(nr==256?0:nr))<<16));  // START|addrR, REC len
  if((e=state(1)))return e;
  unsigned got=0;e=qupFinish(nr,rx,got);
  if(!e && got!=nr)e=-8;
@@ -93,8 +94,8 @@ static int qupRead(uint8_t *rx,unsigned nr){
 static int transfer(const uint8_t *tx,unsigned nt,uint8_t *rx,unsigned nr){
  if(nt>16||nr>256)return -3;
  int e=0;
- if(nt)e=qupWrite(tx,nt);
- if(!e && nr)e=qupRead(rx,nr);
+ if(nt)e=qupWrite(0x40u,tx,nt);
+ if(!e && nr)e=qupRead(0x41u,rx,nr);
  if(!e){++cb_touch[1];return 0;}
  wr(qup,0xc,1);wire.page=256;++cb_touch[2];return e;
 }
@@ -199,6 +200,23 @@ static int hardware(){
   // transports send it, to see which form actually latches.
   for(int i=0;i<3;++i){uint8_t d[6]={0},a[2]={0x00,(uint8_t)(0xE9-6*i)};transfer(a,2,d,6);
    cb_touch_extra[29+i]=(uint64_t)d[0]|((uint64_t)d[1]<<8)|((uint64_t)d[2]<<16)|((uint64_t)d[3]<<24)|((uint64_t)d[4]<<32)|((uint64_t)d[5]<<40);}
+  // Comprehensive probe in one pass: which addresses acknowledge, whether a
+  // plain register read returns bytes, and the controller state/tag counters.
+  {
+   uint64_t m0=0,m1=0;
+   for(unsigned a=0x08;a<=0x77;++a){uint8_t z=0;
+    if(!qupRead((uint8_t)((a<<1)|1),&z,1)){unsigned b=a-0x08;if(b<64)m0|=1ull<<b;else m1|=1ull<<(b-64);}}
+   cb_touch_extra[32]=m0;cb_touch_extra[39]=m1;
+   uint8_t cmd[1]={0x00};
+   cb_touch_extra[33]=(uint64_t)(int32_t)qupWrite(0x40u,cmd,1);
+   uint8_t r8[8]={0};uint64_t v=0;
+   cb_touch_extra[34]=(uint64_t)(int32_t)qupRead(0x41u,r8,8);
+   for(unsigned i=0;i<8;++i)v|=(uint64_t)r8[i]<<(8*i);
+   cb_touch_extra[35]=v;
+   cb_touch_extra[36]=(uint64_t)rd(qup,0x4)|((uint64_t)rd(qup,0x18)<<8)|((uint64_t)rd(qup,0x404)<<32)|((uint64_t)rd(qup,0x1c)<<48);
+   cb_touch_extra[37]=(uint64_t)rd(qup,0x100)|((uint64_t)rd(qup,0x150)<<32);
+   cb_touch_extra[38]=(uint64_t)rd(qup,0x200)|((uint64_t)rd(qup,0x208)<<32);
+  }
  }
  clockCtl=0x300|93;
  cb_touch_extra[6]=rd(qup,0x0)|((uint64_t)rd(qup,0x4)<<32);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
