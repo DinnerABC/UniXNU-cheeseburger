@@ -11,6 +11,7 @@
   - NpaDxe `0x1548/0x1594` 安装的是 `79D6C870-725E-489E-A0A1-27E7A5D0CB35`（接口表 `0x180F0`）与 `276732AB-BB39-4DCE-B5D9-2746CDD6D518`（`0x182A0`）；`0x12FC4` 处只定位 `AE37B942`。因此 `AE37B942` 的安装者仍待确认。
 - 本轮代码（提交 `d61bbd9`，两轮审计后编译）：`UniXNURails.c` 新增**只读** `LocateProtocol` 探测，启动时打印三行 `UniXNU npa: <GUID> <status> if=<ptr>`；不调用任何接口、不写寄存器。
 - 候选 `out/p21/fb-diag8`（内核/payload 与 fb-diag7 相同）：固件 `ad87e327…`、镜像 `out/p21/fb-diag8/uefi/boot-p21-up1.img` `9f05cb55…`（82,591,744 bytes）；pins 命中、探测字符串已确认编入 `UniXNUDxe.efi`（3 处）、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+- 追加（提交 `fac2475`、`dc2ccf5`）：UEFI 探测结果不再依赖屏幕——`RailWriteCapture()` 把一行 ASCII（`UP1NPA1 npaA=… ifA=… npaB=… ifB=… npaC=… ifC=…`）写进持久日志窗口的第 **8161** 块（绝对 LBA 5071073 / userdata 相对 2629601）。该块属于窗口尾部 31 个内核不使用的块（内核只用 0..8160），按精确块数匹配 userdata（11703808 块）或 LUN0（14145536 块）后才写，找不到就不写。构建时发现并修复 INF 缺少 `gEfiBlockIoProtocolGuid` 的链接错误。
 - 判读：屏幕上若出现 `npa: AE37B942 Success if=0x…`，说明 NPA 协议可用，下一轮按 PmicDxe 的调用方式实现 `create_client`/`issue_request`；若全部 `Not Found`，方案 A 需要改走别的协议或退回方案 B（XNU RPM-SMD）。
 
 ## 2026-10-30：fb-diag6 结果——写位正确、线路被外部钳低；fb-diag7 驱动实验已启动
