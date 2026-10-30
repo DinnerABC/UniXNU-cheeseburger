@@ -56,13 +56,16 @@ static int qupFinish(unsigned nr,uint8_t *rx,unsigned &got){
   cb_touch[17]=status;cb_touch[18]=err;cb_touch[19]=op;
   if((status&0x38000fc)||(err&0x7c)){e=(status&8)?-6:-7;break;}
   if(op&0x100)wr(qup,0x18,0x100);
-  if(nr && (op&0x200)){wr(qup,0x18,0x200);
-   if(got<nr){uint32_t w=rd(qup,0x218);rx[got++]=(uint8_t)w;if(got<nr)rx[got++]=(uint8_t)(w>>16);}}
-  if((!nr || got==nr) && (op&0x400) && !(status&0x100)){state(0);return 0;}
+  if(nr){
+   // One REC tag of len bytes: when the input service flag rises the whole
+   // block is in the FIFO, two bytes per word. Draining it is the completion.
+   if(op&0x200){wr(qup,0x18,0x200);
+    while(got<nr){uint32_t w=rd(qup,0x218);rx[got++]=(uint8_t)w;if(got<nr)rx[got++]=(uint8_t)(w>>16);}}
+   if(got==nr){state(0);return 0;}
+  }else if((op&0x400) && !(status&0x100)){state(0);return 0;}
   IOSleep(1);
  }
- if(!e){e=-8;}
- return e;
+ return e?e:-8;
 }
 static int qupWrite(const uint8_t *tx,unsigned nt){
  // addr + data halves; block mode only when they do not fit the OUT FIFO.
