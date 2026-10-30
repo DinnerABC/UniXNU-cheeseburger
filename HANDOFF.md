@@ -2,6 +2,17 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：方案 A 启动——离线确认 NPA/PMIC 接口，fb-diag8 只读探测已启动
+
+- 触摸供电结论（已确认）：Recovery 里原厂内核把 `pm8998_l6`（1,808,000 µV）和 `pm8998_l28`（3,008,000 µV）置为 enabled、各有 1 个使用者；而我们的 fastboot→UEFI→XNU 路径没有任何 RPM 投票，SDA/SCL 在未写之前就是低、~50 kΩ 内部上拉拉不动、8 mA 强驱动能顶高——未上电芯片钳位。AP 的 SPMI arbiter（v3，244 项）看不到 0x40–0x5f 的 LDO 页，**从 AP 直接写 PMIC 不可行**。
+- 离线固件分析（`rebuild/ipados-up1/npa-audit/`）：
+  - 从 27 个 `.depex` 反推出真实协议 GUID 词表；`AE37B942-457F-4C91-A196-D9669FD347A3` 被 PmicDxe 以字符串“NpaProtocol”定位，且被 AdcDxe/ClockDxe/I2C/SPI/DAL 等 9 个驱动依赖 → 即 NPA 协议；
+  - 反汇编 PmicDxe `0x15b3c`：`LocateProtocol(&AE37B942…, NULL, &iface)` 后 `blr [iface+0x90]`，三参数（名称、类型、客户端名）；PmicDxe 内含 `pm_ldo.c`/`pm_ldo_driver.c`/`pm_smps_driver.c` 与 `/protocol/rpm/rpm`，即 LDO 通过 NPA→RPM 控制；
+  - NpaDxe `0x1548/0x1594` 安装的是 `79D6C870-725E-489E-A0A1-27E7A5D0CB35`（接口表 `0x180F0`）与 `276732AB-BB39-4DCE-B5D9-2746CDD6D518`（`0x182A0`）；`0x12FC4` 处只定位 `AE37B942`。因此 `AE37B942` 的安装者仍待确认。
+- 本轮代码（提交 `d61bbd9`，两轮审计后编译）：`UniXNURails.c` 新增**只读** `LocateProtocol` 探测，启动时打印三行 `UniXNU npa: <GUID> <status> if=<ptr>`；不调用任何接口、不写寄存器。
+- 候选 `out/p21/fb-diag8`（内核/payload 与 fb-diag7 相同）：固件 `ad87e327…`、镜像 `out/p21/fb-diag8/uefi/boot-p21-up1.img` `9f05cb55…`（82,591,744 bytes）；pins 命中、探测字符串已确认编入 `UniXNUDxe.efi`（3 处）、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+- 判读：屏幕上若出现 `npa: AE37B942 Success if=0x…`，说明 NPA 协议可用，下一轮按 PmicDxe 的调用方式实现 `create_client`/`issue_request`；若全部 `Not Found`，方案 A 需要改走别的协议或退回方案 B（XNU RPM-SMD）。
+
 ## 2026-10-30：fb-diag6 结果——写位正确、线路被外部钳低；fb-diag7 驱动实验已启动
 
 - fb-diag6 日志 `20261030T092128Z`（boot `0x5039ae38`，67 轮）：进桌面 `frames=8`；触摸仍 `-30`。
