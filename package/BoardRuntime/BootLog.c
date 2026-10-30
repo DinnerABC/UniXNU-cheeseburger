@@ -154,7 +154,7 @@ extern volatile uint32_t native_legacy_stage;
 extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
-extern volatile uint64_t cb_touch_extra[40] __attribute__((weak_import));
+extern volatile uint64_t cb_touch_extra[48] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -193,9 +193,13 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     cb_touch_extra[8],cb_touch_extra[9],cb_touch_extra[10],cb_touch_extra[11]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH8 drive=%llx bc=%llx",cb_touch_extra[22],cb_touch_extra[23]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH10 pdt=%llx/%llx/%llx",cb_touch_extra[26],cb_touch_extra[27],cb_touch_extra[28]);at=put(out,at,cap,touch,sizeof touch);
-  snprintf(touch,sizeof touch,"TOUCH12 ack=%llx,%llx w=%lld r=%lld b=%llx",
-    cb_touch_extra[32],cb_touch_extra[39],(long long)(int32_t)cb_touch_extra[33],(long long)(int32_t)cb_touch_extra[34],cb_touch_extra[35]);at=put(out,at,cap,touch,sizeof touch);
-  snprintf(touch,sizeof touch,"TOUCH13 st=%llx cnt=%llx/%llx",cb_touch_extra[36],cb_touch_extra[37],cb_touch_extra[38]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH12 ack=%llx,%llx w=%lld r=%lld b=%llx page=%lld",
+    cb_touch_extra[32],cb_touch_extra[39],(long long)(int32_t)cb_touch_extra[33],(long long)(int32_t)cb_touch_extra[34],cb_touch_extra[35],(long long)(int32_t)cb_touch_extra[45]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH13 st=%llx op=%llx err=%llx status=%llx",
+    cb_touch_extra[36]&0xffff,(cb_touch_extra[36]>>16)&0xffff,(cb_touch_extra[36]>>32)&0xffff,cb_touch_extra[37]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH14 fifo=%llu/%llu blk=%llu/%llu pre=%llx pdt=%lld cnt=%llx/%llx",
+    cb_touch_extra[40],cb_touch_extra[41],cb_touch_extra[42],cb_touch_extra[43],cb_touch_extra[44],
+    (long long)(int32_t)cb_touch_extra[46],cb_touch_extra[38]&0xffffffff,cb_touch_extra[38]>>32);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];
