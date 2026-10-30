@@ -40,10 +40,12 @@ enum {QUP_CFG_WRITE=0x28F, QUP_CFG_READ=0x20F, QUP_IO_REPACK=0xC000u, QUP_IO_OUT
 static int qupPrepare(unsigned config,unsigned io,unsigned outCnt,unsigned writeCnt,unsigned inputCnt,unsigned readCnt){
  int e;
  wr(qup,0xc,1);wire.page=256;if((e=state(0)))return e;
- if(rd(qup,0x404)&0x100)return -4;
+ // Wait (bounded) for the bus to go idle instead of failing outright: a single
+ // aborted transaction must not poison every later transfer.
+ for(unsigned i=0;i<20 && (rd(qup,0x404)&0x100);++i)IOSleep(1);
  wr(qup,0,config);wr(qup,8,io);
  wr(qup,0x100,outCnt);wr(qup,0x150,writeCnt);wr(qup,0x200,inputCnt);wr(qup,0x208,readCnt);
- wr(qup,0x18,0);wr(qup,0x1c,0x7c);
+ wr(qup,0x18,0);wr(qup,0x1c,0x7c);wr(qup,0x28,0x300);   // service masks as upstream
  if((e=state(1)))return e;
  wr(qup,0x400,clockCtl);
  if((e=state(3)))return e;
@@ -55,7 +57,6 @@ static int qupFinish(unsigned nr,uint8_t *rx,unsigned &got){
   uint32_t op=rd(qup,0x18),status=rd(qup,0x404),err=rd(qup,0x1c);
   cb_touch[17]=status;cb_touch[18]=err;cb_touch[19]=op;
   if((status&0x38000fc)||(err&0x7c)){e=(status&8)?-6:-7;break;}
-  if(status&0x100){e=-6;break;}   // NACK: the device did not acknowledge
   if(op&0x100)wr(qup,0x18,0x100);
   if(nr){
    // One REC tag of len bytes: when the input service flag rises the whole
@@ -190,16 +191,14 @@ static int hardware(){
  if(!map(qup,0xc179000,0x1000))return -55;
  cb_touch[12]=rd(qup,0x30);unsigned mode=rd(qup,8),sizes[]={4,16,32};unsigned ob=mode&3,ib=(mode>>5)&3;
  if(ob>2||ib>2)return -56;txFifo=sizes[ob]*(2<<((mode>>2)&7));rxBlock=sizes[ib];rxFifo=rxBlock*(2<<((mode>>7)&7));
- cb_touch_extra[2]=mode; // Raw PDT entries as the sensor reports them (page 0, top three entries), so
+ cb_touch_extra[2]=mode;
+ clockCtl=0x300|93;   // must be set before any probe: a zero clock_ctl sends no SCL
+ // Raw PDT entries as the sensor reports them (page 0, top three entries), so
  // the scan result can be checked against real bytes instead of inference.
  {
   uint8_t pg[2]={0xff,0x00};transfer(pg,2,nullptr,0);
   for(int i=0;i<3;++i){uint8_t d[6]={0},a[1]={(uint8_t)(0xE9-6*i)};transfer(a,1,d,6);
    cb_touch_extra[26+i]=(uint64_t)d[0]|((uint64_t)d[1]<<8)|((uint64_t)d[2]<<16)|((uint64_t)d[3]<<24)|((uint64_t)d[4]<<32)|((uint64_t)d[5]<<40);}
-  // Same register with a two-byte address (page, offset), as some vendor
-  // transports send it, to see which form actually latches.
-  for(int i=0;i<3;++i){uint8_t d[6]={0},a[2]={0x00,(uint8_t)(0xE9-6*i)};transfer(a,2,d,6);
-   cb_touch_extra[29+i]=(uint64_t)d[0]|((uint64_t)d[1]<<8)|((uint64_t)d[2]<<16)|((uint64_t)d[3]<<24)|((uint64_t)d[4]<<32)|((uint64_t)d[5]<<40);}
   // Comprehensive probe in one pass: which addresses acknowledge, whether a
   // plain register read returns bytes, and the controller state/tag counters.
   {
@@ -207,7 +206,7 @@ static int hardware(){
    for(unsigned a=0x08;a<=0x77;++a){uint8_t z=0;
     if(!qupRead((uint8_t)((a<<1)|1),&z,1)){unsigned b=a-0x08;if(b<64)m0|=1ull<<b;else m1|=1ull<<(b-64);}}
    cb_touch_extra[32]=m0;cb_touch_extra[39]=m1;
-   uint8_t cmd[1]={0x00};
+   uint8_t cmd[1]={0xE9};   // PDT head, not the Device Command register
    cb_touch_extra[33]=(uint64_t)(int32_t)qupWrite(0x40u,cmd,1);
    uint8_t r8[8]={0};uint64_t v=0;
    cb_touch_extra[34]=(uint64_t)(int32_t)qupRead(0x41u,r8,8);
@@ -218,20 +217,8 @@ static int hardware(){
    cb_touch_extra[38]=(uint64_t)rd(qup,0x200)|((uint64_t)rd(qup,0x208)<<32);
   }
  }
- clockCtl=0x300|93;
  cb_touch_extra[6]=rd(qup,0x0)|((uint64_t)rd(qup,0x4)<<32);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
- // Raw framing probe: read the same page-0 PDT head with the plain address
- // frame and with the previous 0x81/0x82/0x87 frame, so the wire format is
- // chosen from returned bytes instead of assumption.
- {
-  uint8_t a[8]={0},b[12]={};int ea,eb;
-  uint8_t pg[2]={0xff,0x00};transfer(pg,2,nullptr,0);
-  uint8_t t1[1]={0xE9};ea=transfer(t1,1,a,6);
-  uint8_t t2[]={0x81,0x40,0x83,2,0xff,0x00};transfer(t2,sizeof t2,nullptr,0);
-  uint8_t t3[]={0x81,0x40,0x82,1,0xE9,0x81,0x41,0x87,6};eb=transfer(t3,sizeof t3,b,8);
-  cb_touch_extra[24]=(uint64_t)(uint32_t)ea|((uint64_t)a[0]<<32)|((uint64_t)a[1]<<40)|((uint64_t)a[2]<<48)|((uint64_t)a[3]<<56);
-  cb_touch_extra[25]=(uint64_t)(uint32_t)eb|((uint64_t)b[2]<<32)|((uint64_t)b[3]<<40)|((uint64_t)b[4]<<48)|((uint64_t)b[5]<<56);
- }
+
  return 0; // 19.2MHz / (2*(93+3)) = 100kHz.
 }
 static void worker(void*,wait_result_t){
