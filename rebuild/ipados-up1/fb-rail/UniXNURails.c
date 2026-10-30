@@ -73,6 +73,18 @@ STATIC CONST EFI_GUID gNpaGuid  = {0xAE37B942,0x457F,0x4C91,{0xA1,0x96,0xD9,0x66
 STATIC CONST EFI_GUID gNpaAlt1 = {0x79D6C870,0x725E,0x489E,{0xA0,0xA1,0x27,0xE7,0xA5,0xD0,0xCB,0x35}};
 STATIC CONST EFI_GUID gNpaAlt2 = {0x276732AB,0xBB39,0x4DCE,{0xB5,0xD9,0x27,0x46,0xCD,0xD6,0xD5,0x18}};
 
+// EFI_DISPLAY_POWER_PROTOCOL from the firmware headers
+// (Silicon/Qualcomm/QcomPkg/Include/Protocol/EFIDisplayPwr.h): the struct is a
+// revision followed by two function pointers. The panel power sequence is the
+// only documented path that also votes the board's disp_prim_touch DAL client.
+typedef struct {
+  UINT32      Revision;
+  EFI_STATUS (*SetDisplayPowerState) (VOID *This, UINT32 State);
+  EFI_STATUS (*GetDisplayPowerState) (VOID *This, UINT32 *State);
+} RAIL_DISPLAY_POWER;
+
+STATIC CONST EFI_GUID gDisplayPwrGuid = {0xF352021D,0x9593,0x4432,{0xBF,0x04,0x67,0xB9,0xF3,0xB7,0x60,0x08}};
+
 STATIC
 INT32
 RailFindApid (
@@ -276,15 +288,19 @@ UniXnuEnableTouchRails (
   VOID
   )
 {
-  VOID        *IfA;
-  VOID        *IfB;
-  VOID        *IfC;
-  EFI_STATUS   SA;
-  EFI_STATUS   SB;
-  EFI_STATUS   SC;
-  EFI_STATUS   Status;
-  CHAR8        Line[192];
-  UINTN        Len;
+  VOID                *IfA;
+  VOID                *IfB;
+  VOID                *IfC;
+  RAIL_DISPLAY_POWER  *Dp;
+  UINT32               DispState;
+  EFI_STATUS           SA;
+  EFI_STATUS           SB;
+  EFI_STATUS           SC;
+  EFI_STATUS           DispGet;
+  EFI_STATUS           DispSet;
+  EFI_STATUS           Status;
+  CHAR8                Line[224];
+  UINTN                Len;
 
   IfA = NULL;
   IfB = NULL;
@@ -296,6 +312,20 @@ UniXnuEnableTouchRails (
   Print (L"UniXNU npa: 79D6C870 %r if=%p\n", SB, IfB);
   Print (L"UniXNU npa: 276732AB %r if=%p\n", SC, IfC);
 
+  // Read the display power state; when the protocol exists but was never asked
+  // for On (the panel is lit by the bootloader GOP), request it so the board's
+  // panel power path runs, including its touch-rail client.
+  Dp = NULL;
+  DispState = 0xffffffffu;
+  DispSet = EFI_UNSUPPORTED;
+  DispGet = gBS->LocateProtocol ((EFI_GUID *)&gDisplayPwrGuid, NULL, (VOID **)&Dp);
+  if (!EFI_ERROR (DispGet) && Dp != NULL) {
+    DispGet = Dp->GetDisplayPowerState (Dp, &DispState);
+    if (!EFI_ERROR (DispGet) && DispState != 2) {
+      DispSet = Dp->SetDisplayPowerState (Dp, 2);
+    }
+  }
+  Print (L"UniXNU disp: state=%x get=%r set=%r\n", DispState, DispGet, DispSet);
   Print (L"UniXNU rails: arbiter version=%08x\n", MmioRead32 (RAIL_CORE_BASE));
   RailEnable (L"pm8998_l6", RAIL_PPID_LOA6);
   RailEnable (L"pm8998_l28", RAIL_PPID_L28);
@@ -304,10 +334,11 @@ UniXnuEnableTouchRails (
   Len = AsciiSPrint (
           Line,
           sizeof Line,
-          "UP1NPA1 npaA=%x ifA=%lx npaB=%x ifB=%lx npaC=%x ifC=%lx\n",
+          "UP1NPA2 npaA=%x ifA=%lx npaB=%x ifB=%lx npaC=%x ifC=%lx disp=%x get=%x set=%x\n",
           (UINT32)SA, (UINT64)(UINTN)IfA,
           (UINT32)SB, (UINT64)(UINTN)IfB,
-          (UINT32)SC, (UINT64)(UINTN)IfC
+          (UINT32)SC, (UINT64)(UINTN)IfC,
+          (UINT32)DispState, (UINT32)DispGet, (UINT32)DispSet
           );
   Status = (Len == 0) ? EFI_BAD_BUFFER_SIZE : RailWriteCapture (Line, Len);
   Print (L"UniXNU npa: capture %r\n", Status);
