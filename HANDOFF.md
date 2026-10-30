@@ -2,6 +2,20 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：两种地址形式都读回 0；改为一次性全面探针
+
+- fb-pdt2 日志 `20261030T124405Z`（boot `0x51ca5b32`）：`TOUCH10 pdt=0/0/0`、`TOUCH11 pdt2=0/0/0` → 1 字节与 2 字节地址都拿不到数据，`error=-32`、`i2c=25/7`。
+- 审计发现的判定缺口：`qupFinish()` 只看 status 的 `0x38000fc`，**没有把 NACK 位（`0x100`）当作错误**，所以"25 次成功"可能包含被 NACK 的写操作。
+- fb-probe（提交 `1d7f7c4`）一次性补齐信息（单次启动）：
+  1. `TOUCH12 ack=…`：对 0x08–0x77 全部地址做读探针，输出两个 64 位 ACK 位图（第一字=0x08–0x47，第二字=0x48–0x77）；
+  2. `w=`/`r=`：写寄存器 0x00 指针、再读 8 字节的返回码，`b=` 为读到的 8 字节；
+  3. `TOUCH13 st=`：读后 QUP `STATE/OPERATIONAL/I2C_STATUS/ERROR_FLAGS` 打包；
+  4. `cnt=`：`MX_OUTPUT_CNT/MX_WRITE_CNT` 与 `MX_READ_CNT/MX_INPUT_CNT` 的实际寄存器值；
+  5. NACK 现在会让事务返回 `-6`，日志里会直接体现被拒。
+- 构建流程修正：GitHub 抓取间歇性 SSL EOF，驱动改为从已准备好的 `fb-pdt` 树**本地种子**恢复 DriverKit 头（哈希仍校验），不再依赖网络；`scripts/p21-compile-fb-probe.py` 可复用。
+- 候选 `out/p21/fb-probe`：内核 `4800a1a0…`、payload `d450c215…`、固件 `a1c507a3…`、镜像 `27852270…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：ACK 位图里有 0x20 → 总线寻址正常，问题在寄存器/数据阶段；没有 0x20 → 从机地址或写事务本身不对。`cnt=` 显示 QUP 实际装载的计数能验证 tag/长度是否按预期进入控制器。
+
 ## 2026-10-30：PDT 原始字节全 0；对比 1 字节 / 2 字节地址
 
 - fb-pdt 日志 `20261030T122342Z`（boot `0x4f772688`）：`TOUCH error=-32 i2c=25/4`、`TOUCH10 pdt=0/0/0`——页面 0 的 0xE9/0xE3/0xDD 三次读回全 0，且 I2C 状态没有错误位。
