@@ -154,7 +154,7 @@ extern volatile uint32_t native_legacy_stage;
 extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
-extern volatile uint64_t cb_touch_extra[16] __attribute__((weak_import));
+extern volatile uint64_t cb_touch_extra[24] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -174,26 +174,30 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  snprintf(head,sizeof(head),"UP1 policy requested=%d status=%d written=%d jobs=watchdogd/identityservicesd/locationd",cheeseburger_upstream_policy_requested,cheeseburger_upstream_policy_status,cheeseburger_upstream_policy_applied);at=put(out,at,cap,head,sizeof(head));
  for(unsigned cpu=0;cpu<8;++cpu){char core[144];snprintf(core,sizeof core,"CPU%u mpidr=%x step=%u fail=%u PSCI=%d timer=%u IPI=%u online=%u",cpu,armcpu_smp_mpidr[cpu],armcpu_smp_step[cpu],armcpu_smp_fail[cpu],armcpu_smp_psci_rc[cpu],armcpu_core_timer[cpu],armcpu_core_sgi[cpu],processor_avail_count);at=put(out,at,cap,core,sizeof core);}
  if(cb_touch[0]) {
-  char touch[160];
+  char touch[200];
   snprintf(touch,sizeof touch,"TOUCH stage=%llu error=%lld i2c=%llu/%llu F01=%llx F12=%llx frames=%llu contacts=%llu publish=%llu HID=%u",cb_touch[0],(int64_t)cb_touch[5],cb_touch[1],cb_touch[2],cb_touch[3],cb_touch[4],cb_touch[24],cb_touch[6],cb_touch[7],native_touch_hid_reports);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH range=%llux%llu objects=%llu data=%llx/%llu irq=%llu polls=%llu mode=%llu raw=%llx mapped=%llx",cb_touch[8],cb_touch[9],cb_touch[20],cb_touch[21],cb_touch[22],cb_touch[10],cb_touch[11],cb_touch[23],cb_touch[25],cb_touch[26]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH hw=%llx clock=%llx reset=%llx gpio=%llx/%llx status=%llx errors=%llx op=%llx",cb_touch[12],cb_touch[13],cb_touch[14],cb_touch[15],cb_touch[16],cb_touch[17],cb_touch[18],cb_touch[19]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH lines sda=%llu scl=%llu rst=%llu int=%llu",cb_touch[27]&1,(cb_touch[27]>>1)&1,(cb_touch[27]>>2)&1,(cb_touch[27]>>3)&1);at=put(out,at,cap,touch,sizeof touch);
-  snprintf(touch,sizeof touch,"TOUCH2 gcc=%llx rcg=%llx mode=%llx status=%llx op=%llx pins=%llx",
+  snprintf(touch,sizeof touch,"TOUCH2 post gcc=%llx rcg=%llx mode=%llx status=%llx op=%llx pins=%llx",
     cb_touch_extra[0],cb_touch_extra[1],cb_touch_extra[2],cb_touch_extra[3],cb_touch_extra[4],cb_touch_extra[5]);at=put(out,at,cap,touch,sizeof touch);
-  snprintf(touch,sizeof touch,"TOUCH3 qup0=%llx qup400=%llx qup408=%llx qupc=%llx gcc52004=%llx qupver=%llx",
-    cb_touch_extra[6],cb_touch_extra[8],cb_touch_extra[9],cb_touch_extra[11],cb_touch_extra[10],cb_touch_extra[7]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH3 pre qup0=%llx qupver=%llx gcc52004=%llx",
+    cb_touch_extra[6],cb_touch_extra[7],cb_touch_extra[21]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH4 pullup sda=%llu scl=%llu rst=%llu int=%llu after=%llx",
     cb_touch_extra[12]&1,(cb_touch_extra[12]>>1)&1,(cb_touch_extra[12]>>2)&1,(cb_touch_extra[12]>>3)&1,cb_touch_extra[13]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH5 raw=%llx gpiopull=%llx muxed=%llx",
-    cb_touch_extra[14],cb_touch_extra[15],cb_touch[27]);at=put(out,at,cap,touch,sizeof touch);
+    cb_touch_extra[14],cb_touch_extra[15],cb_touch_extra[20]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH6 cfg87=%llx cfg88=%llx cfg89=%llx cfg125=%llx",
+    cb_touch_extra[16],cb_touch_extra[17],cb_touch_extra[18],cb_touch_extra[19]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH7 post qup0=%llx qup400=%llx qup408=%llx qupc=%llx",
+    cb_touch_extra[8],cb_touch_extra[9],cb_touch_extra[10],cb_touch_extra[11]);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
-  char rails[160];
+  char rails[200];
   snprintf(rails,sizeof rails,"PMIC entries=%llu sid0=%llu pages=%llu core0=%llx core1=%llx",
     cb_rails[1],cb_rails[2],cb_rails[3],cb_pmic_dump[0],cb_pmic_dump[1]);
   at=put(out,at,cap,rails,sizeof rails);
-  for(unsigned i=8;i<20;i+=6)snprintf(rails,sizeof rails,"PMIC sid0ppid %llx %llx %llx %llx %llx %llx",
+  for(unsigned i=8;i<8+cb_rails[2] && i<20;i+=6)snprintf(rails,sizeof rails,"PMIC sid0ppid %llx %llx %llx %llx %llx %llx",
       cb_pmic_dump[i],cb_pmic_dump[i+1],cb_pmic_dump[i+2],cb_pmic_dump[i+3],cb_pmic_dump[i+4],cb_pmic_dump[i+5]),
     at=put(out,at,cap,rails,sizeof rails);
   for(unsigned i=0;i<8;++i){uint64_t v=cb_pmic_pages[i];if(!v)continue;

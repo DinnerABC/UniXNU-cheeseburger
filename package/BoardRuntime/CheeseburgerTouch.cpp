@@ -12,7 +12,7 @@ extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 volatile uint64_t cb_touch[28];
-volatile uint64_t cb_touch_extra[16];
+volatile uint64_t cb_touch_extra[24];
 extern volatile uint32_t native_hid_stage;
 int cheeseburger_touch_hid_start(void);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
@@ -89,15 +89,14 @@ static int hardware(){
  for(unsigned i=0;i<20 && ((rd(gcc,0x21008)|rd(gcc,0x17004))&0x80000000);++i)IOSleep(1);
  if((rd(gcc,0x21008)|rd(gcc,0x17004))&0x80000000)return -52;
  const unsigned gp[]={87,88,89,125};for(unsigned i=0;i<4;++i)if(!map(pins[i],0x3400000+0x900000+gp[i]*0x1000,0x1000))return -53;
- for(unsigned i=0;i<2;++i)wr(pins[i],0,(rd(pins[i],0)&~(0x3cu|0x200u))|(3u<<2));
- // Three-point pad check before the bus is used, so "the line is low" cannot be
- // blamed on the QUP: (a) as the firmware left the pads, (b) as GPIO inputs
- // with the SoC pull-up, (c) after muxing to BLSP I2C (kept in cb_touch[27]).
+ // Pad levels as the firmware left them, before any write of ours.
  cb_touch_extra[14]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1)|((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
+ for(unsigned i=0;i<2;++i)wr(pins[i],0,(rd(pins[i],0)&~(0x3cu|0x200u))|(3u<<2));
+ cb_touch_extra[20]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1);
  {
   unsigned b0=rd(pins[0],0),b1=rd(pins[1],0);
-  wr(pins[0],0,(b0&~(0x3cu|0x200u|(3u<<10)))|(3u<<10));
-  wr(pins[1],0,(b1&~(0x3cu|0x200u|(3u<<10)))|(3u<<10));
+  wr(pins[0],0,(b0&~(0x3fu|0x200u))|3u);   // pull bits are [1:0] on this TLMM
+  wr(pins[1],0,(b1&~(0x3fu|0x200u))|3u);
   IOSleep(1);
   cb_touch_extra[15]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1);
   wr(pins[0],0,b0);wr(pins[1],0,b1);
@@ -111,13 +110,13 @@ static int hardware(){
  // pinctrl-msm reads the pad in IO bit 0 and drives it from bit 1, so the level
  // must be written to 0x2. Writing 0x1 only touches the read-only input field
  // and the pad stayed low (TOUCH error=-58).
- const unsigned cfg89=(rd(pins[2],0)&~(0x3cu|(7u<<6)|0x200u))|(3u<<6);
+ const unsigned cfg89=(rd(pins[2],0)&~(0x3fu|(7u<<6)|0x200u))|(3u<<6)|3u;
  wr(pins[2],4,0);IOSleep(2);
  wr(pins[2],0,cfg89|0x200u);
  wr(pins[2],4,2);IOSleep(50);
  cb_touch[14]=rd(pins[2],4)&1;
  if(!(cb_touch[14]&1)) { wr(pins[2],0,cfg89);return -58; }
- wr(pins[3],0,rd(pins[3],0)&~(0x3cu|0x200u));
+ wr(pins[3],0,(rd(pins[3],0)&~(0x3fu|0x200u))|3u);
  cb_touch[15]=rd(pins[3],0);cb_touch[16]=rd(pins[3],8);
  cb_touch[27]|=((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
  // Pull-up experiment: with the controller idle a weak SoC pull-up separates
@@ -126,21 +125,19 @@ static int hardware(){
  // restored immediately; nothing is left driven.
  {
   unsigned a0=rd(pins[0],0),a1=rd(pins[1],0);
-  wr(pins[0],0,(a0&~(3u<<10))|(3u<<10));wr(pins[1],0,(a1&~(3u<<10))|(3u<<10));IOSleep(1);
+  wr(pins[0],0,(a0&~3u)|3u);wr(pins[1],0,(a1&~3u)|3u);IOSleep(1);
   cb_touch_extra[12]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1)|((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
   wr(pins[0],0,a0);wr(pins[1],0,a1);
   cb_touch_extra[13]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1);
  }
  cb_touch_extra[0]=rd(gcc,0x21008);cb_touch_extra[1]=rd(gcc,0x21024);
+ cb_touch_extra[16]=rd(pins[0],0);cb_touch_extra[17]=rd(pins[1],0);cb_touch_extra[18]=rd(pins[2],0);cb_touch_extra[19]=rd(pins[3],0);
  if(!map(qup,0xc179000,0x1000))return -55;
  cb_touch[12]=rd(qup,0x30);unsigned mode=rd(qup,8),sizes[]={4,16,32};unsigned ob=mode&3,ib=(mode>>5)&3;
  if(ob>2||ib>2)return -56;txFifo=sizes[ob]*(2<<((mode>>2)&7));rxBlock=sizes[ib];rxFifo=rxBlock*(2<<((mode>>7)&7));
- cb_touch_extra[2]=mode;cb_touch_extra[3]=rd(qup,0x404);cb_touch_extra[4]=rd(qup,0x18);
- cb_touch_extra[5]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1)|((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
+ cb_touch_extra[2]=mode;
  clockCtl=0x300|93;
- cb_touch_extra[6]=rd(qup,0x0);cb_touch_extra[7]=rd(qup,0x30);
- cb_touch_extra[8]=rd(qup,0x400);cb_touch_extra[9]=rd(qup,0x408);
- cb_touch_extra[10]=rd(gcc,0x52004);cb_touch_extra[11]=rd(qup,0xc);
+ cb_touch_extra[6]=rd(qup,0x0);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
  return 0; // 19.2MHz / (2*(93+3)) = 100kHz.
 }
 static void worker(void*,wait_result_t){
@@ -175,6 +172,11 @@ static void worker(void*,wait_result_t){
    publish(frame);if(irqMode)wr(pins[3],8,rd(pins[3],8)|1);
   }}
  fail:
+ // State of the controller and pads at the moment the probe gave up: the
+ // registers above 0x400 are only meaningful after a real transaction.
+ if(qup.v){cb_touch_extra[8]=rd(qup,0x0);cb_touch_extra[9]=rd(qup,0x400);cb_touch_extra[10]=rd(qup,0x408);cb_touch_extra[11]=rd(qup,0xc);
+  cb_touch_extra[3]=rd(qup,0x404);cb_touch_extra[4]=rd(qup,0x18);}
+ if(pins[0].v)cb_touch_extra[5]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1)|((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
  if(sinkLock)publish(CbTouchFrame{});if(pins[3].v && irqMode)wr(pins[3],8,rd(pins[3],8)&~1u);
  cb_touch[5]=(uint64_t)(int64_t)e;cb_touch[0]=UINT64_MAX;
  // Keep maps/IRQ context valid for boot lifetime; no callbacks into freed memory.
