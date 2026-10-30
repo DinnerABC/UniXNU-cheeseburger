@@ -64,7 +64,7 @@ static int writeRmi(void *,uint16_t a,const uint8_t *v,unsigned n){
  // This backend deliberately cannot write arbitrary function/flash registers.
  bool ctrl=a==rmi.f01.control&&n==1,irq=a==rmi.f01.control+1&&n<=4;
  if(!rmi.f01.control||(!ctrl&&!irq)||!n)return -10;
- int e=cb_wire_page(wire,a>>8);if(e)return e;uint8_t t[10]={0x81,0x40,0x83,uint8_t(n+1),uint8_t(a)};memcpy(t+5,v,n);e=transfer(t,n+5,nullptr,0);if(!e)wire.page=a>>8;return e;
+ int e=cb_wire_page(wire,a>>8);if(e)return e;uint8_t t[10]={uint8_t(a)};memcpy(t+1,v,n);e=transfer(t,n+1,nullptr,0);if(!e)wire.page=a>>8;return e;
 }
 static void publish(const CbTouchFrame &f){
  bool same=native_touch_count==f.count;for(unsigned i=0;i<f.count&&same;++i)same=native_touch_xs[i]==f.x[i]&&native_touch_ys[i]==f.y[i]&&native_touch_ids[i]==f.id[i];if(same)return;

@@ -9,8 +9,10 @@
 #include <stddef.h>
 #include <string.h>
 struct CbRmiWire {void *ctx; int (*xfer)(void*,const uint8_t*,unsigned,uint8_t*,unsigned);unsigned page;};
-static inline int cb_wire_page(CbRmiWire &w,unsigned page){if(w.page==page)return 0;uint8_t t[]={0x81,0x40,0x83,2,0xff,uint8_t(page)};int e=w.xfer(w.ctx,t,sizeof t,nullptr,0);w.page=e?256:page;return e;}
-static inline int cb_wire_read(CbRmiWire &w,uint16_t a,uint8_t *p,unsigned n){if(!n||n>255||(a&255)==255)return -9;int e=cb_wire_page(w,a>>8);if(e)return e;uint8_t t[]={0x81,0x40,0x82,1,uint8_t(a),0x81,0x41,0x87,uint8_t(n)},raw[257];e=w.xfer(w.ctx,t,sizeof t,raw,n+2);w.page=e?256:(a>>8);if(!e)memcpy(p,raw+2,n);return e;}
+// Plain RMI4-over-I2C framing, as in the reference rmi_i2c.c: the page is
+// written to register 0xFF and every access starts with the low address byte.
+static inline int cb_wire_page(CbRmiWire &w,unsigned page){if(w.page==page)return 0;uint8_t t[]={0xff,uint8_t(page)};int e=w.xfer(w.ctx,t,sizeof t,nullptr,0);w.page=e?256:page;return e;}
+static inline int cb_wire_read(CbRmiWire &w,uint16_t a,uint8_t *p,unsigned n){if(!n||n>255||(a&255)==255)return -9;int e=cb_wire_page(w,a>>8);if(e)return e;uint8_t t[]={uint8_t(a)},raw[257];e=w.xfer(w.ctx,t,sizeof t,raw,n);w.page=e?256:(a>>8);if(!e)memcpy(p,raw,n);return e;}
 struct CbRmiBus { void *ctx; int (*read)(void *,uint16_t,uint8_t *,unsigned); int (*write)(void *,uint16_t,const uint8_t *,unsigned); };
 struct CbRmiFunction { uint16_t query,command,control,data; unsigned irq,irqs; };
 struct CbRmiItem { unsigned number,size,offset,subcount; uint32_t sublow; };
