@@ -15,6 +15,7 @@ volatile uint64_t cb_touch[28];
 volatile uint64_t cb_touch_extra[80];
 extern volatile uint32_t native_hid_stage;
 int cheeseburger_touch_hid_start(void);
+int cheeseburger_touch_sink_ready(void);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
 }
 namespace {
@@ -22,6 +23,9 @@ struct Window {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
 static Window qup,gcc,pins[4];
 static IOLock *sinkLock;
 static void (*sink)(void *);static void *sinkCtx;
+// A sink request can arrive before this driver allocates sinkLock (the HID probe
+// starts the combined keyboard+digitizer device first); keep it and apply it later.
+static void (*pendingSink)(void *);static void *pendingCtx;
 static CbRmi rmi;
 static CbRmiWire wire;
 static unsigned clockCtl,transform=3;
@@ -335,7 +339,7 @@ static void worker(void*,wait_result_t){
  cb_touch[0]=3;cb_touch[3]=rmi.f01.query;cb_touch[4]=rmi.f12.query;cb_touch[8]=rmi.maxx;cb_touch[9]=rmi.maxy;cb_touch[20]=rmi.objects;cb_touch[21]=rmi.data1;cb_touch[22]=rmi.packet;
  PE_parse_boot_argn("cheeseburger-touch-transform",&transform,sizeof transform);transform&=7;
  for(unsigned i=0;i<100 && native_hid_stage!=3;++i)IOSleep(50);
- e=cheeseburger_touch_hid_start();if(e)goto fail;
+ if(!cheeseburger_touch_sink_ready()){e=cheeseburger_touch_hid_start();if(e)goto fail;}
  cb_touch[0]=4;
  // Optional real GPIO125 -> TLMM summary SPI208 + GIC32. Disabled by default
  // until board IRQ ownership is qualified. Refuse a shared enabled summary.
@@ -376,5 +380,10 @@ static void worker(void*,wait_result_t){
  // Keep maps/IRQ context valid for boot lifetime; no callbacks into freed memory.
 }
 }
-extern "C" void native_touch_set_sink(void(*fn)(void*),void *ctx){if(!sinkLock)return;IOLockLock(sinkLock);sink=fn;sinkCtx=ctx;IOLockUnlock(sinkLock);}
-extern "C" void cheeseburger_touch_probe(void){unsigned enabled=0;if(!PE_parse_boot_argn("cheeseburger-touch",&enabled,sizeof enabled)||enabled!=1||cb_touch[0])return;cb_touch[0]=1;sinkLock=IOLockAlloc();if(!sinkLock){cb_touch[0]=UINT64_MAX;return;}thread_t t=nullptr;if(kernel_thread_start(worker,nullptr,&t)==KERN_SUCCESS)thread_deallocate(t);else{cb_touch[5]=uint64_t(-60);cb_touch[0]=UINT64_MAX;}}
+extern "C" void native_touch_set_sink(void(*fn)(void*),void *ctx){if(!sinkLock){pendingSink=fn;pendingCtx=ctx;return;}IOLockLock(sinkLock);sink=fn;sinkCtx=ctx;IOLockUnlock(sinkLock);}
+// The combined keyboard+digitizer device (sheng-touch-hid=1) attaches its event
+// driver on hardware; the standalone digitizer device (sheng-touch-split) does
+// not, so a sink installed by the combined device must not be replaced.
+extern "C" int cheeseburger_touch_sink_ready(void){return sink?1:0;}
+extern "C" void cheeseburger_touch_probe(void){unsigned enabled=0;if(!PE_parse_boot_argn("cheeseburger-touch",&enabled,sizeof enabled)||enabled!=1||cb_touch[0])return;cb_touch[0]=1;sinkLock=IOLockAlloc();if(!sinkLock){cb_touch[0]=UINT64_MAX;return;}
+ if(pendingSink){sink=pendingSink;sinkCtx=pendingCtx;pendingSink=nullptr;cb_touch_extra[78]=1;}thread_t t=nullptr;if(kernel_thread_start(worker,nullptr,&t)==KERN_SUCCESS)thread_deallocate(t);else{cb_touch[5]=uint64_t(-60);cb_touch[0]=UINT64_MAX;}}
