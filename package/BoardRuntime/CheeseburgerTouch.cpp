@@ -90,6 +90,18 @@ static int hardware(){
  if((rd(gcc,0x21008)|rd(gcc,0x17004))&0x80000000)return -52;
  const unsigned gp[]={87,88,89,125};for(unsigned i=0;i<4;++i)if(!map(pins[i],0x3400000+0x900000+gp[i]*0x1000,0x1000))return -53;
  for(unsigned i=0;i<2;++i)wr(pins[i],0,(rd(pins[i],0)&~(0x3cu|0x200u))|(3u<<2));
+ // Three-point pad check before the bus is used, so "the line is low" cannot be
+ // blamed on the QUP: (a) as the firmware left the pads, (b) as GPIO inputs
+ // with the SoC pull-up, (c) after muxing to BLSP I2C (kept in cb_touch[27]).
+ cb_touch_extra[14]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1)|((rd(pins[2],4)&1)<<2)|((rd(pins[3],4)&1)<<3);
+ {
+  unsigned b0=rd(pins[0],0),b1=rd(pins[1],0);
+  wr(pins[0],0,(b0&~(0x3cu|0x200u|(3u<<10)))|(3u<<10));
+  wr(pins[1],0,(b1&~(0x3cu|0x200u|(3u<<10)))|(3u<<10));
+  IOSleep(1);
+  cb_touch_extra[15]=(rd(pins[0],4)&1)|((rd(pins[1],4)&1)<<1);
+  wr(pins[0],0,b0);wr(pins[1],0,b1);
+ }
  // Read-only idle levels of the I2C pads: with the bus muxed but the controller
  // still disabled they show whether the sensor's IO rail (and its pull-ups) is
  // powered. bit0 SDA87, bit1 SCL88, bit2 reset89, bit3 attention125.

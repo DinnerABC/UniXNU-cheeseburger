@@ -15,6 +15,9 @@ volatile uint64_t cb_rails[24];
 // Raw arbiter view so the map format can be decoded offline: [0..7] core
 // registers, [8..23] the first 16 map words at core+0x800.
 volatile uint64_t cb_pmic_dump[24];
+// Regulator pages read back separately so the SID0 list and the page results
+// cannot overwrite each other.
+volatile uint64_t cb_pmic_pages[8];
 static void (*sink)(void *,uint32_t);
 static void *sinkContext;
 void native_buttons_set_sink(void (*fn)(void *,uint32_t),void *context) {
@@ -62,17 +65,17 @@ static void keysThread(void *,wait_result_t) {
       if(nown<12){uint32_t ppid=(entry>>8)&0xfff;if(ppid<0x100)cb_pmic_dump[8+nown++]=ppid;}
     }
     cb_rails[0]=1;cb_rails[1]=total;cb_rails[2]=nown;
-    // Only pages this EE can see can be touched through the arbiter; if the
-    // regulator pages are absent here they belong to the RPM and need a vote.
+    // Only pages this EE can see are reachable through the arbiter; a missing
+    // regulator page means the RPM owns it and only an RPM vote can power it.
     unsigned pages=0;
-    for(unsigned i=4;i<16 && pages<8;++i){uint32_t ppid=(uint32_t)cb_pmic_dump[i];if(ppid<0x40||ppid>0x7f)continue;
+    for(unsigned i=8;i<8+nown && pages<8;++i){uint32_t ppid=(uint32_t)cb_pmic_dump[i];if(ppid<0x40||ppid>0x7f)continue;
       int apid=-1;
       for(unsigned j=0;j<total;++j){uint32_t e=core.va[(0x800+4*j)/4];if(((e>>8)&0xfff)==ppid){apid=(int)j;break;}}
       if(apid<0)continue;
       uint8_t vset=0,en=0;Window ch;
       if(!mapWindow(ch,cb_observer_address((unsigned)apid),0x1000))continue;
       readStatus(ch,0x40,vset);readStatus(ch,0x46,en);unmap(ch);
-      cb_pmic_dump[16+pages]=(uint64_t)ppid|((uint64_t)vset<<12)|((uint64_t)en<<20);++pages;
+      cb_pmic_pages[pages]=(uint64_t)ppid|((uint64_t)vset<<12)|((uint64_t)en<<20);++pages;
     }
     cb_rails[3]=pages;
    }

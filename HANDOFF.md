@@ -2,6 +2,18 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-diag4 结果 + 代码审计（发现并修复诊断自身 bug）+ fb-diag5 已启动
+
+- fb-diag4 日志 `20261030T083537Z`（boot `0x5143e37f`，73 轮）：进桌面 `frames=9`；触摸仍 `-30`。
+- 结果行：`PMIC entries=244 sid0=12`，`PMIC sid0ppid 8 9 24 28 31 61`、`34 35 100061 39 3d 3e`，`PMIC page ppid=61 vset=00 en=01`，另有 0x39/0x3d/0x3e 被误当成页面。
+- **审计发现（已确认的自身 bug）**：`cb_pmic_dump[8..19]` 存 SID0 PPID、页面结果又写 `cb_pmic_dump[16..23]`，两者重叠；页面扫描还从错误的槽位（4..15）取 PPID。因此 `0x100061` 是打包值被当成 PPID、`pages=1` 与那三行"页"都是伪数据。修复：新增独立 `cb_pmic_pages[8]`，页面扫描改为遍历真实 SID0 列表（提交 `89ce640` 之后的修复轮）。
+- 修正后的可信结论：
+  - arbiter v3 表共 **244** 项，SID0 只有 `0x08/0x09/0x24/0x28/0x31/0x34/0x35/0x39/0x3d/0x3e/0x61`（另 1 项被旧 bug 覆盖）；**没有 0x40–0x5f 的 LDO 页** → PM8998 regulator 页不归 AP 这个 EE，**从 AP 侧写 PMIC LDO 不可行**（推断，证据已很强）。
+- 上游核对（`out/p22/reference/arch_arm64_boot_dts_qcom_msm8998-oneplus-common.dtsi`）：OnePlus 5 触摸节点为 `syna,rmi4-i2c@20`，`vdd-supply = vreg_l28_3p0`、`vio-supply = vreg_l6a_1p8`；`ts_reset_active` 与 `ts_int_active` 都是 gpio 功能、8 mA、**bias-pull-up**；`syna,reset-delay-ms=20`、`startup-delay-ms=20`。即复位低有效、空闲应被上拉到高；我们释放复位后仍读到低，与 `vio`（L6A 1.8 V）未上电一致。
+- fb-diag5（本轮）：修复上述 PMIC 槽位重叠；并新增**三点电平采样** `TOUCH5 raw=.. gpiopull=.. muxed=..`——分别取固件原状、GPIO 输入 + SoC 上拉、切到 BLSP I2C 之后，用来排除"低电平是 QUP 造成的"。
+- 候选 `out/p21/fb-diag5`：内核 `4a95f243…`、payload `cf41c9b6…`、固件 `f2af1b9d…`、镜像 `out/p21/fb-diag5/uefi/boot-p21-up1.img` `255dada9…`（82,579,456 bytes）；pins 命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+- 若 `raw`/`gpiopull` 仍为 0：线路在固件阶段就是低的，供电缺失成立，下一步只能走 **RPM* 投票（AP 侧 PMIC 写放弃）；若 `gpiopull` 变高而 `muxed` 变低，则是 QUP 把线拉低，转向 QUP 配置。
+
 ## 2026-10-30：fb-diag3 结果——arbiter 计数来源错误；fb-diag4 已启动
 
 - fb-diag3 日志 `20261030T081640Z`（boot `0x515f1c03`，69 轮）：进桌面 `frames=6`；触摸仍 `-30`。

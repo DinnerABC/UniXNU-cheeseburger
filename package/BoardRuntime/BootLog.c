@@ -157,6 +157,7 @@ extern volatile uint64_t cb_touch[28];
 extern volatile uint64_t cb_touch_extra[16] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
+extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
 extern volatile int native_legacy_unit_scale_status;
 extern volatile uint32_t native_legacy_unit_scale_calls,native_legacy_chosen_scale,native_legacy_chosen_rotation;
 extern volatile uint32_t armcpu_smp_running,armcpu_core_timer[8],armcpu_core_sgi[8],armcpu_smp_step[8],armcpu_smp_fail[8],armcpu_smp_mpidr[8];
@@ -184,6 +185,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     cb_touch_extra[6],cb_touch_extra[8],cb_touch_extra[9],cb_touch_extra[11],cb_touch_extra[10],cb_touch_extra[7]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH4 pullup sda=%llu scl=%llu rst=%llu int=%llu after=%llx",
     cb_touch_extra[12]&1,(cb_touch_extra[12]>>1)&1,(cb_touch_extra[12]>>2)&1,(cb_touch_extra[12]>>3)&1,cb_touch_extra[13]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH5 raw=%llx gpiopull=%llx muxed=%llx",
+    cb_touch_extra[14],cb_touch_extra[15],cb_touch[27]);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[160];
@@ -193,7 +196,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   for(unsigned i=8;i<20;i+=6)snprintf(rails,sizeof rails,"PMIC sid0ppid %llx %llx %llx %llx %llx %llx",
       cb_pmic_dump[i],cb_pmic_dump[i+1],cb_pmic_dump[i+2],cb_pmic_dump[i+3],cb_pmic_dump[i+4],cb_pmic_dump[i+5]),
     at=put(out,at,cap,rails,sizeof rails);
-  for(unsigned i=16;i<24;++i){uint64_t v=cb_pmic_dump[i];if(!v)continue;
+  for(unsigned i=0;i<8;++i){uint64_t v=cb_pmic_pages[i];if(!v)continue;
     snprintf(rails,sizeof rails,"PMIC page ppid=%llx vset=%02llx en=%02llx",v&0xfffull,(v>>12)&0xffull,(v>>20)&0xffull);
     at=put(out,at,cap,rails,sizeof rails);}
  }
