@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：CPU 渲染卡顿 → 改走 MDP5 直扫（零拷贝页翻转）
+
+- 现象与现有实现：`NativeLegacyDisplay` 每帧把 IOSurface 逐行 64 位存储拷进固件 GOP 缓冲（单缓冲），日志记录 143–285 ms/次；屏幕逐行刷新正是“边写边扫”的撕裂。上游 UniXNU 的 `NativeMobileDisplay` 也是同一套 GOP 拷贝，没有 MDP 支持，所以这部分要自己写。
+- 参考基线（Linux v6.6，已取到）：`drivers/gpu/drm/msm/disp/mdp5/mdp5_cfg.c` 的 `msm8998_config` 给出块地址（CTL 0x1000/0x1200/0x1400/0x1600/0x1800、VIG 0x4000/0x6000/0x8000/0xa000、RGB 0x14000/0x16000/0x18000/0x1a000、DMA 0x24000/0x26000、LM 0x44000..0x49000、PP 0x70000/0x70800/0x71000/0x71800、INTF 0x6a000..0x6c000；LM0→PP0、LM1→PP1、LM2→PP2、LM5→PP3；INTF1/2 是 DSI）；`mdp5.xml.h` 给出寄存器（PIPE SRC_XY 0x08、OUT_XY 0x10、SRC0_ADDR 0x14、SRC_STRIDE_A 0x24、SRC_FORMAT 0x30、OP_MODE 0x200；CTL TOP 0x00/OP 0x14/FLUSH 0x18/START 0x1c；PP TEAR 0x00/SYNC 0x04/HEIGHT 0x08；LM OUT_SIZE 0x04）。MDP 基址 0xc901000、MDSS 0xc900000、DSI0 0xc994000。翻转要点：改 `SRC0_ADDR`（必要时 `SRC_STRIDE_A`）后写 `CTL_FLUSH` 的对应 pipe 位，寄存器在帧边界生效。
+- **本轮加只读探针**（`package/BoardRuntime/CheeseburgerDispProbe.cpp`，提交见 git）：启动 60 s 后 dump MDSS/MDP 版本、5 个 CTL 的 TOP/FLUSH/OP/START、6 个 LM 的 OUT_SIZE/blend、4 个 PP 的 TEAR/SYNC/HEIGHT、三个 INTF、8 条 pipe（VIG0-3/RGB0-1/DMA0-1）的 ADDR/STRIDE/FORMAT/XY/OUT_XY/OP_MODE、DSI0 前三个寄存器，并记录 GOP 物理基址/stride/分辨率，用于把 `SRC0_ADDR` 与 GOP 基址对上、确定固件用的是哪条 pipe/哪个 CTL。
+- 为聚焦本轮，USB 探针暂时关闭（`cheeseburger-usb-probe=0`），启动参数增加 `cheeseburger-disp-probe=60`。
+- 镜像 `214ba057…`（内核 `63aa0759…`、payload `f9c421c2…`、固件 `ef38d448…`，args 714 字节），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区。
+
 ## 2026-10-31：USB 实时通道调研 + 阶段 0 探针（CDC-ACM 路线）
 
 - **上游结论**：UniXNU 的 `drivers/` 没有 USB host/device 驱动；sheng 设备页 USB 一栏是 ❌；上游日志通道只有 UART 串口、屏幕诊断页、panic 屏、QEMU 文件。上游文档明确写了替代方案：*"A board with USB device mode can expose a CDC ACM port instead."*
