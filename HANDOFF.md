@@ -2,6 +2,15 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：未解决问题清单（用户要求存档）
+
+1. **显示首帧间歇**：同一镜像会在 `sel6 (n,0x80000001)`（成功）与 `sel6 (0,0x80000003)` → `rc=e00002c7`（黑屏）之间翻转；`[fb events]` 记录可见分界在 backboardd 的配置序列，非身份/触摸。这是目前最影响体验的遗留问题。
+2. **触摸多点/边缘手势**：单指点按与滑动已确认可用；双指捏合、边缘回主屏/切换器手势尚未在实机验证（`native_touch_hid_multi` 有计数，但未做手势级确认）。
+3. **GPIO125 中断模式**：当前 25 ms 轮询（`irq=0`），`cheeseburger-touch-irq=1` 的 TLMM summary SPI208 路径未启用。
+4. **休眠/唤醒恢复**：挂起后触摸与显示能否恢复未验证。
+5. **诊断探针待清理**：`TOUCH10/15/16/17/18/19` 与 `cb_touch_extra[64..78]` 是定位期探针，触摸稳定后可裁剪（保留 `TOUCH` 主行与 `i2c/F01/F12/frames/HID` 即可）。
+6. **构建环境**：本机构建树 `/Users/dinnerabc/unixnu-p21/fb-qup3/source-tree`；不要复制整个候选（3 GB/50 分钟），只同步 `package/BoardRuntime` 改动与产物。
+
 ## 2026-10-31：触摸在实机上可用（用户确认）
 
 - 修复的最后一环（提交 `4ca8bc1`）：HID 探测阶段合并键盘设备先调用 `native_touch_set_sink()`，此时触摸驱动尚未分配 `sinkLock`，请求被丢弃；随后 worker 又创建了没有事件驱动的独立 digitizer 设备，导致 `TOUCH19 nodrv` 每次 +1 而 `HID=0`。现在把早到的 sink 请求挂起，`cheeseburger_touch_probe()` 分配锁后补装（`pend=1`）。
