@@ -114,8 +114,9 @@ static int qupTransfer(uint8_t addr,const uint8_t *tx,unsigned nt,uint8_t *rx,un
   if(nr&&(e=qupSetState(3)))return e;
  }
  if(nr){
-  wr(qup,0x150,4);wr(qup,0,unsigned(QP_CONFIG));
-  unsigned run=nt?0x80000000u:0;   // QUP_I2C_MX_CONFIG_DURING_RUN for the second message
+  // QUP_I2C_MX_CONFIG_DURING_RUN on every count of a re-configured sub-transfer.
+  unsigned run=nt?0x80000000u:0;
+  wr(qup,0x150,4|run);wr(qup,0,unsigned(QP_CONFIG));
   if(rxBlk){wr(qup,0x208,0);wr(qup,0x200,rxLen|run);}
   else{wr(qup,0x200,0);wr(qup,0x208,rxLen|run);}
   if(!nt){
