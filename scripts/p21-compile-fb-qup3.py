@@ -9,8 +9,10 @@ from pathlib import Path
 import os, json, shutil, subprocess, sys, time
 
 P = Path(__file__).resolve().parents[1]
+# Candidate artifacts stay on the NAS; the 1.3 GB build tree is a local copy so
+# object files and the Mach-O link do not go over the network share.
 C = P / 'out/p21/fb-qup3'
-R = C / 'source-tree'
+R = Path('/Users/dinnerabc/unixnu-p21/fb-qup3/source-tree')
 U = P / '.work/p21-official-framework'
 O = R / 'out/p21/official-adaptation'
 
@@ -42,7 +44,11 @@ assert c.example, 'Image pipeline remains guarded until firmware/ABI qualificati
 
 # Restore the DriverKit headers from the already prepared fb-probe tree when the
 # network fetch fails; the blob hash is still verified by the script itself.
-SEED = P / 'out/p21/fb-probe/source-tree/out/p21/official-adaptation/resolved/cheeseburger/ipados-17.7.11-21H461/cheeseburger/tree/.cache/xnu-work'
+# Seed from this candidate's NAS tree: it carries the complete prepared set,
+# while the local copy may miss a few DriverKit headers after re-prepare.
+SEED = C / 'source-tree/out/p21/official-adaptation/resolved/cheeseburger/ipados-17.7.11-21H461/cheeseburger/tree/.cache/xnu-work'
+if not SEED.is_dir():
+    SEED = P / 'out/p21/fb-probe/source-tree/out/p21/official-adaptation/resolved/cheeseburger/ipados-17.7.11-21H461/cheeseburger/tree/.cache/xnu-work'
 if SEED.is_dir():
     prep = c.tree / 'scripts/prepare-xnu-source.py'
     text = prep.read_text()

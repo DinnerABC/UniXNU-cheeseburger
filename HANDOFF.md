@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：构建树搬到本机，单轮构建从约 28 分钟降到约 4 分钟
+
+- **位置**：构建树在本机 `/Users/dinnerabc/unixnu-p21/fb-qup3/source-tree`（1.3 GB，构建后约 2 GB；本机剩余约 79 GB）。NAS 的 `out/p21/fb-qup3/source-tree` 保留一份源码副本，候选的 `kernel/ payload/ uefi/ config/ logs/` 仍全部在 NAS，证据链不变。
+- **同步方式（增量，不再整目录复制）**：改代码在仓库 `package/BoardRuntime/`，然后 `cp package/BoardRuntime/{CheeseburgerTouch.cpp,BootLog.c} <本机树>/package/BoardRuntime/`；构建驱动 `scripts/p21-compile-fb-qup3.py` 已把 `R` 指向本机树、`C` 仍是 NAS 候选，内核产出由脚本自己写回 `out/p21/fb-qup3/native/kernel.macho`。本机树里 `tree/kits/cheeseburger` 已重指到本机 `package`，`build/native-ram-block`、`build/native-keystore-events` 两个绝对软链也改成指向本机树。
+- **DriverKit 头种子**：本机树重新 prepare 时缺 6 个头会去 GitHub 抓（SSL EOF 失败）；驱动改为优先用**本候选** NAS 树的 `.cache/xnu-work` 作种子（37 个文件齐全），fb-probe 只作兜底。
+- **实测**：内核 `kernel.build` 111 s（NAS 冷态 709 s、热态 109 s，CPU 238 s 真正并行）；预链接 8 s；panic 补丁 5 s；payload 约 10 s；VM 固件 70 s；打包+门禁约 10 s → **整轮约 4 分钟**。之前判断的“预链接 7 分钟”是错读时间戳，实际只有 8 秒。
+- 本轮探针镜像：内核 `bb5d32ca…`、payload `bad654b0…`、固件 `730e599f…`、镜像 `b41443d3…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+
 ## 2026-10-30：QUP v2 通了——PDT 读出真实字节，但 6 字节内容与原厂 dmesg 反序
 
 - fb-qup3 日志 `20261030T150933Z`（boot `0x4a5fb48d`，70 rounds）：`TOUCH12 ack=1000000`（0x20 正常 ACK）、`w=0 r=0 page=0`、`i2c=21/0`（21 次成功、0 失败）、`TOUCH14 fifo=64/64 blk=16/16`、`TOUCH10 pdt=3421000a0026/101040e252a/120106150047`。I2C 读写事务已真正工作，`error=-32` 只是 `cb_discover` 找不到 F01/F12。
