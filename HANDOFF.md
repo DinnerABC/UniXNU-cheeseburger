@@ -2,6 +2,13 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：标准 RMI 帧反而更早失败；双帧取样探针已启动
+
+- fb-rmi 结果（`20261030T110354Z`，boot `0x4e5a3ae7`）：NPA 投票仍成功（捕获块同前），SDA/SCL 仍为 1/1，但触摸在第一次 RMI 读就失败：`error=-30 i2c=0/1`、`status=c960000`（旧帧时是 `1321c4`，且能完成 21 次 ACK）。说明"标准地址帧"在我们这套 QUP 传输上没有正确发出，而旧的 `0x81/0x82/0x87` 帧虽能 ACK 但返回数据不可用。
+- 为避免继续在两种帧之间猜（提交 `3eb2419`）：`hardware()` 在 QUP 初始化后、`cb_discover()` 之前，对同一地址（页 0 的 0xE9 PDT 头）分别用两种帧各读一次，把返回码与前 4 字节写进 `cb_touch_extra[24]/[25]`，日志新增 `TOUCH9 plain=.. old=..`（低 32 位=传输返回码，其后每字节依次为数据）。
+- 候选 `out/p21/fb-frame`：内核 `8d1367bd…`、payload `4312eaba…`、固件 `094d5d25…`、镜像 `ec30620e…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：`TOUCH9` 里哪一种帧返回的 6 字节呈现合法 PDT（如 fn=0x01/0x12、基址合理）就采用哪种，并据此修正 `cb_wire_read` 或 QUP 的读写时序；若两种都拿不到合法数据，则转向修正 QUP 的 combined write→read 时序（对照 `out/p22/reference/drivers_i2c_busses_i2c-qup.c`）。
+
 ## 2026-10-30：触摸供电已解决（NPA 投票成功），RMI 传输按上游修正
 
 - NPA 投票结果（`20261030T104504Z`，boot `0x50d41a7b`）：
