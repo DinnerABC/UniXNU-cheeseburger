@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：PDT 原始字节全 0；对比 1 字节 / 2 字节地址
+
+- fb-pdt 日志 `20261030T122342Z`（boot `0x4f772688`）：`TOUCH error=-32 i2c=25/4`、`TOUCH10 pdt=0/0/0`——页面 0 的 0xE9/0xE3/0xDD 三次读回全 0，且 I2C 状态没有错误位。
+- 说明读事务"完成"但拿不到真实数据，怀疑地址形式（RMI 16 位地址是写 1 字节低地址，还是写"页,偏移"两字节）。
+- fb-pdt2（提交 `2a89d52`）对同一寄存器做两种地址形式的对照，新增 `TOUCH11 pdt2=...`（两字节地址），与 `TOUCH10`（一字节地址）并列比较。
+- 候选 `out/p21/fb-pdt2`：内核 `19e407a1…`、payload `cb3e935f…`、固件 `5a011a63…`、镜像 `7318ac0e…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：若 `TOUCH11` 出现合法 PDT（fn=01/12），采用两字节地址；若两者仍全 0，说明问题在写事务本身（地址/START/STOP tag 或从机地址），下一步用 QUP 的 I2C_STATUS 逐位与上游 `I2C_STATUS_ERROR_MASK` 对照，并检查 0x40 是否被当作数据字节。
+
 ## 2026-10-30：读事务已通（i2c=25/0），PDT 仍无 F01/F12；已加原始 PDT 转储
 
 - fb-qup2 日志 `20261030T120148Z`（boot `0x4fad997b`）：`TOUCH error=-32 i2c=25/0`、`status=c110000`、`op=a20`；`TOUCH5 raw=7 gpiopull=3 muxed=3`（固件阶段起 SDA/SCL 就已是高，说明 UEFI 的 NPA 投票在 XNU 之前就把触摸轨打开了）。
