@@ -2,6 +2,19 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-diag2 结果——arbiter 解码本身是错的；fb-diag3 原始 dump + 上拉实验已启动
+
+- fb-diag2 日志 `20261030T075820Z`（boot `0x47fe5973`，80 轮）：进桌面 `frames=8`；触摸仍 `error=-30 i2c=0/1`。
+- 关键行：
+  - `TOUCH2 gcc=1 rcg=0 mode=a5 status=c000000 op=c0 pins=4`——控制器使能后四线仍是 sda=0 scl=0 rst=1 int=0；
+  - `TOUCH3 qup0=0 qup400=0 qup408=0 qupc=0 gcc52004=808a9d80 qupver=20070000`（QUP 未开始传输前读，0 属预期）；
+  - `PMIC apids=3 revid=0 pages=0 err=2`——**arbiter 的 APID 表解码不成立**（真实表远不止 3 项、PMIC revision 也读不到），因此此前所有 PMIC 读/写（XNU 与 UEFI）都建立在错误地址上，"供电假设"仍未验证。
+- fb-diag3（提交 `050f0df`）改为一次性记录原始数据与独立验证：
+  1. `PMIC core0..7`：arbiter 版本/特性等原始寄存器；
+  2. `PMIC map0/8`：映射表前 16 个原始 32 位表项（用于离线正确解码 PPID/APID）；
+  3. `TOUCH4 pullup sda=.. scl=.. rst=.. int=.. after=..`：临时给 gpio87/88 打开 SoC 内部上拉再读取，随后恢复原配置——用来区分"外部上拉电源缺失（线会抬起）"与"未上电芯片把线钳在低位（仍为 0）"。
+- 候选 `out/p21/fb-diag3`：内核 `e64d4e44…`、payload `cebefa07…`、固件 `fcf5f88c…`、镜像 `out/p21/fb-diag3/uefi/boot-p21-up1.img` `53b6e179…`（82,595,840 bytes）；pins 命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+
 ## 2026-10-30：fb-lines 结果 + fb-diag2（一次性全链诊断）已启动一次
 
 - fb-lines 日志 `20261030T073143Z`（boot `0x50006662`，108 轮）：进桌面 `frames=13`；触摸 `error=-30 i2c=0/1`；新增行 `TOUCH lines sda=0 scl=0 rst=1 int=0`——**复位已释放但 I2C 两线空闲为低**，与上拉所在的 `vcc_i2c_1v8`（pm8998_l6）未供电一致；`RAILS2 ppid4x5x=61/62/73/50/74/55/60/54`（列表被截断在 8 个，未覆盖整表）。
