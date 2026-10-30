@@ -12,7 +12,7 @@ extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 volatile uint64_t cb_touch[28];
-volatile uint64_t cb_touch_extra[32];
+volatile uint64_t cb_touch_extra[40];
 extern volatile uint32_t native_hid_stage;
 int cheeseburger_touch_hid_start(void);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
@@ -189,7 +189,13 @@ static int hardware(){
  if(!map(qup,0xc179000,0x1000))return -55;
  cb_touch[12]=rd(qup,0x30);unsigned mode=rd(qup,8),sizes[]={4,16,32};unsigned ob=mode&3,ib=(mode>>5)&3;
  if(ob>2||ib>2)return -56;txFifo=sizes[ob]*(2<<((mode>>2)&7));rxBlock=sizes[ib];rxFifo=rxBlock*(2<<((mode>>7)&7));
- cb_touch_extra[2]=mode;
+ cb_touch_extra[2]=mode; // Raw PDT entries as the sensor reports them (page 0, top three entries), so
+ // the scan result can be checked against real bytes instead of inference.
+ {
+  uint8_t pg[2]={0xff,0x00};transfer(pg,2,nullptr,0);
+  for(int i=0;i<3;++i){uint8_t d[6]={0},a[1]={(uint8_t)(0xE9-6*i)};transfer(a,1,d,6);
+   cb_touch_extra[26+i]=(uint64_t)d[0]|((uint64_t)d[1]<<8)|((uint64_t)d[2]<<16)|((uint64_t)d[3]<<24)|((uint64_t)d[4]<<32)|((uint64_t)d[5]<<40);}
+ }
  clockCtl=0x300|93;
  cb_touch_extra[6]=rd(qup,0x0)|((uint64_t)rd(qup,0x4)<<32);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
  // Raw framing probe: read the same page-0 PDT head with the plain address
