@@ -33,6 +33,7 @@
 #include <Library/IoLib.h>
 #include <Library/PrintLib.h>
 #include <Library/UefiLib.h>
+#include <Library/UefiBootServicesTableLib.h>
 
 #define RAIL_CORE_BASE      0x0800F000u
 #define RAIL_CHNL_BASE      0x08400000u
@@ -60,6 +61,14 @@
 
 #define RAIL_PPID_LOA6      0x045u
 #define RAIL_PPID_L28       0x05Bu
+
+// Protocol GUIDs recovered offline from the firmware images and their depex
+// expressions (rebuild/ipados-up1/npa-audit): PmicDxe locates AE37B942 and names
+// it "NpaProtocol"; NpaDxe installs 79D6C870 and 276732AB. Only existence is
+// probed here; no interface is called yet.
+STATIC CONST EFI_GUID gNpaGuid  = {0xAE37B942,0x457F,0x4C91,{0xA1,0x96,0xD9,0x66,0x9F,0xD3,0x47,0xA3}};
+STATIC CONST EFI_GUID gNpaAlt1 = {0x79D6C870,0x725E,0x489E,{0xA0,0xA1,0x27,0xE7,0xA5,0xD0,0xCB,0x35}};
+STATIC CONST EFI_GUID gNpaAlt2 = {0x276732AB,0xBB39,0x4DCE,{0xB5,0xD9,0x27,0x46,0xCD,0xD6,0xD5,0x18}};
 
 STATIC
 INT32
@@ -192,6 +201,18 @@ UniXnuEnableTouchRails (
   VOID
   )
 {
+  VOID        *If;
+  EFI_STATUS   Status;
+
+  If = NULL;
+  Status = gBS->LocateProtocol ((EFI_GUID *)&gNpaGuid, NULL, &If);
+  Print (L"UniXNU npa: AE37B942 %r if=%p\n", Status, If);
+  If = NULL;
+  Status = gBS->LocateProtocol ((EFI_GUID *)&gNpaAlt1, NULL, &If);
+  Print (L"UniXNU npa: 79D6C870 %r if=%p\n", Status, If);
+  If = NULL;
+  Status = gBS->LocateProtocol ((EFI_GUID *)&gNpaAlt2, NULL, &If);
+  Print (L"UniXNU npa: 276732AB %r if=%p\n", Status, If);
   Print (L"UniXNU rails: arbiter version=%08x\n", MmioRead32 (RAIL_CORE_BASE));
   RailEnable (L"pm8998_l6", RAIL_PPID_LOA6);
   RailEnable (L"pm8998_l28", RAIL_PPID_L28);
