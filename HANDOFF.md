@@ -2,6 +2,18 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：USB 实时通道调研 + 阶段 0 探针（CDC-ACM 路线）
+
+- **上游结论**：UniXNU 的 `drivers/` 没有 USB host/device 驱动；sheng 设备页 USB 一栏是 ❌；上游日志通道只有 UART 串口、屏幕诊断页、panic 屏、QEMU 文件。上游文档明确写了替代方案：*"A board with USB device mode can expose a CDC ACM port instead."*
+- **Apple 栈不可直接复用**：donor kernelcache 有 `AppleUSBXDCI`/`AppleT8011USBXDCI`/`AppleUSBDeviceMux`/`usb.cdc.acm`，但 Apple 开源 XNU 里没有 `IOUSBDeviceController/XDCI` 头，用它等于再逆向一套私有 ABI，成本高。
+- **硬件与参考**：DTS 给出 wrapper `usb@a8f8800`、控制器 `usb@a800000`（`snps,dwc3`）、QUSB2 PHY `@c012000`、QMP USB3 PHY `@c010000`、GCC 的 USB30 GDSC/时钟；**uefi-sheng 自带完整源码的 DWC3 device-mode 驱动**（`Silicon/Samsung/SamsungPkg/Drivers/UsbfnDwc3Dxe`，Dwc3Core/Dwc3Endpoint 约 2400 行），作为寄存器序列蓝本。
+- **阶段 0 探针**（`package/BoardRuntime/CheeseburgerUsb.cpp`，提交见 git）：启动参数 `cheeseburger-usb-probe=<秒>`（默认 60）+ `cheeseburger-usb-mode=1|2`。
+  - mode 1 只读；mode 2 在 GDSC/主时钟为关时先上电使能（GDSC 0xf004、master 0xf008、sleep 0xf00c、utmi 0xf010、phy aux 0x50000、pipe 0x50004、cfg_noc 0x5018、aggre1 0x82024、clkref 0x88008/0x88014、ahb2phy 0x6a004），再读一次；上电前状态保留在 `cb_usb[12..22]`。
+  - 仅在“GDSC 状态位 + 主时钟”都读回为开时才访问控制器/wrapper/PHY（未上电三块访问可能触发 NoC 错误），跳过区域填 0xdeadbeef。
+  - 日志行：`USB0`（GCC 11 项 + flags）、`USB1 pre`（上电前）、`USB2..USB8`（DWC3 32 项、QSCRATCH 16 项、QUSB2 16 项、QMP 32 项）。
+- 镜像 `f283d5e1…`（内核 `380db8b0…`、payload `8a3d9c3d…`、固件 `9b3f627b…`、args 712 字节），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区。
+- 判读：`flags` bit0=GDSC 上电、bit1=主时钟在跑、bit3=本探针上电成功、bit4/5=上电前状态；`USB2` 首项是 GSNPSID（`0x5533xxxx` 表示 DWC3 应答，`0xdeadbeef` 表示未访问）。
+
 ## 2026-10-31：未解决问题清单（用户要求存档）
 
 1. **显示首帧间歇**：同一镜像会在 `sel6 (n,0x80000001)`（成功）与 `sel6 (0,0x80000003)` → `rc=e00002c7`（黑屏）之间翻转；`[fb events]` 记录可见分界在 backboardd 的配置序列，非身份/触摸。这是目前最影响体验的遗留问题。
