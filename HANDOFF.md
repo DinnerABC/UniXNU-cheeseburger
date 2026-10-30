@@ -2,6 +2,16 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：DisplayPwr 未安装；从 UsbConfigDxe 拿到 NPA 客户端 ABI，已投票触摸供电
+
+- 上一轮结果（`20261030T103345Z`，boot `0x50872df8`）：捕获块 `UP1NPA2 ... disp=FFFFFFFF get=E set=3` → **DisplayPwr 协议未安装**（`E` = NOT_FOUND），该路径关闭；XNU 触摸仍 `-30`、SDA/SCL 仍 0。
+- **关键突破（照抄固件现有调用，不自己写 RPM）**：`UsbConfigDxe` 用同一 NPA 协议（`79D6C870…`）给 `/pmic/client/usb_ss1` 投票，反汇编得到 ABI：
+  - `[iface+0x10]` 创建客户端：`(resource_name, client_name, type=0x40, param=0, extra=NULL, &handle)`；
+  - `[iface+0x28]` 发请求：`(handle, state_u32)`（USB 用 state=2 表示 active）。
+- 据此在固件启动时：先尝试 `/pmic/client/touch_screen`，失败再试 `/pmic/client/disp_prim_touch`，创建成功后发 state=2；结果写入捕获块 `UP1NPA3 ... cli=<name> cre=<status> h=<handle> req=<status>`。仍不调用任何未知偏移、不写 PMIC 寄存器。
+- 提交 `6e89bf8`。镜像 `out/p21/fb-diag8/uefi/boot-p21-up1.img` `9eaf0a0d…`；固件 `eb604705…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：若 `cre=0` 且 XNU 侧 `TOUCH lines sda/scl` 变 1，则供电已通、触摸应开始 ACK；若 `cre` 非 0，说明这两个客户端名不是 NPA 资源，需改用 `/pmic/client/<ldo>` 形式的资源名或走 DAL 客户端节点。
+
 ## 2026-10-30：NPA/DAL 逆向进展 + DisplayPwr 实验
 
 - 更正上一轮的 GUID 归属（重新核对 `/tmp` 反汇编与二进制）：
