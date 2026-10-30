@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：触摸 HID 的 sink 早到问题（时序）已修
+
+- 日志 `20261030T171838Z`（用户已触摸、桌面正常 14 帧）：`TOUCH19 sink=503 send=503 nodrv=503 rep=0` —— sink 已安装，publish 每次都会调用 `touchSend`，但**每次**都因为 `hasEventDriverCached()` 为空而早退。
+- 根因（时序）：合并键盘+digitizer 设备在 `native_hid_input_probe()` 里就 `start()` 并调用 `native_touch_set_sink()`，此时触摸驱动还没跑、`sinkLock` 为空，sink 请求被直接丢弃；触摸 worker 后来看到 sink 为空，又创建了**独立 digitizer 设备**（`sheng-touch-split` 才该用的形态），它没有事件驱动，于是 `nodrv` 每次都加 1。
+- 修正：`native_touch_set_sink()` 在 `sinkLock` 未就绪时把请求挂在 `pendingSink/pendingCtx`；`cheeseburger_touch_probe()` 分配锁后立即补装（`TOUCH19 pend=1` 可确认）。这样合并设备成为 sink 所有者，独立设备不会再被创建。
+- 候选镜像 `5ce1d727…`（内核 `3dfbe6bd…`、payload `68e2be27…`、固件 `f9c4cccd…`），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区。
+- 判读：下一轮应为 `pend=1 sink>0 send>0 nodrv=0 rep>0` 且 `HID>0`；触摸应可点按/滑动。若 `nodrv` 仍增长，说明合并设备的事件驱动确实没附着，需要检查 IOHIDEventDriver 的匹配属性。
+
 ## 2026-10-31：HID=0 的真因是独立 digitizer 设备覆盖了合并设备的 sink
 
 - 日志 `20261030T170145Z`（boot `0x50...`，用户已触摸）：触摸解出 `contacts=1 publish=363`（`raw=77800000000`），但 `HID=0`；同一轮 `DISPLAY frames=0`，`[fb events]` 是已知的间歇分支 `E03 sel6 (0,0x80000003)` → `E04 rc=e00002c7`，与触摸改动无关（同镜像会翻转，此前基线也是这样）。
