@@ -89,15 +89,15 @@ static int hardware(){
  if((rd(gcc,0x21008)|rd(gcc,0x17004))&0x80000000)return -52;
  const unsigned gp[]={87,88,89,125};for(unsigned i=0;i<4;++i)if(!map(pins[i],0x3400000+0x900000+gp[i]*0x1000,0x1000))return -53;
  for(unsigned i=0;i<2;++i)wr(pins[i],0,(rd(pins[i],0)&~(0x3cu|0x200u))|(3u<<2));
- // OnePlus 5 upstream ts_reset_active: GPIO89, input with pull-up. Preserve supplies.
- // Linux pinctrl-msm encodes pull-up as 3; never drive or pulse the reset line.
- // GPIO89 = active-low reset, driven as an output (mux 0, pull-up, 8 mA).
- // The vendor sequence asserts reset low for 2 ms before releasing it; the
- // output latch is written before OE so enabling the pad cannot pulse it.
- const unsigned cfg89=(rd(pins[2],0)&~(0x3cu|(7u<<6)|0x200u))|(3u<<2)|(3u<<6);
+ // Captured FDT ts_reset_active: GPIO89, function gpio (mux 0), 8 mA, bias-pull-up.
+ // msm8998 gpio89 has no i2c/blsp alternate: mux 3 would hand the pad to nothing.
+ // pinctrl-msm reads the pad in IO bit 0 and drives it from bit 1, so the level
+ // must be written to 0x2. Writing 0x1 only touches the read-only input field
+ // and the pad stayed low (TOUCH error=-58).
+ const unsigned cfg89=(rd(pins[2],0)&~(0x3cu|(7u<<6)|0x200u))|(3u<<6);
  wr(pins[2],4,0);IOSleep(2);
  wr(pins[2],0,cfg89|0x200u);
- wr(pins[2],4,1);IOSleep(50);
+ wr(pins[2],4,2);IOSleep(50);
  cb_touch[14]=rd(pins[2],4)&1;
  if(!(cb_touch[14]&1)) { wr(pins[2],0,cfg89);return -58; }
  wr(pins[3],0,rd(pins[3],0)&~(0x3cu|0x200u));
