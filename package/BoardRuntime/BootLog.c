@@ -154,7 +154,7 @@ extern volatile uint32_t native_legacy_stage;
 extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
-extern volatile uint64_t cb_touch_extra[24] __attribute__((weak_import));
+extern volatile uint64_t cb_touch_extra[32] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -192,6 +192,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(touch,sizeof touch,"TOUCH7 post qup0=%llx qup400=%llx qup408=%llx qupc=%llx",
     cb_touch_extra[8],cb_touch_extra[9],cb_touch_extra[10],cb_touch_extra[11]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH8 drive=%llx bc=%llx",cb_touch_extra[22],cb_touch_extra[23]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH9 plain=%llx old=%llx",cb_touch_extra[24],cb_touch_extra[25]);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];

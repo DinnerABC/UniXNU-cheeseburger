@@ -12,7 +12,7 @@ extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 volatile uint64_t cb_touch[28];
-volatile uint64_t cb_touch_extra[24];
+volatile uint64_t cb_touch_extra[32];
 extern volatile uint32_t native_hid_stage;
 int cheeseburger_touch_hid_start(void);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
@@ -152,6 +152,18 @@ static int hardware(){
  cb_touch_extra[2]=mode;
  clockCtl=0x300|93;
  cb_touch_extra[6]=rd(qup,0x0)|((uint64_t)rd(qup,0x4)<<32);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
+ // Raw framing probe: read the same page-0 PDT head with the plain address
+ // frame and with the previous 0x81/0x82/0x87 frame, so the wire format is
+ // chosen from returned bytes instead of assumption.
+ {
+  uint8_t a[8]={0},b[12]={};int ea,eb;
+  uint8_t pg[2]={0xff,0x00};transfer(pg,2,nullptr,0);
+  uint8_t t1[1]={0xE9};ea=transfer(t1,1,a,6);
+  uint8_t t2[]={0x81,0x40,0x83,2,0xff,0x00};transfer(t2,sizeof t2,nullptr,0);
+  uint8_t t3[]={0x81,0x40,0x82,1,0xE9,0x81,0x41,0x87,6};eb=transfer(t3,sizeof t3,b,8);
+  cb_touch_extra[24]=(uint64_t)(uint32_t)ea|((uint64_t)a[0]<<32)|((uint64_t)a[1]<<40)|((uint64_t)a[2]<<48)|((uint64_t)a[3]<<56);
+  cb_touch_extra[25]=(uint64_t)(uint32_t)eb|((uint64_t)b[2]<<32)|((uint64_t)b[3]<<40)|((uint64_t)b[4]<<48)|((uint64_t)b[5]<<56);
+ }
  return 0; // 19.2MHz / (2*(93+3)) = 100kHz.
 }
 static void worker(void*,wait_result_t){
