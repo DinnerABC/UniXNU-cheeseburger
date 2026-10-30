@@ -26,6 +26,10 @@ if 'UniXNURails.c' not in inf:
     old = '  UniXNUDxe.c\n'
     assert old in inf, 'Sources block not found'
     inf = inf.replace(old, old + '  UniXNURails.c\n', 1)
+if 'gEfiBlockIoProtocolGuid' not in inf:
+    old = '  gEfiLoadedImageProtocolGuid         ## CONSUMES\n'
+    assert old in inf, 'Protocols block not found'
+    inf = inf.replace(old, old + '  gEfiBlockIoProtocolGuid             ## CONSUMES\n', 1)
 if '\n  IoLib\n' not in inf:
     old = '  DebugLib\n'
     assert old in inf, 'LibraryClasses block not found'
