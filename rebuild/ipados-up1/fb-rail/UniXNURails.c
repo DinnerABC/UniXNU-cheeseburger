@@ -34,6 +34,9 @@
 #include <Library/PrintLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Protocol/BlockIo.h>
 
 #define RAIL_CORE_BASE      0x0800F000u
 #define RAIL_CHNL_BASE      0x08400000u
@@ -196,24 +199,116 @@ RailEnable (
     );
 }
 
+// The probe result has to survive without anyone reading the screen, so it is
+// written into the persistent log window the kernel owns. The kernel uses
+// blocks 0..8160 of that window (header, message area and 247 slots of 32
+// blocks); blocks 8161..8191 are never written by it. userdata starts at LUN0
+// LBA 2441472 and the window at userdata LBA 2621440 (10 GiB), so the spare
+// block is LUN0 LBA 5071073 or userdata LBA 2629601.
+#define LOG_WINDOW_BLOCK        5071073ULL
+#define LOG_WINDOW_PART_BLOCK   2629601ULL
+#define LOG_USERDATA_BLOCKS     11703808ULL
+#define LOG_LUN0_BLOCKS         14145536ULL
+
+STATIC
+EFI_STATUS
+RailWriteCapture (
+  IN CONST CHAR8  *Line,
+  IN UINTN         Len
+  )
+{
+  EFI_HANDLE            *Handles;
+  UINTN                  Count;
+  UINTN                  Index;
+  EFI_BLOCK_IO_PROTOCOL *Bio;
+  UINT64                 Lba;
+  UINT8                 *Block;
+  EFI_STATUS             Status;
+
+  Handles = NULL;
+  Count = 0;
+  Bio = NULL;
+  Lba = 0;
+  Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &Count, &Handles);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  for (Index = 0; Index < Count; Index++) {
+    EFI_BLOCK_IO_PROTOCOL *Candidate;
+    UINT64                 Blocks;
+    if (EFI_ERROR (gBS->HandleProtocol (Handles[Index], &gEfiBlockIoProtocolGuid, (VOID **)&Candidate))) {
+      continue;
+    }
+    if (Candidate->Media == NULL || Candidate->Media->BlockSize != 4096) {
+      continue;
+    }
+    Blocks = Candidate->Media->LastBlock + 1;
+    // Exact sizes only: the userdata partition or the whole LUN0.
+    if (Blocks == LOG_USERDATA_BLOCKS) {
+      Bio = Candidate;
+      Lba = LOG_WINDOW_PART_BLOCK;
+      break;
+    }
+    if (Blocks == LOG_LUN0_BLOCKS && Bio == NULL) {
+      Bio = Candidate;
+      Lba = LOG_WINDOW_BLOCK;
+    }
+  }
+  FreePool (Handles);
+  if (Bio == NULL) {
+    return EFI_NOT_FOUND;
+  }
+  Block = AllocateZeroPool (4096);
+  if (Block == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+  CopyMem (Block, Line, Len);
+  Status = Bio->WriteBlocks (Bio, Bio->Media->MediaId, Lba, 4096, Block);
+  FreePool (Block);
+  if (!EFI_ERROR (Status)) {
+    Print (L"UniXNU npa: capture written at lba=%llx\n", Lba);
+  }
+  return Status;
+}
+
 VOID
 UniXnuEnableTouchRails (
   VOID
   )
 {
-  VOID        *If;
+  VOID        *IfA;
+  VOID        *IfB;
+  VOID        *IfC;
+  EFI_STATUS   SA;
+  EFI_STATUS   SB;
+  EFI_STATUS   SC;
   EFI_STATUS   Status;
+  CHAR8        Line[192];
+  UINTN        Len;
 
-  If = NULL;
-  Status = gBS->LocateProtocol ((EFI_GUID *)&gNpaGuid, NULL, &If);
-  Print (L"UniXNU npa: AE37B942 %r if=%p\n", Status, If);
-  If = NULL;
-  Status = gBS->LocateProtocol ((EFI_GUID *)&gNpaAlt1, NULL, &If);
-  Print (L"UniXNU npa: 79D6C870 %r if=%p\n", Status, If);
-  If = NULL;
-  Status = gBS->LocateProtocol ((EFI_GUID *)&gNpaAlt2, NULL, &If);
-  Print (L"UniXNU npa: 276732AB %r if=%p\n", Status, If);
+  IfA = NULL;
+  IfB = NULL;
+  IfC = NULL;
+  SA = gBS->LocateProtocol ((EFI_GUID *)&gNpaGuid, NULL, &IfA);
+  SB = gBS->LocateProtocol ((EFI_GUID *)&gNpaAlt1, NULL, &IfB);
+  SC = gBS->LocateProtocol ((EFI_GUID *)&gNpaAlt2, NULL, &IfC);
+  Print (L"UniXNU npa: AE37B942 %r if=%p\n", SA, IfA);
+  Print (L"UniXNU npa: 79D6C870 %r if=%p\n", SB, IfB);
+  Print (L"UniXNU npa: 276732AB %r if=%p\n", SC, IfC);
+
   Print (L"UniXNU rails: arbiter version=%08x\n", MmioRead32 (RAIL_CORE_BASE));
   RailEnable (L"pm8998_l6", RAIL_PPID_LOA6);
   RailEnable (L"pm8998_l28", RAIL_PPID_L28);
+
+  // One ASCII line in the log window so the result survives without the screen.
+  Len = AsciiSPrint (
+          Line,
+          sizeof Line,
+          "UP1NPA1 npaA=%x ifA=%lx npaB=%x ifB=%lx npaC=%x ifC=%lx\n",
+          (UINT32)SA, (UINT64)(UINTN)IfA,
+          (UINT32)SB, (UINT64)(UINTN)IfB,
+          (UINT32)SC, (UINT64)(UINTN)IfC
+          );
+  Status = (Len == 0) ? EFI_BAD_BUFFER_SIZE : RailWriteCapture (Line, Len);
+  Print (L"UniXNU npa: capture %r\n", Status);
 }
