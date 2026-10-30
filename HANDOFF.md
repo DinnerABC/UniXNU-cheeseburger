@@ -2,6 +2,17 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-diag 成功进入桌面（14 帧），事件环拿到首个成功样本
+
+- 回收 `out/p21/persistent-logs/20261030T055325Z/`：boot ID `0x50c0cf75`，79 轮，写入错误 0；`DISPLAY clients=57 frames=14`、`SWAP check=14 transfer=14 rc=0`、`EXITS 696`；用户报告**成功进入桌面**。
+- `[fb events]` 首个完整成功序列（`cntpct/cntfrq` 秒）：
+  - `E00 t=182.17 p94 s8 out2=438/780 rc=0`（尺寸查询返回 1080×1920）
+  - `E01 t=182.22 p56 s15 in2=0/10 out1=0 rc=e00002bc`、`E02 t=182.22 p56 s8 out2=438/780 rc=0`
+  - `E03 t=213.56 p56 s6 in3=0/80000003/0 rc=0`、`E04 s50 in2=10000/0 rc=e00002c7`
+  - 静默约 157 s 后 `E05 t=370.65 p56 s4 out1=1 rc=0`、`E06 s5 rc=0`，随后 `s6 (n,1)/(n,80000000)` + `s4` + `s5` 成组重复，`s5` 每次 rc=0，14 帧与 14 次 `s4/s5` 对应。
+- 结论（已确认）：selector 8 返回正确尺寸；失败分支缺的不是尺寸或 selector 50，而是 `s6` 之后的配置与 `s4/s5` 提交。失败轮在 `sel 6` 首次查询后停下，成功轮在 t≈370 s 才出现首个 `s4`。下一轮可在失败日志里对照 `[fb events]` 缺失的位置定位等待点。
+- 本轮无源码改动，仅诊断候选 `out/p21/fb-diag`（镜像 `bf6d86d7…`、内核 `29d3a758…`）被实机验证可进入桌面；该镜像作为新的对照基线保留。
+
 ## 2026-10-30：fb-diag 诊断候选（selector 事件环）已启动一次
 
 - 依据 `[mfb clients]` 全量行与 `[display state]` 得到的新分界：成功轮 backboardd 的 `sel 6` 完成 `(n,0x80000001,0) → 0` 序列，把显示对象 `[5820]/[5824]` 累加到 `0xe`（d2）/`0x2b`（window2g），`(n,0x80000000,0)` 返回 `0xe00002d5`(Busy)，随后 `sel 4`/`sel 5` 各 14 次成功；失败轮 `sel 6` 只调用一次 `(0,0x80000003,0) → 0`，没有 4/5，`[display state]` 的 `5816/5820/5824/5828` 全 0，`[display]` 的 `Current Display` 为空。剩余未知量是 `sel 6`/`sel 8` 的 scalarOutput。
