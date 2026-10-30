@@ -2,6 +2,16 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-pmic 结果 + fb-lines（总线电平 / PPID 页）诊断已启动一次
+
+- fb-pmic 日志 `20261030T070854Z`（boot `0x5133a1d8`，71 轮）：进入桌面（`frames=10`），触摸 `error=-30 i2c=0/1` 不变；`RAILS stage=1 l6 apid=-1 vset=00 en=00 l28 apid=146 vset=00 en=00 err=1`。
+- 判读：我们假定的 PPID `0x045` 在 arbiter APID 表里**不存在**，`0x05B` 虽命中但 VSET/enable 读到 0，不能证明是 LDO28。由此推断上一轮 UEFI 的 rail 代码同样没有找到 L6、且 L28 因 VSET=0 而未写入——**PMIC 实际从未被写过**，"供电假设"仍未验证。
+- 新增只读诊断（提交 `ca75a3e`）：
+  1. `CheeseburgerTouch.cpp` 在 I2C 复用后、控制器使能前读取 gpio87/88/89/125 的输入电平，写入 `cb_touch[27]`，日志新增 `TOUCH lines sda=.. scl=.. rst=.. int=..`；
+  2. `CheeseburgerButtons.cpp` 在 arbiter 线程里把 APID 表中 `0x040..0x07f` 的 PPID 收集到 `cb_rails[8..15]`，日志新增 `RAILS2 ppid4x5x=..`。
+- 候选 `out/p21/fb-lines`：内核 `859faaf7…`、payload `2043a87f…`、固件 `29f54a5a…`、镜像 `out/p21/fb-lines/uefi/boot-p21-up1.img` `f9766c0e…`（82,587,648 bytes）；pins 命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+- 判读方式：`TOUCH lines` 若 SDA/SCL 空闲为 0 → 上拉所在 IO 轨没电（供电问题）；若为 1 → 供电基本正常，转向 QUP 时序/地址。`RAILS2` 列出真实存在的 PPID 页，用于定位 PM8998 regulator 页后再考虑写入。
+
 ## 2026-10-30：fb-pmic（XNU 只读读取 L6/L28 状态）已启动一次
 
 - 目的：前一轮 UEFI 侧开 L6/L28 后触摸仍是 `-30`，且 UEFI 打印未进持久日志；本轮在 XNU 内用**只读**方式读回两路 LDO 状态，直接把证据写进持久日志。
