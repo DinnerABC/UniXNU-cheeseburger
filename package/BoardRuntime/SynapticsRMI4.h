@@ -48,7 +48,8 @@ static inline int cb_discover(CbRmi &r){
  for(unsigned page=0;page<8 && empty<2;++page){bool any=false;
   for(int off=0xe9;off>=5;off-=6){uint8_t p[6];if(r.bus.read(r.bus.ctx,(page<<8)|off,p,6))return -30;if(!p[5]||p[5]==255)break;
    any=true;CbRmiFunction f={uint16_t((page<<8)|p[0]),uint16_t((page<<8)|p[1]),uint16_t((page<<8)|p[2]),uint16_t((page<<8)|p[3]),r.irqcount,unsigned(p[4]&7)};
-   if(p[5]==1)r.f01=f;if(p[5]==12)r.f12=f;r.irqcount+=f.irqs;if(r.irqcount>32)return -31;
+   // Function numbers are hex: 0x01 is F01 and 0x12 is F12 (decimal 12 is F0C).
+   if(p[5]==0x01)r.f01=f;if(p[5]==0x12)r.f12=f;r.irqcount+=f.irqs;if(r.irqcount>32)return -31;
   }if(any)empty=0;else ++empty;
  }
  if(!r.f01.query||!r.f12.query)return -32;
