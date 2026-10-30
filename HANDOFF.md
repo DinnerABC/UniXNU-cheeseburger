@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：QUP v2 通了——PDT 读出真实字节，但 6 字节内容与原厂 dmesg 反序
+
+- fb-qup3 日志 `20261030T150933Z`（boot `0x4a5fb48d`，70 rounds）：`TOUCH12 ack=1000000`（0x20 正常 ACK）、`w=0 r=0 page=0`、`i2c=21/0`（21 次成功、0 失败）、`TOUCH14 fifo=64/64 blk=16/16`、`TOUCH10 pdt=3421000a0026/101040e252a/120106150047`。I2C 读写事务已真正工作，`error=-32` 只是 `cb_discover` 找不到 F01/F12。
+- **关键对照**：整机原厂 dmesg（`out/p21/phone-ui/evidence/recovery-touch-dmesg.txt`）给出 `F12_2D_QUERY_BASE=47 / CMD=0 / CTRL=15 / DATA=6`、`F34_FLASH_QUERY_BASE=26 / CTRL=a / DATA=0`。把 `0xDD` 读到的 6 字节 `12 01 06 15 00 47` **整体反转**即 `47 00 15 06 01 12`，与 F12 的 query/command/control/data/function 五项逐项吻合；`0xE9` 的 `34 21 00 0a 00 26` 反转后 query=0x26、ctrl=0x0a、data=0x00 也吻合 F34。说明数据是真的，只是字节序与标准 PDT 相反。
+- 本轮不加猜测，直接加判定探针（提交 `ef77b64`）：① 页寄存器回读——写 `0xFF=0x00` 读 0xFC 起 4 字节、写 `0xFF=0x01` 再读，页字节出现在第 4 位=顺序正常、出现在第 1 位=读流反序；② 偏移测试——`0xE8` 与 `0xE9` 各读 6 字节（顺序正常时 `e8[1..5]==e9[0..4]`），另读 `0xEE`；③ 按两种字段序（byte5 或 byte0 作函数号）扫描 0xE9→0x05，记录各自看到 F01/F12 的地址；④ 在 F12 query(0x47)/control(0x15) 各读 6 字节做内容验证。报告行新增 `TOUCH15`/`TOUCH16`。
+- 候选 `out/p21/fb-qup3`（复用同一候选目录，旧证据保留在 `boot-once.log`/历史日志）：内核 `54bfa72a…`、payload `1b6e87dc…`、固件 `a4a2ca81…`、镜像 `b7eb4776…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。设备 `3b25cc7c` 临时 boot 一次，未写分区。
+- 判读：若 `TOUCH15` 的页字节在 `pg0` 的第 4 字节 → 读流正常，问题在设备字段序，按反转字段解析 PDT 即可；若在第 1 字节 → 读流反序，需要修正传输层的字节顺序（下一步要确认是 per-word 还是整块）。`TOUCH16` 的 `f01n/f12n` 与 `f01r/f12r` 会直接给出两种解析各自的命中地址。
+
 ## 2026-10-30：根因更正——QUP5 是 v2.2.1，改用 v2 字节 tag 与重复起始读
 
 - fb-probe2 日志 `20261030T133244Z`（boot `0x4ff8d59c`，93 rounds）：`TOUCH12 ack=0,0 w=0 r=-8 b=0`、`TOUCH10 pdt=0/0/0`、`TOUCH13 status=c110000`、`TOUCH hw=20070000`。写事务"完成"但整条总线没有任何地址 ACK、读超时，和 v1 编程的预期不符。
