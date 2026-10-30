@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：读事务已通（i2c=25/0），PDT 仍无 F01/F12；已加原始 PDT 转储
+
+- fb-qup2 日志 `20261030T120148Z`（boot `0x4fad997b`）：`TOUCH error=-32 i2c=25/0`、`status=c110000`、`op=a20`；`TOUCH5 raw=7 gpiopull=3 muxed=3`（固件阶段起 SDA/SCL 就已是高，说明 UEFI 的 NPA 投票在 XNU 之前就把触摸轨打开了）。
+- 结论：I2C **读写事务都已工作**（25 次成功、0 失败），但扫描仍找不到 F01/F12。不再靠推断，改为把页面 0 顶部三个 PDT 表项（0xE9/0xE3/0xDD）的原始 6 字节读出来写入日志 `TOUCH10 pdt=a/b/c`。
+- 构建流程记录：本机代理当前对 GitHub TLS 返回 EOF，而 `raw.githubusercontent.com` 直连可用；`scripts/p21-compile-fb-pdt.py` 因此不再注入代理（api.github.com 的清单已缓存，无需访问）。可重复使用。
+- 候选 `out/p21/fb-pdt`：内核 `e00ba25b…`、payload `42aeb9fe…`、固件 `ddec1875…`、镜像 `out/p21/fb-pdt/uefi/boot-p21-up1.img` `9af808c5…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：若 `TOUCH10` 里出现 `fn=01`/`fn=12` 的合法条目，说明扫描逻辑有偏差（如 break 条件）；若全 0/0xFF，则读到的地址内容不对（页选择或地址字节需再核对）。
+
 ## 2026-10-30：审计 fb-qup——写事务已通、读事务超时；改为整块排空后重测
 
 - fb-qup 日志 `20261030T114202Z`（boot `0x4f9e7096`）：`TOUCH error=-30 i2c=3/3`、`status=c110000`、`op=820`、`lines sda=1 scl=1 rst=1`。
