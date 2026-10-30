@@ -2,6 +2,18 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-diag6 结果——写位正确、线路被外部钳低；fb-diag7 驱动实验已启动
+
+- fb-diag6 日志 `20261030T092128Z`（boot `0x5039ae38`，67 轮）：进桌面 `frames=8`；触摸仍 `-30`。
+  - `TOUCH5 raw=0 gpiopull=0 muxed=0`：**在任何写之前** SDA/SCL 就是低；用正确的 pull 位（[1:0]）仍拉不高；
+  - `TOUCH6 cfg87=c cfg88=c cfg89=2c3 cfg125=3`：mux/上拉/OE 写入**确实生效**（87/88 = mux3、无上拉；89 = mux0/8 mA/上拉/OE；125 = mux0/上拉）；
+  - `TOUCH7 post qup0=0 qup400=0 qup408=0 qupc=0`：结合代码路径可知 `transfer()` 在第一次 `state(0)` 就超时返回，后面的 QUP 配置写根本没执行——QUP 状态机没有进入 idle。
+- 综合判断（推断）：SDA/SCL 被外部强制钳低（内部上拉无效），同时 QUP 无法完成状态转换。最可能仍是触摸 IO 供电缺失（未上电芯片用 ESD 二极管把两条线钳在 0 V），其次是总线被短接；PM8998 的 regulator 页不归 AP EE，**只能走 RPM 投票**。
+- fb-diag7（提交 `fc26e25`）增加两个判定实验：
+  1. `TOUCH8 drive=..`：把 gpio87/88 切成 GPIO 输出、驱动高电平约 1 ms 后回读——回读 0 = 外部强钳低（供电缺失/短路），回读 1 = 线是自由的，之前的低电平来自我们自己的配置；
+  2. `TOUCH8 bc=..`（GCC_BLSP1_QUP5_BCR `0x21000`）与 `TOUCH3 qup0state=..`（QUP CONFIG + STATE）用于判断 QUP 是否被 block reset 或时钟没有真正生效。
+- 候选 `out/p21/fb-diag7`：内核 `84638732…`、payload `a0fa5dba…`、固件 `2d81762e…`、镜像 `out/p21/fb-diag7/uefi/boot-p21-up1.img` `1684dd86…`（82,591,744 bytes）；pins 命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+
 ## 2026-10-30：fb-diag5 结果 + 两遍代码审计（发现 pull 位错误）+ fb-diag6 已启动
 
 - fb-diag5 日志 `20261030T085525Z`（boot `0x50eb51b4`，76 轮）：进桌面 `frames=9`；触摸 `-30` 不变。
