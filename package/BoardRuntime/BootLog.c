@@ -156,6 +156,7 @@ static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
 extern volatile uint64_t cb_touch_extra[16] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
+extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile int native_legacy_unit_scale_status;
 extern volatile uint32_t native_legacy_unit_scale_calls,native_legacy_chosen_scale,native_legacy_chosen_rotation;
 extern volatile uint32_t armcpu_smp_running,armcpu_core_timer[8],armcpu_core_sgi[8],armcpu_smp_step[8],armcpu_smp_fail[8],armcpu_smp_mpidr[8];
@@ -181,16 +182,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     cb_touch_extra[0],cb_touch_extra[1],cb_touch_extra[2],cb_touch_extra[3],cb_touch_extra[4],cb_touch_extra[5]);at=put(out,at,cap,touch,sizeof touch);
   snprintf(touch,sizeof touch,"TOUCH3 qup0=%llx qup400=%llx qup408=%llx qupc=%llx gcc52004=%llx qupver=%llx",
     cb_touch_extra[6],cb_touch_extra[8],cb_touch_extra[9],cb_touch_extra[11],cb_touch_extra[10],cb_touch_extra[7]);at=put(out,at,cap,touch,sizeof touch);
+  snprintf(touch,sizeof touch,"TOUCH4 pullup sda=%llu scl=%llu rst=%llu int=%llu after=%llx",
+    cb_touch_extra[12]&1,(cb_touch_extra[12]>>1)&1,(cb_touch_extra[12]>>2)&1,(cb_touch_extra[12]>>3)&1,cb_touch_extra[13]);at=put(out,at,cap,touch,sizeof touch);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[160];
-  snprintf(rails,sizeof rails,"PMIC apids=%llu revid=%llx pages=%llu err=%llx",
-    cb_rails[1],cb_rails[2],(cb_rails[3]>>8)&0xffu,cb_rails[3]&0xffu);
-  at=put(out,at,cap,rails,sizeof rails);
-  for(unsigned i=4;i<16 && cb_rails[i];++i){uint64_t v=cb_rails[i];char row[96];
-    snprintf(row,sizeof row,"PMIC page ppid=%llx vset=%02llx en=%02llx err=%llu",
-      v&0xfffull,(v>>12)&0xffull,(v>>20)&0xffull,(v>>28)&0xfull);
-    at=put(out,at,cap,row,sizeof row);}
+  for(unsigned i=0;i<8;i+=4){snprintf(rails,sizeof rails,"PMIC core%u=%llx core%u=%llx core%u=%llx core%u=%llx",
+      i,cb_pmic_dump[i],i+1,cb_pmic_dump[i+1],i+2,cb_pmic_dump[i+2],i+3,cb_pmic_dump[i+3]);at=put(out,at,cap,rails,sizeof rails);}
+  for(unsigned i=8;i<24;i+=8){snprintf(rails,sizeof rails,"PMIC map%u %llx %llx %llx %llx %llx %llx %llx %llx",
+      i-8,cb_pmic_dump[i],cb_pmic_dump[i+1],cb_pmic_dump[i+2],cb_pmic_dump[i+3],cb_pmic_dump[i+4],cb_pmic_dump[i+5],cb_pmic_dump[i+6],cb_pmic_dump[i+7]);
+      at=put(out,at,cap,rails,sizeof rails);}
  }
  at=put(out,at,cap,"[display-clients-live]",32);
  char clients[6][91],aks[2][91];p21_client_rows(clients);p21_aks_rows(aks);
