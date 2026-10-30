@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：审计 fb-qup——写事务已通、读事务超时；改为整块排空后重测
+
+- fb-qup 日志 `20261030T114202Z`（boot `0x4f9e7096`）：`TOUCH error=-30 i2c=3/3`、`status=c110000`、`op=820`、`lines sda=1 scl=1 rst=1`。
+- 审计判断：`i2c=3` 成功说明**写事务（页选、写地址）在 tag 化之后已经正确**；读失败是因为 `qupFinish()` 每次 INPUT_SERVICE(`0x200`) 只读 1 个 FIFO 字（2 字节），6 字节读永远凑不满而超时。上游做法是：一个 REC tag 时整块数据已在 FIFO 中，服务标志一次即可全部读出，并以"字节收满"为完成条件（不依赖完成位）。
+- 修正（提交 `25d28b0`）：INPUT_SERVICE 置位后清标志并循环排空 `ceil(nr/2)` 个字；`got==nr` 即成功并回 RESET。写事务仍以完成位判断。
+- 候选 `out/p21/fb-qup2`：内核 `af541d8b…`、payload `da2b3baa…`、固件 `ecc6dea1…`、镜像 `out/p21/fb-qup2/uefi/boot-p21-up1.img` `410a8d18…`；pins 命中、门禁 PASS；临时 boot 一次 OKAY，未写分区。
+- 判读：`TOUCH` 的 `i2c` 失败数应变为 0，随后 `F01/F12` 非零、`stage` 前进；若读仍失败，用 `status/errors/op` 与 `TOUCH9` 判断是 FIFO 排空过多（读到 0）还是 REC tag 长度问题。
+
 ## 2026-10-30：QUP 传输已按上游重写（tag 化写 + 独立读事务），fb-qup 已启动
 
 - 依据上一轮的 5 点差异（提交 `6feceba`），把 `CheeseburgerTouch.cpp` 的 I2C 层重写为上游 `i2c-qup.c` 的 v1 编程：
