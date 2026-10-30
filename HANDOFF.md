@@ -2,6 +2,20 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-30：fb-diag5 结果 + 两遍代码审计（发现 pull 位错误）+ fb-diag6 已启动
+
+- fb-diag5 日志 `20261030T085525Z`（boot `0x50eb51b4`，76 轮）：进桌面 `frames=9`；触摸 `-30` 不变。
+  - `TOUCH5 raw=0 gpiopull=0 muxed=4`；
+  - 修正后的 PMIC 行：`PMIC entries=244 sid0=12 pages=1`（只有 `0x61` 一个 0x40–0x7f 页，`vset=00 en=01`）。
+- **审计发现（第一遍，已确认的错误）**：
+  1. `TOUCH5 raw` 采样点在 I2C 复用**之后**，并非"固件原状"，标签失真；
+  2. 内部上拉实验写的是 bits 10-11，而设备原厂 `pinctrl-msm8998.c` 明确 `pull_bit = 0`（bits 1:0）、`mux_bit=2`、`drv_bit=6`、`oe_bit=9`、`in_bit=0`、`out_bit=1`。所以 `gpiopull=0` **不能**证明外部钳位，该实验无效；
+  3. QUP `0x0/0x400/0x408/0xC` 在首次传输前读取，必然为 0，信息量低；
+  4. 复位脚与中断脚没有按原厂 `ts_reset_active`/`ts_int_active` 的 `bias-pull-up` 配置。
+- 时钟/地址复核（第二遍，已确认正确）：`gcc_blsp1_qup5_i2c_apps_clk` CBCR `0x21008` bit0、RCG `CFG_RCGR` `0x21024`、`gcc_blsp1_ahb_clk` `0x52004` bit17（halt `0x17004` bit31）均与设备原厂 `gcc-msm8998.c` 一致；数组边界（`cb_touch[28]`/`cb_touch_extra[24]`/`cb_pmic_dump[24]`/`cb_pmic_pages[8]`/`cb_rails[24]`）互不重叠。
+- fb-diag6（提交 `cb27e11`）修复上述四点：raw 采样提前到任何写操作之前、独立 `muxed` 采样、pull 位改为 [1:0]（复位脚/中断脚同时按原厂加上拉）、QUP 高偏移寄存器改在 `fail:` 时（首次真实传输失败后）读取，新增 `TOUCH7 post ...` 行；报告缓冲区 160→200。
+- 候选 `out/p21/fb-diag6`：内核 `e0855e4f…`、payload `c3287e0a…`、固件 `b1bed02f…`、镜像 `out/p21/fb-diag6/uefi/boot-p21-up1.img` `bb11e21b…`（82,579,456 bytes）；pins 命中、门禁 PASS；目标 `3b25cc7c` 临时 boot 一次 OKAY，未写分区。
+
 ## 2026-10-30：fb-diag4 结果 + 代码审计（发现并修复诊断自身 bug）+ fb-diag5 已启动
 
 - fb-diag4 日志 `20261030T083537Z`（boot `0x5143e37f`，73 轮）：进桌面 `frames=9`；触摸仍 `-30`。
