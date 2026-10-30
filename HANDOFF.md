@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：触摸已解出坐标；HID 只是因为缺 `sheng-touch-hid=1` 没被启用
+
+- 日志 `20261030T164836Z`（boot `0x501a...`，用户已实际触摸）：`TOUCH stage=4 error=0 i2c=20674/0 F01=2a F12=47`、`range=1079x1919 objects=10 data=6/80`、`frames=10317`、**`publish=348`**，最后一帧 `raw=69c00000284` 即 x=644、y=1692（都在 0..1079 / 0..1919 内），`mapped` 也已生成；`TOUCH19 nz=0` 说明所有非零数据包都成功解码，没有“有数据但解不出”的情况。
+- `contacts=0` 只是日志抓取时最后一帧已抬手（`publish` 记录的是变化次数）；触摸本身已验证。
+- **`HID=0` 的根因**：`NativeHidInput` 只有在启动参数 `sheng-touch-hid=1` 时才安装触摸 sink（`native_touch_set_sink`）并加入 digitizer 描述符；候选 `config/unixnu.toml` 的 args 里没有这一项，所以 `publish()` 的 sink 为空，事件没有进入 HID。已在 `cheeseburger-touch=1` 后加 `sheng-touch-hid=1`（args 从 644 增到 662 字节）。
+- 候选镜像 `2dc35c79…`（内核沿用 `b1269b4e…`、payload `7dada6e2…`、固件 `6c9be14a…`），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区。
+- 判读：本轮日志的 `TOUCH` 行 `HID` 应 >0；桌面应能响应点按/滑动。若 `HID>0` 但界面无反应，下一步查 `IOHIDDevice::handleReport` 返回值与 backboardd 的 digitizer 匹配（`Built-In`/`DigitizerCollectionDispatch`）。
+
 ## 2026-10-31：触摸链路打通到 stage=4；只差接触数据
 
 - 日志 `20261030T163537Z`（boot `0x5018e76c`）：`TOUCH stage=4 error=0 i2c=30285/0 F01=2a F12=47`，`range=1079x1919 objects=10 data=6/80`，`frames=15122`。F01/F12 发现成功，F12 的 80 字节数据包（10 指 ×8，跨 64 字节 FIFO 的块模式读）连续 6 分钟 30285 次传输、0 失败。
