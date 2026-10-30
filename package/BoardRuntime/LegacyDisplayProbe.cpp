@@ -580,11 +580,13 @@ extern void sheng_backlight_probe(void);
 extern "C" void cheeseburger_buttons_probe(void);
 extern "C" void cheeseburger_touch_probe(void);
 extern "C" void cheeseburger_usb_probe(void);
+extern "C" void cheeseburger_disp_probe(void);
 void native_legacy_display_late_probe(void) {
     native_hid_input_probe();
     cheeseburger_buttons_probe();
     cheeseburger_touch_probe();
     cheeseburger_usb_probe();
+    cheeseburger_disp_probe();
     native_keystore_probe();
     /* Unselected board peripheral; no MSM8998 provider qualified. */
     /* Unselected board peripheral; no MSM8998 provider qualified. */

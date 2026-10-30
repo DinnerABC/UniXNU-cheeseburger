@@ -156,6 +156,7 @@ static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
 extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
 extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
+extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -228,6 +229,20 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    }
    at=put(out,at,cap,usb,sizeof usb);
   }
+ }
+ if (&cb_disp[0] && cb_disp[123]) {
+  char disp[240];
+  snprintf(disp,sizeof disp,"DISP layout: 0 mdss_hw,1 mdp_hw,2-6 ctl top,7-11 ctl flush,12-16 ctl op,17-21 ctl start,22-27 lm out_size,28-33 lm blend0,34-45 pp tear/sync/height,46-51 intf,52-75 pipes addr/stride/fmt,76-99 pipes xy/out/opmode,100-102 dsi0,120-122 gop");
+  at=put(out,at,cap,disp,sizeof disp);
+  for(unsigned i=0;i<112;i+=16){
+   int n=snprintf(disp,sizeof disp,"DISPu%u",i/16+1);
+   for(unsigned k=0;k<16 && i+k<112;++k){
+    if(n<0||(size_t)n>sizeof disp-12)n=(int)sizeof disp-12;
+    n+=snprintf(disp+n,sizeof disp-n," %08llx",cb_disp[i+k]&0xffffffffull);
+   }
+   at=put(out,at,cap,disp,sizeof disp);
+  }
+  snprintf(disp,sizeof disp,"DISP gop=%llx stride=%llx w/h=%llx",cb_disp[120],(cb_disp[121]>>32)&0xffffffff,cb_disp[122]);at=put(out,at,cap,disp,sizeof disp);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];
