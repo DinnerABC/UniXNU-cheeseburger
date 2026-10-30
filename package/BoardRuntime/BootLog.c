@@ -155,6 +155,7 @@ extern unsigned p21_match_dump(char *,unsigned);
 static char official_report[32768],match_report[32768];
 extern volatile uint64_t cb_touch[28];
 extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
+extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -212,6 +213,21 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(touch,sizeof touch,"TOUCH19 nz=%llu p0=%llx p1=%llx f01=%llx sink=%llu send=%llu nodrv=%llu rep=%llu pend=%llu",
     cb_touch_extra[72],cb_touch_extra[64],cb_touch_extra[65],cb_touch_extra[73],
     cb_touch_extra[74],cb_touch_extra[75],cb_touch_extra[76],cb_touch_extra[77],cb_touch_extra[78]);at=put(out,at,cap,touch,sizeof touch);
+ }
+ if (&cb_usb[0] && cb_usb[112]) {
+  char usb[240];
+  snprintf(usb,sizeof usb,"USB0 gdsc=%08llx mclk=%08llx slp=%08llx utmi=%08llx aux=%08llx pipe=%08llx noc=%08llx aggr=%08llx ref=%08llx ref2=%08llx ahb=%08llx fl=%llx",
+    cb_usb[0]&0xffffffff,cb_usb[1]&0xffffffff,cb_usb[2]&0xffffffff,cb_usb[3]&0xffffffff,cb_usb[4]&0xffffffff,cb_usb[5]&0xffffffff,cb_usb[6]&0xffffffff,cb_usb[7]&0xffffffff,cb_usb[8]&0xffffffff,cb_usb[9]&0xffffffff,cb_usb[10]&0xffffffff,cb_usb[11]);at=put(out,at,cap,usb,sizeof usb);
+  snprintf(usb,sizeof usb,"USB1 pre gdsc=%08llx mclk=%08llx slp=%08llx utmi=%08llx aux=%08llx pipe=%08llx noc=%08llx aggr=%08llx ref=%08llx ref2=%08llx ahb=%08llx",
+    cb_usb[12]&0xffffffff,cb_usb[13]&0xffffffff,cb_usb[14]&0xffffffff,cb_usb[15]&0xffffffff,cb_usb[16]&0xffffffff,cb_usb[17]&0xffffffff,cb_usb[18]&0xffffffff,cb_usb[19]&0xffffffff,cb_usb[20]&0xffffffff,cb_usb[21]&0xffffffff,cb_usb[22]&0xffffffff);at=put(out,at,cap,usb,sizeof usb);
+  for(unsigned i=32;i<128;i+=16){
+   int n=snprintf(usb,sizeof usb,"USB%u",i/16+1);
+   for(unsigned k=0;k<16 && i+k<128;++k){
+    if(n<0||(size_t)n>sizeof usb-12)n=(int)sizeof usb-12;
+    n+=snprintf(usb+n,sizeof usb-n," %08llx",cb_usb[i+k]&0xffffffffull);
+   }
+   at=put(out,at,cap,usb,sizeof usb);
+  }
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];
