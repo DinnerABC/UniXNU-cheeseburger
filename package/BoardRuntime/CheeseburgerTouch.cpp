@@ -195,6 +195,10 @@ static int hardware(){
   uint8_t pg[2]={0xff,0x00};transfer(pg,2,nullptr,0);
   for(int i=0;i<3;++i){uint8_t d[6]={0},a[1]={(uint8_t)(0xE9-6*i)};transfer(a,1,d,6);
    cb_touch_extra[26+i]=(uint64_t)d[0]|((uint64_t)d[1]<<8)|((uint64_t)d[2]<<16)|((uint64_t)d[3]<<24)|((uint64_t)d[4]<<32)|((uint64_t)d[5]<<40);}
+  // Same register with a two-byte address (page, offset), as some vendor
+  // transports send it, to see which form actually latches.
+  for(int i=0;i<3;++i){uint8_t d[6]={0},a[2]={0x00,(uint8_t)(0xE9-6*i)};transfer(a,2,d,6);
+   cb_touch_extra[29+i]=(uint64_t)d[0]|((uint64_t)d[1]<<8)|((uint64_t)d[2]<<16)|((uint64_t)d[3]<<24)|((uint64_t)d[4]<<32)|((uint64_t)d[5]<<40);}
  }
  clockCtl=0x300|93;
  cb_touch_extra[6]=rd(qup,0x0)|((uint64_t)rd(qup,0x4)<<32);cb_touch_extra[7]=rd(qup,0x30);cb_touch_extra[21]=rd(gcc,0x52004);
