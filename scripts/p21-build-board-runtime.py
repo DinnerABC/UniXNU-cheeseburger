@@ -2,7 +2,7 @@
 """Rebuild the board source closure against the new official kernel records."""
 from pathlib import Path
 import json,os,shutil,subprocess,sys,hashlib
-ROOT_ENTRY=Path(__file__).resolve().parents[1];R=ROOT_ENTRY if (ROOT_ENTRY/'board.toml').is_file() else (ROOT_ENTRY/'kits/cheeseburger').resolve().parent;U=R/'.work/p21-official-framework';T=R/'out/p21/official-adaptation/resolved/cheeseburger/ipados-17.7.11-21H461/cheeseburger/tree';B=T/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837';S=R/'package/BoardRuntime';O=R/'out/p21/official-adaptation/runtime-build';O.mkdir(parents=True,exist_ok=True)
+ROOT_ENTRY=Path(os.environ['P21_BOARD_ROOT']).resolve() if os.environ.get('P21_BOARD_ROOT') else Path(__file__).resolve().parents[1];R=ROOT_ENTRY if (ROOT_ENTRY/'board.toml').is_file() else (ROOT_ENTRY/'kits/cheeseburger').resolve().parent;U=R/'.work/p21-official-framework';T=R/'out/p21/official-adaptation/resolved/cheeseburger/ipados-17.7.11-21H461/cheeseburger/tree';B=T/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837';S=R/'package/BoardRuntime';O=R/'out/p21/official-adaptation/runtime-build';O.mkdir(parents=True,exist_ok=True)
 ENV=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',PATH='/opt/homebrew/opt/python@3.13/libexec/bin:/opt/homebrew/opt/llvm/bin:'+os.environ['PATH'])
 records={}
 for lang,name in [('c','osfmk/DEVELOPMENT/startup.o.json'),('cpp','iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'),('bsd','bsd/DEVELOPMENT/kern_exec.o.json')]:records[lang]=json.loads((B/name).read_text().strip().rstrip(','))
