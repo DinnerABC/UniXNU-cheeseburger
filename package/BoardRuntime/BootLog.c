@@ -247,6 +247,14 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(disp,sizeof disp,"DISP timing wr=%llx/%llx ic=%llx/%llx fps=%llu/%llu intf_en=%llx cfg=%llx vp=%llx",
     cb_disp[103],cb_disp[104],cb_disp[105],cb_disp[106],cb_disp[107],cb_disp[108],cb_disp[109],cb_disp[110],cb_disp[111]);at=put(out,at,cap,disp,sizeof disp);
  }
+ if (&native_data_persist_state) {
+  char data[240];
+  snprintf(data,sizeof data,"DATA persist state=%u header=%u gpt=%u/%u pages=%llu loaded=%llu writes=%llu syncs=%llu err=%llu first=%llu present=%llu",
+    native_data_persist_state,native_data_persist_header,native_data_persist_gpt,native_data_persist_gpt_after,
+    native_data_persist_pages,native_data_persist_loaded,native_data_persist_writes,native_data_persist_syncs,
+    native_data_persist_errors,native_data_persist_first_lba,native_data_persist_present);
+  at=put(out,at,cap,data,sizeof data);
+ }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];
   snprintf(rails,sizeof rails,"PMIC entries=%llu sid0=%llu pages=%llu core0=%llx core1=%llx",

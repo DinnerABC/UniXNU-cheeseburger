@@ -2,6 +2,19 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：持久 Data 打通（mode1 只读 → mode2 初始化 → 跨重启恢复）
+
+- 背景：此前 Data 只有 payload 内 1 GiB seed 的内存稀疏盘（`owner-data-1g.dbr`），重启即丢；官方 RamBlock 已有 overlay 机制，缺的是 UFS 侧的 `native_ufs_store_*` 回调（本仓库原先只提供 `gpt_check`，其余由 `no-store-provider.c` 返回 0）。
+- 实现（`package/BoardRuntime/NativeUfs.cpp`，照官方 ShengUfs `e2b32cc4` 的存储策略）：窗口取 userdata 尾部 `sheng-log-reserve`（默认 1024 MiB）预留区下方，按 seed 页数请求大小；`sheng-data-persist=1` 只读校验，`2` 打开写窗口。写命令仅 WRITE(10)+FUA（`logWrite` 之外的第二个受限窗口）、每次读回校验、SYNCHRONIZE CACHE；提交路径按 CDB 的 LBA/长度再次检查窗口。`native_ufs_store_gpt_check` 仍用既有 GPT/GPT-entry CRC 与 userdata 边界；`submit()` 只放行 log 或 store 两个 active 窗口。BootLog 新增 `DATA persist state/header/gpt/pages/loaded/writes/syncs/err/first/present` 行。
+- 构建：`scripts/p21-build-board-runtime.py` 不再编译 `no-store-provider.c`（否则与 NativeUfs 的新符号重复）。
+- 窗口几何（4096 字节 LBA）：partition `2441472..14145279`（11703808 块）；log `5062912+8192`；**store `13620983..13883135`（262153 块 = 1073778688 字节，userdata 相对 42.65–43.65 GiB）**；尾部预留 `13883136..14145279`。根卷镜像 9382658048 字节，距 store 起点有约 34 GiB。启动前只读抽样 store 首/中/尾与预留区均为全零。
+- **mode 1（只读）**：镜像 `1934533c…`（内核 `3f790395…`、payload `c03dc95c…`、固件 `8f646079…`，args 484），日志 `20261031T042950Z`（boot `0x5331cf57`）：`CB Data store: mode=1 lba=13620983 blocks=262153`、`DATA persist state=1 header=1 gpt=0/0 pages=262144 writes=0 syncs=0 err=0 first=13620983 present=0`，Data 挂载 `result=0`。窗口可读、空白、GPT 未变、零写入。
+- **mode 2（初始化）**：同一内核，payload `b6a8ea0a…`、固件 `480533f5…`、镜像 `d8bfbb91…`；日志 `20261031T044135Z`（boot `0x4e1d0ef9`）：`state=3 gpt=0/0 writes=161233 syncs=25108 present=102895 err=0`，Data `result=0`。
+- **跨重启恢复**：同一镜像 `d8bfbb91…` 再启动一次；日志 `20261031T044943Z`（boot `0x4fa89bdb`）首行 `state=2 header=0 gpt=0/0 loaded=111 present=103367 err=0`，后续 `present=147881`，Data `result=0`。**持久 Data 成立**。
+- 限制：只验证了该 Data 窗口与日志窗口，未做掉电/复位故障注入；seed 大小或内容（如 GPU 插件）改变会更换持久化身份，需 `sheng-data-reset=1` 重新初始化；窗口位置依赖 reserve 值，镜像生命周期内不要改。未写 GPT/根卷/日志窗口以外区域。
+- 附带确认（上一轮待查）：`display-scale=3` 后渲染面仍是 **1242×2208**（`P21 SCALE 1242x2208 -> 1080x1920`），CPU 缩放仍在；scale 只改逻辑布局，不改像素尺寸。
+- 下一步：按官方顺序进入 GPU（Adreno 540），先做只读硬件/电源/固件探针；同 SoC 的 sagit（`out/p23/metal-review/sagit-source`，pin `898998c`）含 A540 的 GPUCC/RPM/SMMU/CP/GPMU 与固件参考。
+
 ## 2026-10-31：界面改成手机比例——`/chosen/display-scale` 由 1 改为 3
 
 - 身份核对（官方 `/zh/guide/mobilegestalt`）：ADT 早已是 iPhone 行（`iPhone10,3`/`D22`/`iPhone X`/idiom `phone`/subtype 2436/scale 3/无 menu/`home-button-type=2`），与 P23 iOS 16 donor 一致；sheng 用 iPad 行（`iPad7,1`/`J120`、scale 2）。问题不在 model/product。

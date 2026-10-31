@@ -66,6 +66,8 @@ class NativeUfs : public IOService {
  UInt8 *mem=nullptr; UInt64 phys=0; uintptr_t hc=0;
  UInt64 primaryLast=0;bool primary4k=false;
  bool logOpened=false,logFault=false,logCommandActive=false;
+ bool storeOpened=false,storeFault=false,storeCommandActive=false;
+ UInt64 storeFirst=0; UInt64 storeBlocks=0;
  bool poisoned=false,installed=false; unsigned readProofs=0;
  UInt32 oldLo=0,oldHi=0,oldRun=0,oldIE=0;
  UInt32 rd(unsigned o) {UInt32 v=*reinterpret_cast<volatile UInt32*>(hc+o);asm volatile("dmb oshld":::"memory");return v;}
@@ -86,6 +88,12 @@ public:
  bool logOpen(const char **);
  IOReturn logWrite(UInt64,UInt32,const void*);
  IOReturn logSync();
+ bool storeOpen(UInt64,UInt64*,const char**);
+ bool storeWindowOpen(UInt64,UInt64);
+ bool storeInWindow(UInt64,UInt32) const;
+ bool storeRead(UInt64,UInt32,void*);
+ IOReturn storeWrite(UInt64,UInt32,const void*);
+ IOReturn storeSync();
  bool prepareRootWindows();
  IOReturn readRaw4k(UInt8,UInt64,UInt32,void*);
  bool start(IOService*) override;
@@ -113,7 +121,11 @@ bool NativeUfs::submit(unsigned direction,unsigned bytes) {
   bool read=p8ReadCommand(q[16],direction,bytes);
   bool logWrite=logCommandActive&&logOpened&&!logFault&&q[1]==0x20&&q[16]==0x2a&&cbLogCommand(q+16,q[2],direction,bytes);
   bool logSync=logCommandActive&&logOpened&&!logFault&&q[1]==0&&q[16]==0x35&&cbLogCommand(q+16,q[2],direction,bytes);
-  if(!read&&!logWrite&&!logSync)return false;
+  // The Data store is the second bounded write window: same command shape, checked against its own range.
+  bool storeWrite=storeCommandActive&&storeOpened&&!storeFault&&q[1]==0x20&&q[16]==0x2a&&q[2]==0&&
+   storeInWindow((uint64_t(q[18])<<24)|(uint64_t(q[19])<<16)|(uint64_t(q[20])<<8)|q[21],(uint32_t(q[23])<<8)|q[24]);
+  bool storeSync=storeCommandActive&&storeOpened&&!storeFault&&q[1]==0&&q[16]==0x35;
+  if(!read&&!logWrite&&!logSync&&!storeWrite&&!storeSync)return false;
  }
  else if(q[0]!=0||bytes||direction)return false; // only NOP OUT otherwise
  UInt32 *d=(UInt32*)mem;bzero(d,32);d[0]=0x10000000U|(direction<<25);d[2]=15;
@@ -265,6 +277,8 @@ static bool gRootDiagnosticEnabled=false;
 static const char *native_ufs_root_failure=nullptr;
 static NativeUfs *gRootHost=nullptr;
 static bool gLogLayoutSafe=false;
+// Userdata geometry from the validated root manifest, for the Data store window.
+static struct { bool valid; uint64_t first,last,imageBytes; } gDataStoreGeometry;
 static IOReturn hostRead4k(uint8_t lun,uint64_t lba,uint32_t blocks,void *out){
  return gRootHost?gRootHost->readRaw4k(lun,lba,blocks,out):kIOReturnNotReady;
 }
@@ -327,6 +341,80 @@ IOReturn NativeUfs::logSync(){
  if(ok){bzero(mem+kUcdOffset,kDmaBytes-kUcdOffset);UInt8 *q=mem+kUcdOffset;q[0]=1;q[3]=1;q[16]=0x35;logCommandActive=true;ok=submit(0,0);logCommandActive=false;P11UfsResponse response;if(ok)ok=p11UfsResponse(q+kRspOffset,512,0,0x35,0,response);}
  if(!ok)logFault=true;IOLockUnlock(lock);return ok?kIOReturnSuccess:kIOReturnIOError;
 }
+// ---- Persistent Data store window (sheng-data-persist) ------------------------------------------------
+// Official ShengUfs policy: the consumer (NativeRamBlock's overlay) asks for a window at the end of the
+// userdata partition, just below the reserve; it may never overlap the flashed root image, the diagnostic
+// log window or the partition bounds. Mode 1 only reads and proves the window; mode 2 opens the write path.
+// The only writes this driver performs are the log window and, once opened here, the Data store.
+static unsigned dataStoreMode(){uint32_t v=0;if(!PE_parse_boot_argn("sheng-data-persist",&v,sizeof v)||v>2)v=0;return v;}
+static uint64_t dataStoreReserveBlocks(){uint32_t mib=1024;if(!PE_parse_boot_argn("sheng-log-reserve",&mib,sizeof mib)||mib>16384)mib=1024;return uint64_t(mib)*256;}
+bool NativeUfs::storeInWindow(UInt64 lba,UInt32 count) const {
+ return storeOpened&&count&&lba>=storeFirst&&lba-storeFirst<storeBlocks&&count<=storeBlocks-(lba-storeFirst);
+}
+bool NativeUfs::storeWindowOpen(UInt64 first,UInt64 blocks){
+ if(storeOpened||!blocks||first>0xffffffffULL||blocks>0xffffffffULL-first)return false;
+ if(logOpened&&first<CB_LOG_FIRST+CB_LOG_BLOCKS&&CB_LOG_FIRST<first+blocks)return false;
+ storeOpened=true;return true;
+}
+bool NativeUfs::storeOpen(UInt64 blocks,UInt64 *firstLba,const char **why){
+ const char *reason="";unsigned mode=dataStoreMode();int ok=0;
+ if(!mode)reason="off";
+ else if(!gDataStoreGeometry.valid||!primary4k)reason="no root layout";
+ else if(storeBlocks)reason="already open";
+ else {
+  uint64_t partition=gDataStoreGeometry.last-gDataStoreGeometry.first+1;
+  uint64_t imageBlocks=(gDataStoreGeometry.imageBytes+4095)/4096;
+  uint64_t reserve=dataStoreReserveBlocks();
+  if(!blocks||reserve>=partition||blocks>partition-reserve)reason="size";
+  else if(partition-blocks-reserve<imageBlocks+1024)reason="overlaps the root image";
+  else {
+   uint64_t first=gDataStoreGeometry.last+1-reserve-blocks;
+   if(first<CB_LOG_FIRST+CB_LOG_BLOCKS&&CB_LOG_FIRST<first+blocks)reason="overlaps the log";
+   else if(mode==2&&!storeWindowOpen(first,blocks))reason="window refused";
+   else {storeFirst=first;storeBlocks=blocks;if(firstLba)*firstLba=first;ok=1;
+    IOLog("CB Data store: mode=%u lba=%llu blocks=%llu bytes=%llu\n",mode,first,blocks,blocks*4096ULL);}
+  }
+ }
+ if(!ok&&mode)IOLog("CB Data store refused: %s\n",reason);
+ if(why)*why=reason;
+ return ok!=0;
+}
+bool NativeUfs::storeRead(UInt64 rel,UInt32 count,void *dst){
+ if(!storeBlocks||!dst||!count||rel>=storeBlocks||count>storeBlocks-rel)return false;
+ while(count){UInt32 n=count>kDataMax/4096?kDataMax/4096:count;
+  if(readRaw4k(0,storeFirst+rel,n,dst)!=kIOReturnSuccess)return false;
+  dst=static_cast<uint8_t*>(dst)+uint64_t(n)*4096;rel+=n;count-=n;}
+ return true;
+}
+IOReturn NativeUfs::storeWrite(UInt64 rel,UInt32 count,const void *src){
+ if(!storeOpened||storeFault||!src||!count||count>kDataMax/4096)return kIOReturnNotWritable;
+ if(rel>=storeBlocks||count>storeBlocks-rel)return kIOReturnBadArgument;
+ UInt64 lba=storeFirst+rel;unsigned bytes=count*4096;
+ IOLockLock(lock);bool ok=!poisoned&&!rd(0x58);
+ if(ok){
+  bzero(mem+kUcdOffset,kDmaBytes-kUcdOffset);UInt8 *q=mem+kUcdOffset;
+  q[0]=1;q[1]=0x20;q[2]=0;q[3]=1;put32(q+12,bytes);
+  q[16]=0x2a;q[17]=0x08;put32(q+18,(UInt32)lba);q[23]=count>>8;q[24]=count;
+  memcpy(mem+kDataOffset,src,bytes);storeCommandActive=true;ok=submit(1,bytes);storeCommandActive=false;
+  P11UfsResponse response;if(ok)ok=p11UfsResponse(q+kRspOffset,512,0,0x2a,bytes,response);
+  UInt8 cdb[16]={};if(ok)ok=p11Read10(cdb,lba,count)&&command(0,cdb,bytes,nullptr)&&!memcmp(mem+kDataOffset,src,bytes);
+ }
+ if(!ok)storeFault=true;IOLockUnlock(lock);return ok?kIOReturnSuccess:kIOReturnIOError;
+}
+IOReturn NativeUfs::storeSync(){
+ if(!storeOpened||storeFault)return kIOReturnNotReady;
+ IOLockLock(lock);bool ok=!poisoned&&!rd(0x58);
+ if(ok){bzero(mem+kUcdOffset,kDmaBytes-kUcdOffset);UInt8 *q=mem+kUcdOffset;q[0]=1;q[3]=1;q[16]=0x35;storeCommandActive=true;ok=submit(0,0);storeCommandActive=false;P11UfsResponse response;if(ok)ok=p11UfsResponse(q+kRspOffset,512,0,0x35,0,response);}
+ if(!ok)storeFault=true;IOLockUnlock(lock);return ok?kIOReturnSuccess:kIOReturnIOError;
+}
+extern "C" unsigned native_ufs_store_mode(void){return dataStoreMode();}
+extern "C" int native_ufs_store_open(uint64_t blocks,uint64_t *first,const char **why){
+ if(!gRootHost){if(why)*why="no root layout";return 0;}
+ return gRootHost->storeOpen(blocks,first,why)?1:0;
+}
+extern "C" int native_ufs_store_read(uint64_t rel,uint32_t count,void *dst){return gRootHost&&gRootHost->storeRead(rel,count,dst)?1:0;}
+extern "C" int native_ufs_store_write(uint64_t rel,uint32_t count,const void *src){return gRootHost&&gRootHost->storeWrite(rel,count,src)==kIOReturnSuccess?1:0;}
+extern "C" int native_ufs_store_sync(void){return gRootHost&&gRootHost->storeSync()==kIOReturnSuccess?1:0;}
 extern "C" int native_ufs_log_open(uint64_t *first,uint64_t *blocks,const char **why){if(!gRootHost){*why="no root layout";return 0;}if(!gRootHost->logOpen(why))return 0;*first=CB_LOG_FIRST;*blocks=CB_LOG_BLOCKS;return 1;}
 extern "C" int native_ufs_log_write(uint64_t rel,uint32_t count,const void *src){if(!gRootHost||rel>=CB_LOG_BLOCKS||!count||count>CB_LOG_BLOCKS-rel)return 0;return gRootHost->logWrite(CB_LOG_FIRST+rel,count,src)==kIOReturnSuccess;}
 extern "C" int native_ufs_log_sync(void){return gRootHost&&gRootHost->logSync()==kIOReturnSuccess;}
@@ -885,6 +973,8 @@ bool NativeUfs::prepareRootWindows ()
     void discard (unsigned index) { discardPendingWindow (index); }
   } operations = { this, layout };
   UfsRootPublicationResult result = ufsPrepareRootWindows (operations, layout->windows);
+  if (result.phase == UfsRootPhase::Complete)
+    gDataStoreGeometry={true,layout->userdataFirst,layout->userdataLast,layout->imageBytes};
   IOFree (layout, sizeof (RootLayout));
   if (result.phase != UfsRootPhase::Complete) {
     gPending = 0;

@@ -44,8 +44,8 @@ belongs to the reusable framework:
 | --- | --- | --- |
 | UEFI / DarwinBoot | Working | Temporary Fastboot boot; the firmware chain validates the kernel, ADT and trust cache and exits boot services |
 | CPU / memory | Working | Eight CPUs online (`online=8`, PSCI SMC, SGI/timer running) and 2 GiB managed memory; frequency and thermal policy are not tuned |
-| Storage / root | Working | Native UFS reads, owner-authorized OS / SystemOS root mounting and `launchd`; the write path is not qualified |
-| Data | Partial | Writable APFS RAM Data from a seed; persistent user Data is not established |
+| Storage / root | Working | Native UFS reads, owner-authorized OS / SystemOS root mounting and `launchd`; writes are limited to the diagnostic-log and Data-store windows, no general write path |
+| Data | Working | APFS Data from a 1 GiB seed with a persistent overlay in userdata (LBA 13620983, 262153 blocks): changes survive reboot, GPT unchanged, `err=0` |
 | Display | Partial | iPadOS UI renders on the panel through CPU framebuffer presentation; iOS renders 1242x2208 and the driver scales it to the 1080x1920 panel, now through a cacheable scanout mapping with one cache clean per frame. The first frame is intermittent across boots, brightness is unverified and the hardware MDP scanout is not used yet |
 | Phone-style UI | Not working | Phone identity with an iPadOS root reached a system screen but still showed a tablet layout |
 | Touch | Working | Synaptics S3320 over BLSP1 QUP5 (`qcom,i2c-qup-v2.2.1`): v2 byte tags, repeated-start register reads, F01/F12 discovery, 10-finger 80-byte F12 packets read through the IN block handshake, HID digitizer on the combined keyboard+digitizer device, 25 ms polling (attention IRQ not enabled). Confirmed by the device owner |

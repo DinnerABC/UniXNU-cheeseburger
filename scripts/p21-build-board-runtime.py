@@ -36,7 +36,7 @@ def compile(src,name=None,flags=(),late=False):
 cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','BoardBootArgs','CheeseburgerUsb','CheeseburgerDispProbe','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
 late={'NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','NativeLegacyDisplay','NativeGOPPresenter','NativeHidInput','NativeKeyStoreEvents'}
 for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=1'] if n=='NativeHidInput' else [],late=n in late)
-for n in ['BootWatchdogPolicy','no-store-provider','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe']:compile(S/(n+'.c'))
+for n in ['BootWatchdogPolicy','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe']:compile(S/(n+'.c'))
 subprocess.run([sys.executable,R/'scripts/p21-select-official-log-reports.py',*compiled],check=True)
 compile(S/'BootLog.c')
 for n in ['verified_root','xnu_crypto']:
