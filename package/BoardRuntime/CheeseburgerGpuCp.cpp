@@ -176,6 +176,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   uint32_t(cb_cp[9]),uint32_t(cb_cp[10]),uint32_t(cb_cp[11]),uint32_t(cb_cp[18]));
  // CP reset/configure/start is a separate opt-in: it writes GPU registers and
  // starts real firmware DMA, unlike the read-only mapping probe above.
+ // 1 = full start; 2 = log-only long line (no GPU writes); 3 = log-only short
+ // line. 2/3 exist solely for the controlled console A/B.
  unsigned start=0;
  if(PE_parse_boot_argn("cheeseburger-gpu-start",&start,sizeof start)&&start&&gp.v){
   Mmio m;m.v=gp.v;
@@ -185,9 +187,13 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   // Reuse the probe's GPUCC snapshot; sampling time is the GPU probe, not the
   // reset. The snapshot is recorded as-is and must not be read as a live value.
   cb_cp[56]=cb_gpu[11];cb_cp[57]=cb_gpu[19];cb_cp[58]=cb_gpu[20];
-  IOLog("CB GPU start: begin ring=%llx pm4=%llx pfp=%llx cx=%x gx=%x gfx=%x\n",
-   ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
+  if(start==3)
+   IOLog("CB GPU start: begin ring=%llx pm4=%llx pfp=%llx\n",ring.gva,pm4.gva,pfp.gva);
+  else
+   IOLog("CB GPU start: begin ring=%llx pm4=%llx pfp=%llx cx=%x gx=%x gfx=%x\n",
+    ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);
+  if(start>=2){cb_cp[38]=9;IOSleep(8000);return;}  // log-only: no GPU write
   int rc=engine.reset(rec);
   cb_cp[39]=uint64_t(int32_t(rc));
   cb_cp[40]=rec.vbif;cb_cp[41]=rec.me;

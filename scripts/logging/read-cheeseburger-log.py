@@ -2,7 +2,7 @@
 """Read the pinned log window from root Recovery. Never writes phone storage."""
 from pathlib import Path
 import sys,json,subprocess,hashlib,datetime,struct,runpy
-R=Path(__file__).resolve().parents[2];plan=json.loads((R/'out/p21/r14/log-window.json').read_text());sys.path.insert(0,str(R/'out/p21/r14/scripts'));from device import Device
+R=Path(__file__).resolve().parents[2];plan=json.loads((R/'out/p21/r14/log-window.json').read_text());sys.path.insert(0,str(R/'out/p21/r14/scripts'));sys.path.insert(0,str(R/'scripts/logging'));from device import Device;import heartbeat_record
 d=Device('persistent-log-read');d.require_root_recovery();assert d.shell('getprop ro.product.device')=='cheeseburger'
 assert d.shell('readlink -f /dev/block/bootdevice/by-name/userdata')==plan['partition'];assert int(d.shell('blockdev --getsize64 /dev/block/sda14'))==47938797568
 assert int(d.shell('cat /sys/class/block/sda14/start'))*512==plan['userdata_first_lba']*4096
@@ -16,5 +16,11 @@ H=struct.Struct('<8sIIQQ8I6I32s');h=H.unpack_from(raw);assert h[1]==3 and 140<=h
 assert h[8]<=h[7]*4096 and 0<h[11]<=(plan['blocks']-h[9])//h[10] and h[9]+h[10]*h[11]<=plan['blocks'];assert h[19].split(b'\0')[0]==b'cheeseburger-P21';assert struct.unpack_from('<5I',raw,H.size)==(0,0,0,0,0)
 report.update(msg_blocks=h[7],slot_blocks=h[10],slot_count=h[11],slots_written=h[12],ring_overwritten=max(0,h[12]-h[11]),result='BOUNDED_LOG_WINDOW_READ_PASS',boot_id=hex(h[3]),rounds=h[14],write_errors=h[15],state=h[18],tag='cheeseburger-P21')
 decoder=R.parent/'upstream/UniXNU-sheng/scripts/read-sheng-log.py';subprocess.run([sys.executable,str(decoder),'--decode',str(out/'window.bin'),'--out',str(out/'decoded')],check=True)
+# Independent liveness block at the last window block (outside msg/slot areas).
+hb=heartbeat_record.parse(raw[(h[5]-1)*4096:h[5]*4096])
+report['heartbeat']=hb
+if hb:
+ for d in (out/'decoded').iterdir():
+  if d.is_dir():(d/'heartbeat.json').write_text(json.dumps(hb,indent=2)+'\n')
 (out/'retrieval.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2));print('Saved:',out)
 subprocess.run([sys.executable,str(R/'scripts/logging/analyze-cheeseburger-run.py'),str(out)],check=True)

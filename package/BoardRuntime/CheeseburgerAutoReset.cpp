@@ -11,6 +11,9 @@
 #include <pexpert/pexpert.h>
 extern "C" {
 volatile uint64_t cb_reset[8];
+// Written directly into the persistent-log window's dedicated heartbeat block,
+// before the console IOLog, so a wedged console cannot hide this step.
+void cheeseburger_bootlog_autoreset(const char*) __attribute__((weak_import));
 }
 namespace {
 static void resetWorker(void*,wait_result_t){
@@ -28,8 +31,10 @@ static void resetWorker(void*,wait_result_t){
   absolutetime_to_nanoseconds(mach_absolute_time(),&now);
  }
  cb_reset[3]=1;
+ if(&cheeseburger_bootlog_autoreset)cheeseburger_bootlog_autoreset("mark");
  IOLog("CB auto reset: %u s reached; committing the log, then PSCI SYSTEM_RESET\n",seconds);
  IOSleep(4000);   // the log writer commits every two seconds
+ if(&cheeseburger_bootlog_autoreset)cheeseburger_bootlog_autoreset("smc");
  register uint64_t x0 __asm__("x0")=0x84000009ULL;
  register uint64_t x1 __asm__("x1")=0;
  register uint64_t x2 __asm__("x2")=0;

@@ -119,6 +119,9 @@ volatile uint32_t boot_log_state, boot_log_rounds, boot_log_errors;
 volatile uint64_t boot_log_first_lba;
 static int boot_log_started;
 static uint8_t *boot_log_buffer;   // LogMsgBlocks blocks: the message buffer, then reused for a slot and the header
+static uint8_t *boot_log_heartbeat_buffer, *boot_log_autoreset_buffer;
+volatile uint64_t boot_log_blocks;
+static uint64_t boot_log_ticks_start, boot_log_freq;
 
 static uint64_t log_ticks(void) {uint64_t v; __asm__ volatile("isb\n\tmrs %0, cntpct_el0" : "=r"(v)); return v;}
 
@@ -166,6 +169,37 @@ extern volatile uint64_t cb_cp[64] __attribute__((weak_import));
 extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
 extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
 volatile uint64_t cb_boot_id=0;
+
+// Independent liveness channel: one fixed block at the end of the authorized
+// window, written directly and never through msgbuf/console. A console or
+// msgbuf stall therefore cannot erase this record. The reader parses it as a
+// separate heartbeat.json; it is not part of the header/msg/slot structures.
+static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq) {
+  if (!buf || !boot_log_blocks || !cb_boot_id || boot_log_state != 2) return;
+  const uint64_t now = boot_log_freq ? (log_ticks() - boot_log_ticks_start) / boot_log_freq : 0;
+  memset(buf, 0, LogBlock);
+  snprintf((char *)buf, LogBlock,
+           "CBHB0001 boot=%016llx seq=%llu sec=%llu tag=%s state=%u rounds=%u\n",
+           (unsigned long long)cb_boot_id, (unsigned long long)seq, (unsigned long long)now,
+           tag, (unsigned)boot_log_state, (unsigned)boot_log_rounds);
+  if (native_ufs_log_write(boot_log_blocks - 1, 1, buf)) native_ufs_log_sync();
+}
+void cheeseburger_bootlog_heartbeat(void) {
+  static uint64_t seq;
+  heartbeat_record(boot_log_heartbeat_buffer, "tick", ++seq);
+}
+void cheeseburger_bootlog_autoreset(const char *tag) {
+  static uint64_t seq;
+  heartbeat_record(boot_log_autoreset_buffer, tag ? tag : "mark", ++seq);
+}
+static void heartbeat_worker(void *arg, wait_result_t result) {
+  (void)arg; (void)result;
+  thread_set_thread_name(current_thread(), "gpu_heartbeat");
+  for (;;) {
+    IOSleep(10000);
+    cheeseburger_bootlog_heartbeat();
+  }
+}
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -384,6 +418,7 @@ static void writer(void *arg, wait_result_t result) {
     IOSleep(1000);
   }
   boot_log_first_lba = first;
+  boot_log_blocks = blocks;
   const uint32_t slot_count = (uint32_t)((blocks - LogSlotFirst) / LogSlotBlocks);
   struct boot_log_header h;
   memset(&h, 0, sizeof h);
@@ -396,6 +431,7 @@ static void writer(void *arg, wait_result_t result) {
   strlcpy(h.tag,"cheeseburger-P21",sizeof h.tag);
   uint64_t f = 0; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f)); if (!f) f = 19200000;
   const uint64_t start = log_ticks();
+  boot_log_ticks_start = start; boot_log_freq = f;
   uint32_t errors = 0;
   boot_log_state = 2;
   for (;;) {
@@ -434,7 +470,11 @@ void boot_log_tick(unsigned now) {
   if (!&native_ufs_log_open || !&native_ufs_log_write || !&native_ufs_log_sync) return;
   boot_log_buffer = (uint8_t *)IOMallocAligned(LogMsgBlocks * LogBlock, LogBlock);
   if (!boot_log_buffer) return;
+  boot_log_heartbeat_buffer = (uint8_t *)IOMallocAligned(LogBlock, LogBlock);
+  boot_log_autoreset_buffer = (uint8_t *)IOMallocAligned(LogBlock, LogBlock);
 
   thread_t thread;
   if (kernel_thread_start(writer, 0, &thread) == KERN_SUCCESS) thread_deallocate(thread);
+  thread_t heartbeat;
+  if (kernel_thread_start(heartbeat_worker, 0, &heartbeat) == KERN_SUCCESS) thread_deallocate(heartbeat);
 }
