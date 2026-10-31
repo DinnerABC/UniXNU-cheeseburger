@@ -1,5 +1,7 @@
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
+**GPU 推进实施入口：`docs/P21_ADRENO540_EXECUTION_PLAN.md`；合并 SMMU 修正、心跳修复和 CP 初始化核对后一次构建/实测，目标是首个真实 GPU 任务。**
+
 **第二次 GPU 审计勘误：D 轮后续 tick 属于旧 boot，不能证明 D 仍活跃；详情与决策见 `docs/P21_GPU_CP_SECOND_REVIEW_20261031.md`。**
 
 **完整现状/证据/决策选项见 `docs/P21_GPU_CP_FULL_REPORT_20261031.md`（2026-10-31，供审计决定）。**
