@@ -69,8 +69,21 @@ static void worker(void*,wait_result_t){
  for(unsigned p=0;p<8;++p){unsigned b=0x1000+pipes[p];
   cb_disp[n++]=rd(md,b+0x08);cb_disp[n++]=rd(md,b+0x10);cb_disp[n++]=rd(md,b+0x200);}
  cb_disp[124]=9;
- // DSI0 controller state (video vs command mode, clock control).
- cb_disp[n++]=rd(md,0xc994000);cb_disp[n++]=rd(md,0xc994004);cb_disp[n++]=rd(md,0xc994008);
+ // Refresh measurement after the sheng DisplayTimingProbe pattern: MDP5 keeps a
+ // frame/line counter in PP_SYNC_WRCOUNT (frame count in the high half) and in
+ // PP_INT_COUNT_VAL. Two samples one second apart give the real panel refresh
+ // without touching the DSI block, whose registers hang this access path.
+ {
+  const unsigned pp0=0x1000+0x70000;              // MDP base + PP0
+  uint32_t wr0=rd(md,pp0+0x0c),ic0=rd(md,pp0+0x14);
+  uint32_t en0=rd(md,0x1000+0x6a800),cfg0=rd(md,0x1000+0x6a804),vp0=rd(md,0x1000+0x6a80c);
+  IOSleep(1000);
+  uint32_t wr1=rd(md,pp0+0x0c),ic1=rd(md,pp0+0x14);
+  cb_disp[103]=wr0;cb_disp[104]=wr1;cb_disp[105]=ic0;cb_disp[106]=ic1;
+  cb_disp[107]=uint32_t((wr1>>16)-(wr0>>16))&0xffffu;
+  cb_disp[108]=uint32_t((ic1>>16)-(ic0>>16))&0xffffu;
+  cb_disp[109]=en0;cb_disp[110]=cfg0;cb_disp[111]=vp0;
+ }
  PE_Video video={};if(PE_current_console(&video))video.v_baseAddr=0;
  cb_disp[120]=video.v_baseAddr;cb_disp[121]=(uint64_t)video.v_rowBytes<<32|video.v_width;
  cb_disp[122]=video.v_height;

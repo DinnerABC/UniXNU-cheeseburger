@@ -244,6 +244,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    at=put(out,at,cap,disp,sizeof disp);
   }
   snprintf(disp,sizeof disp,"DISP gop=%llx stride=%llx w/h=%llx stage=%llu call=%llu flip=%llu/%llu",cb_disp[120],(cb_disp[121]>>32)&0xffffffff,cb_disp[122],cb_disp[124],cb_disp[125],cb_disp[126],cb_disp[127]);at=put(out,at,cap,disp,sizeof disp);
+  snprintf(disp,sizeof disp,"DISP timing wr=%llx/%llx ic=%llx/%llx fps=%llu/%llu intf_en=%llx cfg=%llx vp=%llx",
+    cb_disp[103],cb_disp[104],cb_disp[105],cb_disp[106],cb_disp[107],cb_disp[108],cb_disp[109],cb_disp[110],cb_disp[111]);at=put(out,at,cap,disp,sizeof disp);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];
