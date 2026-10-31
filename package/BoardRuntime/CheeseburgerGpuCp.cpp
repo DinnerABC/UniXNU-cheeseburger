@@ -27,6 +27,7 @@ void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
+void cheeseburger_gpu_pas_probe(void);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
 namespace {
@@ -236,4 +237,6 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   }
   IOSleep(8000);
  }
+ // Read-only SCM/PAS availability check alongside a full start attempt.
+ if(start==1) cheeseburger_gpu_pas_probe();
 }

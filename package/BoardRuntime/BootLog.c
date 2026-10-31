@@ -167,6 +167,7 @@ extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
 extern volatile uint64_t cb_cp[96] __attribute__((weak_import));
+extern volatile uint64_t cb_pas[16] __attribute__((weak_import));
 extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
 extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
 volatile uint64_t cb_boot_id=0;
@@ -379,6 +380,12 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      (unsigned)boot_log_errors,(unsigned long long)p20_display_frames);
    at=put(out,at,cap,cp,sizeof cp);
   }
+ }
+ if (&cb_pas[0] && cb_pas[0]!=0xdeadbeef) {
+  char pas[240];
+  snprintf(pas,sizeof pas,"PAS0 st=%llu smc64=%llu scm=%llu resume=%llu init=%llu setup=%llu auth=%llu down=%llu sup7=%llu sup=%llx bid=%llx",
+    cb_pas[0],cb_pas[1],cb_pas[2],cb_pas[3],cb_pas[4],cb_pas[5],cb_pas[6],cb_pas[7],cb_pas[8],cb_pas[9],cb_boot_id);
+  at=put(out,at,cap,pas,sizeof pas);
  }
  if (&cb_mapret[0] && cb_mapret[2]) {
   char md[200];
