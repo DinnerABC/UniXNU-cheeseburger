@@ -99,15 +99,20 @@
   - **98.7258 s 是整轮最后一条内核消息**；之后没有 userland 消息（正常每 ~1 s 有 CoreAnalyticsHub 行），
     也没有 `reset rc=` 行。writer 在 ~102 s 写最后一轮后停止。
 - **本轮没有执行任何 GPU 写操作**（begin 之后先 `IOSleep(8000)`，reset 在 ~106.7 s 才开始）。
-- **设备最终回到了 Recovery**：监视器 `polls=245`（≈自启动 503 s）在 Recovery 检测到设备并回收日志，
-  时间上符合“400 s 自动复位 + Recovery 启动/ADB 枚举”；但用户尚未确认这是自动返回还是手动返回，
-  **该点未验证**（`misc` BCB 已被消费，但手动进 Recovery 也会被清空，不能区分）。
-- 两种解释（需下一轮/用户确认）：
-  - (a) **内核在 ~99 s 停住**：那么 400 s 自动复位不可能执行，设备只能是手动返回。
-  - (b) **仅控制台/日志捕获路径停住**（例如某线程在 IOLog/console 路径持锁或卡住），
-    userland 与 auto-reset 线程仍在跑，所以 400 s 自动复位成功、设备自行返回。
-  - 现象差异：本轮 begin 后 3 s 内没有任何 userland 控制台行，更像 (a)；但设备最终回到 Recovery 又更像 (b)。
-    本轮日志不足以区分，需在下一轮加“不依赖控制台”的存活标记。
+- **设备最终回到了 Recovery（用户已确认：手动返回）**：监视器 `polls=245`（≈自启动 503 s）才检测到设备。
+  **因此 400 s 自动复位没有生效**。注意：auto-reset 线程在发 PSCI 前也调用 `IOLog`
+  （`CheeseburgerAutoReset.cpp:24/31`），所以“控制台/msgbuf 锁被卡住”同样会让 auto-reset 停在 IOLog，
+  手动返回不能单独证明 SoC 完全停住；但它证明 auto-reset 路径没有走完。
+- **PMRD 相关性进一步下降**：本轮 PMRD 活动在 69–72 s 就结束，98.7 s 的中断不在 PMRD 窗口；
+  151 s 轮的时间重合应视为巧合，除非后续有新证据。
+- **新的相关性观察（未验证，2/2 vs 0/2 样本）**：两轮“begin 后中断”的镜像，begin 行都是
+  **6 参数长行**（含 `cx=/gx=/gfx=`）；两轮“正常走完 reset/kick”的镜像 begin 行只有 3 参数。
+  若控制台输出路径（换行/滚屏）在长行上卡住并持锁，可同时解释：userland 控制台行消失、
+  writer 停止、auto-reset 的 IOLog 卡住→不回 Recovery。仅为相关性，下一轮用短行 +  `GCP7` 行验证。
+- 两种解释（仍未定）：
+  - (a) **内核/SoC 在 ~99 s 停住**：与“没有 userland 行、auto-reset 未执行”一致。
+  - (b) **控制台/日志路径卡住**：auto-reset 卡在 IOLog、userland 日志被同一锁阻塞，内核其余部分可能仍活。
+  - 下一轮必须加“不依赖 console 与 UFS writer 的存活标记”才能区分；同时把关键路径的 IOLog 缩短/移出。
 
 ## 3. 遇到的问题与解决方式
 
@@ -120,8 +125,8 @@
 | 5 | 门禁“firmware pin scan has no hit” | FD 是压缩容器，直接扫 FD 找不到 hash；改为扫 VM 构建树的 `FV/FVMAIN.Fv`/FFS/`.efi`（`out/p21/fb-qup3/scan-pins.py`） | 已解决 |
 | 6 | CP `rbRead=0`、无 CP 错误中断 | 已对比 sagit/Linux：`RB_CNTL`、`ME_INIT` 包、instr base 一致；下一假设 secure 模式（`TrustControl=1`）与 CB0 `SCTLR`（`0x1167` 有 CFIE/HUPCF，`0x1027` 对齐 sagit） | **未解决** |
 | 7 | reset 前 idle 检查失败（rc=-2） | VBIF 停流 ack 后 `Status` 非 idle；已加 20×10 ms 重试并记录 `Status/MEControl/VBIFHalted` 原值（`GCP7`） | 部分缓解，根因未定 |
-| 8 | `CB GPU start: begin` 之后日志中断（151 s 轮黑屏手动回；99 s 轮自行回 Recovery） | 两次都发生在 begin 后的 8 s 等待内、**均无 GPU 写**；99 s 轮不在 PMRD 窗口，说明 PMRD 不是必要条件。共同点是“5 次 SMMU 映射完成后立即 begin 打印”。现无法区分“内核停住”与“仅控制台/日志捕获停住” | **未解决**，需下一轮加不依赖控制台的存活标记 |
-| 9 | 持久日志 writer 在关键打印后停止 | 最后一条恰是我们的 IOLog；writer 在下一轮（~5 s 后）也没写。可能是一致性/控制台锁问题，也可能是 SoC 停住 | **未解决** |
+| 8 | `CB GPU start: begin` 之后日志中断（151 s 轮黑屏手动回；99 s 轮亦为用户手动返回） | 两次都发生在 begin 后的 8 s 等待内、**均无 GPU 写**；99 s 轮不在 PMRD 窗口（PMRD 69–72 s 已结束），PMRD 归因可排除。共同点：5 次 SMMU 映射完成后立即 begin 打印；两轮中断的 begin 行都是 6 参数长行，两轮正常走完的是 3 参数短行 | **未解决**，优先验证控制台长行/锁假设 |
+| 9 | 持久日志 writer 在关键打印后停止；400 s auto-reset 未执行 | 最后一条恰是我们的 IOLog；writer 下一轮（~5 s 后）也没写。auto-reset 在 PSCI 前本身会 `IOLog`，控制台锁卡住同样能阻止复位，因此“手动返回”不能证明 SoC 完全停住 | **未解决** |
 
 ## 4. 当前状态（重点）
 
@@ -129,8 +134,8 @@
 
 - **设备当前在 Recovery**（ADB 枚举正常，`ro.bootmode=recovery`）；本轮日志已回收：
   `out/p21/persistent-logs/20261031T112909Z/`（boot `0x510ea570`，8 rounds）。
-- 本轮设备在约 **503 s**（自启动）被监视器发现于 Recovery；是否符合“400 s 自动复位”路径**尚无用户确认**
-  （用户未像前几轮那样报告黑屏/手动返回）。misc BCB 已消费（`misc-now7.bin` 全零），但手动进 Recovery 也会被清空，不能作为判据。
+- **用户已确认本轮是手动返回 Recovery**：400 s 自动复位没有生效。`misc` BCB 已消费（`misc-now7.bin` 全零），
+  但手动进 Recovery 也会被清空，不能作为判据。注意 auto-reset 在 PSCI 前会 `IOLog`，控制台锁卡住同样能阻止复位。
 - 上一轮：`out/p21/persistent-logs/20261031T111210Z/`（boot `0x5230df48`，黑屏、用户手动回）。
 - 本轮 misc BCB 已预置并回读（`misc-readback29.bin`）；下一次启动前需重新写入。
 
@@ -147,7 +152,7 @@
 ### 4.3 未决问题（按优先级）
 
 1. **“日志在 begin 后停止”到底是内核停住还是仅日志/控制台停住**：两次都发生在 begin 后的 8 s 等待内、
-   无 GPU 写；99 s 轮设备最终回到 Recovery。下一轮需要**不依赖控制台与 UFS writer 的存活标记**
+   无 GPU 写；99 s 轮也是用户手动返回（400 s 自动复位未生效）。下一轮需要**不依赖控制台与 UFS writer 的存活标记**
    （例如由独立内核线程在固定时间改一个会被 photo/录像以外的路径读到的内存，或用 auto-reset 标记落盘），
    否则无法区分 (a) 内核停住 / (b) 仅 console+writer 停住。
 2. **CP 为什么不取 ring（RBRead=0）**：只有 188 s 那两轮完整执行了 reset/kick，`GCP6` 仍未取到
@@ -155,8 +160,8 @@
    CP_PROTECT_STATUS / CP_AHB_FAULT / CB0_FSR / GFSR`。
 3. **reset idle 前置检查不稳**：`Status` 在 VBIF 停流后有时非 idle；需要判断是 drain 瞬时 busy、
    GPU 域掉电，还是 PMRD 介入。`GCP7` 已能记录 `cx/gx/gfx/st/me/vbif/ry`，但关键轮次日志中断。
-4. **PMRD 窗口**：151 s 轮与 PMRD 切换重合，但 99 s 轮不在该窗口也发生中断，所以 **PMRD 不是必要条件**
-   （此前归因需降级为“可能相关”）。
+4. **PMRD 窗口**：151 s 轮与 PMRD 切换重合，但 99 s 轮的 PMRD 活动在 69–72 s 已结束、98.7 s 中断不在该窗口，
+   所以 **PMRD 归因可排除**（此前“可能相关”不再保留）。
 5. **XNU 侧 GPU 电源/时钟 vote**：目前只有 UEFI EFIClock 上电；XNU 没有 RPM/RSC vote。
    `CheeseburgerPlatformPower.cpp` 只是 Apple ABI 兼容壳（不是 RPM 驱动）。是否需要补 vote 尚无证据。
 6. **升频**：`gfx3d` 仍保持 rate=0；CP/GPMU 跑通后再按 sagit root clock/PLL 顺序安全升频。
@@ -189,7 +194,8 @@
 - 先做**存活判据**：在 CP 启动阶段由一个独立内核线程/定时器写“与 console、UFS writer 无关”的标记
   （例如固定时刻改 `cb_cp`/专用页并让下一次 boot 的 Data 或固定 RAM 位置可读，或让 auto-reset 在 PSCI 前
   将标记写入 UFS store），用于区分“内核停住”与“仅日志停住”。
-- 在无法区分前，**不再把“日志中断”直接当成“内核冻结”**；此前 PMRD 归因已降级为“可能相关”。
+- 在无法区分前，**不再把“日志中断”直接当成“内核冻结”**；PMRD 归因已排除。
+- 先验证控制台长行/锁假设：把 begin 行改回 3 参数短行，`cx/gx/gfx` 只写 `cb_cp`/`GCP7`；若不再中断，则优先修控制台路径。
 - 减少关键路径上的控制台 IOLog（改用 `cb_cp` 行 + BootLog 轮询），避免 console 锁参与。
 - 拿到稳定 `GCP6` 后：按 `smfsr/smg`（SMMU 取指 fault）或 `cphw/cpprot`（CP 内部 fault）分别处理；
   `GCP5 r=9` 才是 CP 真正执行 ME_INIT。

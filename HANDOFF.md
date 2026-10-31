@@ -24,8 +24,8 @@
 - 判读：`cx/gx/gfx` 若为掉电值（bit31 清零或全 1）→ 先解决 XNU 侧 GPU 供电/时钟 vote（UEFI EFIClock 的 vote 在 ExitBootServices 后是否失效）；若供电正常且 `ry>0` 后 idle 通过 → 继续看 kick。若 `st` 仍非 idle 且取值为 `0xffffffff`，说明该寄存器读取时 GPU 不可访问。
 - **供电/PMRD 轮结果（整屏黑，手动回）**（镜像 `b15bb427…`，内核 `d771e2ec…`，日志 `20261031T111210Z`，boot `0x5230df48`，18 rounds）：`GCP7 cx=80001fe0 gx=a0222000 gfx=621`（启动时 CX/GX/gfx3d 均在线），`GCP5 stage=1 rc=0`，`GCP6/GCP7 st/me/vbif` 仍 `deadbeef`。控制台 `CB GPU start: begin …` 时间戳 **151.73 s**，最后一条内核消息 **157.33 s**——冻结发生在 begin 之后的 8 s 等待里、**尚未执行任何 GPU 写操作**。上两轮 start 在 ~188 s（PMRD 电源状态切换之后）均稳定；日志显示 ~150–157 s 正是系统自身 **PMRD** 做 `PowerChangeOverride / idle sleep timer` 的窗口。结论：冻结与 PMRD 电源切换窗口相关，而不是某条 GPU 寄存器写。
 - **下一轮（未验证）**：`cheeseburger-gpu-probe=8`，让 GPU 探针 + CP 映射 + reset/kick 在约 **75–120 s** 完成，避开 ~150 s 的 PMRD 切换；启动阶段不再额外映射 GPUCC（改用上一拍 `cb_gpu` 里的 GPUCC 快照，`GCP7` 仍可读 `cx/gx/gfx`）。其余（TrustControl=0、SCTLR=0x1027、fault 捕获、idle 重试）保留。
-- **提前执行轮结果（已回收，boot `0x510ea570`，日志 `20261031T112909Z`，8 rounds）**：76.7 s SMMU `cb=1027 fsr=400`、CP 冷状态不变；86.7–98.7 s 五 buffer 全 `r=0 tlb=0`；98.725 s 汇总、98.7258 s `CB GPU start: begin`（`cx=80001fe0 gx=a0222000 gfx=621`）。**begin 之后没有任何内核/用户态控制台行，reset 尚未执行（先 8 s 等待）**；writer 约 102 s 写最后一轮后停止。设备最终在约 503 s 被监视器发现于 Recovery，**是否自动复位（400 s）还是手动返回待用户确认**；`misc` BCB 已消费，但手动进 Recovery 也会清空，不能区分。
-- **重要修正**：99 s 轮不在 PMRD 窗口也发生日志中断，因此 **PMRD 不是必要条件**，此前归因降级为“可能相关”。当前无法区分 (a) 内核停住 与 (b) 仅控制台/日志捕获停住；下一轮需加“不依赖 console 与 UFS writer 的存活标记”，并减少关键路径的 IOLog。
+- **提前执行轮结果（已回收，boot `0x510ea570`，日志 `20261031T112909Z`，8 rounds）**：76.7 s SMMU `cb=1027 fsr=400`、CP 冷状态不变；86.7–98.7 s 五 buffer 全 `r=0 tlb=0`；98.725 s 汇总、98.7258 s `CB GPU start: begin`（`cx=80001fe0 gx=a0222000 gfx=621`）。**begin 之后没有任何内核/用户态控制台行，reset 尚未执行（先 8 s 等待）**；writer 约 102 s 写最后一轮后停止。设备最终在约 503 s 被监视器发现于 Recovery，**用户已确认是手动返回，400 s 自动复位未生效**；`misc` BCB 已消费，但手动进 Recovery 也会清空，不能区分。
+- **重要修正**：99 s 轮的 PMRD 活动在 69–72 s 已结束、中断不在该窗口，因此 **PMRD 归因可排除**。auto-reset 在 PSCI 前会 `IOLog`，控制台锁卡住同样能阻止复位，所以手动返回不能证明 SoC 完全停住。新相关性（2/2 vs 0/2）：两轮中断的 begin 行都是 6 参数长行，两轮正常走完的是 3 参数短行——下一轮先用短行 + `GCP7` 行验证控制台长行/锁假设，并加“不依赖 console 与 UFS writer 的存活标记”。
 
 ## 2026-10-31：A540 时钟清点、400 s 自动回 Recovery、触摸方向修正
 
