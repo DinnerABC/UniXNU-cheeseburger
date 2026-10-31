@@ -104,6 +104,16 @@ static void walker_cases() {
     h.t[1][0] = 0x1000 | 3;
     h.t[l3][0] = 1;
     check(CheeseburgerGpu::lookupLeaf(h, 0x2000000, pte) == -3, "walk/invalid-leaf");
+    // 36-bit IAS (T0SZ=28): the root is a level-1 table and the walk uses two
+    // descents before the L3 leaf.
+    HostTables h1;
+    const unsigned m2 = h1.add(0x7000), m3 = h1.add(0x8000);
+    h1.t[1][0] = 0x7000 | 3;
+    h1.t[m2][16] = 0x8000 | 3;
+    h1.t[m3][0] = 0x400000 | 0x6c3;
+    uint64_t pte1 = 0;
+    check(CheeseburgerGpu::lookupLeaf(h1, 0x2000000, pte1, 1) == 0 &&
+          pte1 == (0x400000 | 0x6c3), "walk/level1-36bit");
 }
 
 static unsigned failures = 0;

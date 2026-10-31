@@ -443,3 +443,26 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
 - 本轮适配：设置 CB ACTLR；ATOS 先 no-halt，超时则按 vendor hard 路径 halt→ATOS→resume，并记录
   原始 micro 控制/ATSR/PAR；halt/resume 失败（rc -3/-4）时 CP 门禁直接停用（`cb_cp[38]=6`）。
 - ZAP0 行增加 fw-size 哨兵，未执行 ZAP 的轮次不再打印伪零行。
+
+### 11.17 round 10：ATOS 先 no-halt 导致引擎卡住（boot `0x52944b2e`，镜像 `d81ed399…`）
+
+- `CB GPU SMMU atos: iova=2000000 par=ffffffffffffffff rc=-3 expect=10a253000 ctl=178 haltctl=174`：
+  no-halt ATOS 写入 ATS1PR 后 `ATSR` 从 0 变 1（ACTIVE）且永不完成；随后 micro-MMU halt 请求
+  （bit2）使 IDLE(bit3) 从 1 变 0，但 30 ms 内不返回 IDLE —— **ATOS 事务卡住使 halt 无法 drain**。
+- 门禁生效：`GCP5 stage=6 rc=-3`，未进入 CP start；系统 66 rounds、自动回、frames=5。
+- 复盘 vendor `arm_smmu_verify_fault`：正确顺序是 **halt（bit2，等 IDLE）→ CB_RESUME=TERMINATE（0x8=1）
+  → 清 FSR → 清 SCTLR.CFCFG → ATOS（此时 SMMU 已 halt）→ 恢复 SCTLR → resume**；我们此前先做
+  no-halt ATOS，把引擎卡住后再 halt，顺序错误。
+- 另发现诊断字段名错误：CB0 的 0x5c/0x60 是 FSRRESTORE/FAR_LO，不是 FSYNR0/1；真正的 FSYNR0 在 0x68。
+  round 11 按正确顺序重做 ATOS，并记录 FSR/FSYNR0/FAR/SCTLR。
+
+### 11.18 根因修正：SMMU IAS/OAS 解析与起始层级
+
+- 对照 vendor `arm-smmu-msm8998.c`：ID2 的 **IAS=bits 0..3、OAS=bits 4..7**，UBS=bits 8..11。
+  本机 ID2=`0x7511` → IAS=36、OAS=36；此前的端口把 UBS 当输入位宽（48→截 40），按 40 位 IA、
+  T0SZ=24、**4 级表**配置，而硬件只支持 36 位 IA，正确应为 T0SZ=28、从 **level 1** 开始（3 级表）。
+  这解释了 ATOS 永不完成、FSR 无 fault、halt 无法 drain。
+- 修正：`ias=widths[id2&15]`、`oas=widths[(id2>>4)&15]`，`gStartLevel=ias>39?0:1`；TCR 用
+  `64-ias`；`mapPage`/软件 walker/mapTest 都从 `gStartLevel` 开始；map 边界按 IAS/OAS；ATOS 始终先
+  请求 halt（IDLE 已置位也要写请求位）。宿主 walker 增加 36 位/level-1 用例并通过。
+- 下一轮实机验证 ATOS 是否返回期望 PA，以及 CP `ME_INIT` 是否首次使 `RPTR` 前进。

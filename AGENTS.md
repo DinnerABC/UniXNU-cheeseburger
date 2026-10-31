@@ -165,3 +165,7 @@ Images, private logs and signing material stay out of Git.
   out falls back to the vendor hard path: set LOCAL_HALT_REQ, wait IDLE, write
   ATS1PR, read PAR, then clear the request and verify it; a halt/resume failure
   gates the CP start.
+- Parse SMMU ID2 with the vendor fields: IAS bits 0..3, OAS bits 4..7 (UBS is
+  bits 8..11 and must not size the input). This board reports IAS=OAS=36, so
+  program T0SZ=28 and start the table walk at level 1 (3 levels). A 40-bit
+  IA/4-level table on this 36-bit SMMU never completes a hardware walk.
