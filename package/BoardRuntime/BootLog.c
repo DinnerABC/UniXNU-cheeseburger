@@ -163,6 +163,9 @@ extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
 extern volatile uint64_t cb_cp[32] __attribute__((weak_import));
+extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
+extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
+volatile uint64_t cb_boot_id=0;
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -286,14 +289,19 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  }
  if (&cb_cp[0] && cb_cp[31]==0x0c9) {
   char cp[240];
-  snprintf(cp,sizeof cp,"GCP0 st=%llu fw=%llu pm4=%llu pfp=%llu gpmu=%llu ring=%llu map=%llx",
-    cb_cp[0],cb_cp[1],cb_cp[2],cb_cp[3],cb_cp[4],cb_cp[5],cb_cp[8]);at=put(out,at,cap,cp,sizeof cp);
+  snprintf(cp,sizeof cp,"GCP0 st=%llu fw=%llu pm4=%llu pfp=%llu gpmu=%llu ring=%llu map=%llx r=%llx bid=%llx",
+    cb_cp[0],cb_cp[1],cb_cp[2],cb_cp[3],cb_cp[4],cb_cp[5],cb_cp[8],cb_cp[30],cb_boot_id);at=put(out,at,cap,cp,sizeof cp);
   snprintf(cp,sizeof cp,"GCP1 pa ring=%llx pm4=%llx pfp=%llx gpmu=%llx gbytes=%llu",
     cb_cp[23],cb_cp[20],cb_cp[21],cb_cp[22],cb_cp[24]);at=put(out,at,cap,cp,sizeof cp);
   snprintf(cp,sizeof cp,"GCP2 me=%llx vbif=%llx/%llx rb=%llx/%llx/%llx/%llx st=%llx irq=%llx trust=%llx sec=%llx",
     cb_cp[9],cb_cp[10],cb_cp[11],cb_cp[12],cb_cp[13],cb_cp[14],cb_cp[15],cb_cp[16],cb_cp[17],cb_cp[18],cb_cp[19]);at=put(out,at,cap,cp,sizeof cp);
   snprintf(cp,sizeof cp,"GCP3 va ring=%llx pm4=%llx pfp=%llx gpmu=%llx fence=%llx",
     cb_cp[25],cb_cp[26],cb_cp[27],cb_cp[28],cb_cp[29]);at=put(out,at,cap,cp,sizeof cp);
+ }
+ if (&cb_mapret[0] && cb_mapret[2]) {
+  char md[200];
+  snprintf(md,sizeof md,"MAPD stage=%llu info=%llx iova=%llx pa=%llx ret=%llu tlb=%llx bid=%llx",
+    cb_mapdiag[0],cb_mapdiag[1],cb_mapdiag[2],cb_mapdiag[3],cb_mapret[0],cb_mapret[1],cb_boot_id);at=put(out,at,cap,md,sizeof md);
  }
  if (&cb_reset[0] && cb_reset[0]) {
   char rst[160];
@@ -369,6 +377,7 @@ static void writer(void *arg, wait_result_t result) {
   memcpy(h.magic, "SHLOG001", 8);
   h.version = 3; h.header_bytes = sizeof h;
   h.export_blocks = 0; h.export_below = 0; h.boot_id = log_ticks(); h.first_lba = first; h.window_blocks = (uint32_t)blocks;
+  cb_boot_id = h.boot_id;
   h.msg_first = LogMsgFirst; h.msg_blocks = LogMsgBlocks; h.slot_first = LogSlotFirst; h.slot_blocks = LogSlotBlocks; h.slot_count = slot_count;
   h.gpt_open = h.gpt_last = &native_ufs_store_gpt_check ? native_ufs_store_gpt_check() : 0xff;
   strlcpy(h.tag,"cheeseburger-P21",sizeof h.tag);

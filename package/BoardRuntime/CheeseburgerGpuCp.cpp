@@ -89,6 +89,7 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  b.gva=gva;int r=cheeseburger_gpu_smmu_map(gva,b.pa,b.bytes/4096);
  IOLog("CB GPU CP map: iova=%llx pa=%llx pages=%u r=%d seq=%u\n",gva,b.pa,b.bytes/4096,r,seq);
  if(r==0)cb_cp[8]|=uint64_t(1)<<seq;
+ else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
 static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
