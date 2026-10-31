@@ -466,3 +466,15 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
   `64-ias`；`mapPage`/软件 walker/mapTest 都从 `gStartLevel` 开始；map 边界按 IAS/OAS；ATOS 始终先
   请求 halt（IDLE 已置位也要写请求位）。宿主 walker 增加 36 位/level-1 用例并通过。
 - 下一轮实机验证 ATOS 是否返回期望 PA，以及 CP `ME_INIT` 是否首次使 `RPTR` 前进。
+
+### 11.19 round 13：HLOS SMMU 电源域实测为 ON
+
+- `SSETUP tcr=80201c`（IAS=36/T0SZ=28 生效）；`SMICRO 178/178`；ATOS 仍 `rc=-2`、`ATSR=1`、
+  FSR=0x400、FSYNR/FAR=0，halt 已请求（`haltctl=17c`）仍未完成。
+- `GPU6 hlos1=00000001/80000000 hlos2=00000001/80000000 d4=0/0`：从 ClockDxe 表解出的
+  GCC `0x7d000/0x7e000`（时钟 CBCR）bit0=1，`0x7d024/0x7e024`（GDSC）bit31=1（PWR_ON）。
+  **HLOS1/2 GPU SMMU 的电源域和时钟均为 ON**，不是电源/时钟问题。
+- 结论：ATOS 本身在该 SMMU 上可能不可用；CP 的取指阻塞仍未定位到 walk 的具体环节。
+- round 14 采用**明确标注的 SID0 bypass 诊断**（`cheeseburger-gpu-smmu=2`）：保留 ZAP/PAS 认证，
+  只把非安全 GPU stream 设为 bypass，CP 用物理地址取指；若 `RPTR` 前进，即证明 SMMU 翻译是阻塞点，
+  GPU/NoC/CP 路径本身可用。该模式仅用于 bring-up 诊断，不作为最终映射。

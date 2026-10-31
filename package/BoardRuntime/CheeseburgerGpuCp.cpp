@@ -24,7 +24,7 @@ extern "C" {
 volatile uint64_t cb_cp[128];
 extern volatile uint64_t cb_smmu[24];
 extern volatile uint64_t cb_zap[32];
-extern volatile uint64_t cb_gpu[64];
+extern volatile uint64_t cb_gpu[80];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
@@ -206,23 +206,37 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  IOSleep(8000); // let one BootLog round persist the state before any map
  // Persist each map result before the next step: the panel may black here and
  // the run is often returned manually, so a quick all-at-once map could be lost.
- if(!mapBuf(ring,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=ring.bytes;
- if(!mapBuf(pm4,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=pm4.bytes;
- if(!mapBuf(pfp,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=pfp.bytes;
+ // Diagnostic mode 2 bypasses SID0 and gives the CP physical addresses; the
+ // translation walk is then out of the fetch path (ZAP/PAS still runs).
+ const bool bypass=(cb_smmu[20]==1);
+ if(bypass){
+  ring.gva=ring.pa;pm4.gva=pm4.pa;pfp.gva=pfp.pa;gpmu.gva=gpmu.pa;fence.gva=fence.pa;
+  cb_cp[30]=0;cb_cp[0]=0;
+  IOLog("CB GPU CP: SID0 bypass phys ring=%llx pm4=%llx pfp=%llx fence=%llx\n",
+   ring.gva,pm4.gva,pfp.gva,fence.gva);
+ }else{
+  if(!mapBuf(ring,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=ring.bytes;
+  if(!mapBuf(pm4,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=pm4.bytes;
+  if(!mapBuf(pfp,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=pfp.bytes;
+  if(!mapBuf(gpmu,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=gpmu.bytes;
+  if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;}
+  cb_cp[30]=seq;cb_cp[0]=0;
+ }
  cb_cp[25]=ring.gva;cb_cp[26]=pm4.gva;cb_cp[27]=pfp.gva;
- cb_cp[30]=seq;
- if(!mapBuf(gpmu,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=gpmu.bytes;
- if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;}
  cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
- cb_cp[30]=seq;cb_cp[0]=0;
- // Hardware walk of the installed tables before any CP write. A matching PAR
- // proves the SMMU can translate the ring/firmware; a fault localizes the
- // fetch stall to the CPU-programmed context instead of the CP itself.
- {uint64_t par=0;int ar=cheeseburger_gpu_smmu_atos(ring.gva,&par,&cb_cp[112]);
+ if(!bypass){
+  // Hardware walk of the installed tables before any CP write. A matching PAR
+  // proves the SMMU can translate the ring/firmware; a fault localizes the
+  // fetch stall to the CPU-programmed context instead of the CP itself.
+  uint64_t par=0;int ar=cheeseburger_gpu_smmu_atos(ring.gva,&par,&cb_cp[112]);
   cb_cp[109]=par;cb_cp[110]=uint64_t(int32_t(ar));cb_cp[111]=ring.pa;
   IOLog("CB GPU SMMU atos: iova=%llx par=%llx rc=%d expect=%llx ctl=%llx haltctl=%llx atsr=%llx fsr=%llx fsynr=%llx far=%llx sctlr=%llx resume=%llx\n",
    ring.gva,par,ar,ring.pa,cb_cp[112],cb_cp[113],cb_cp[114],cb_cp[115],
-   cb_cp[116],cb_cp[117],cb_cp[119],cb_cp[118]);}
+   cb_cp[116],cb_cp[117],cb_cp[119],cb_cp[118]);
+ }else{
+  cb_cp[110]=uint64_t(int32_t(-5));
+  IOLog("CB GPU SMMU atos: skipped in SID0 bypass diagnostic\n");
+ }
  IOLog("CB GPU CP: fw=%u pm4=%u pfp=%u gpmu=%u ring=%u map=%u me=%x vbif=%x/%x trust=%x\n",
   gpu_firmware_size,fw.cpBytes(0),fw.cpBytes(1),fw.gpmuWords(),ring.bytes,seq,
   uint32_t(cb_cp[9]),uint32_t(cb_cp[10]),uint32_t(cb_cp[11]),uint32_t(cb_cp[18]));
@@ -250,7 +264,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   // reach a CP kick in that state. The same applies when the ATOS fallback
   // could not halt or resume the micro-MMU.
   if((int64_t)cb_smmu[19]<0){cb_cp[38]=7;cb_cp[39]=uint64_t(int64_t(cb_smmu[19]));IOSleep(8000);return;}
-  if((int64_t)cb_cp[110]<=-3){cb_cp[38]=6;cb_cp[39]=cb_cp[110];IOSleep(8000);return;}
+  if(!bypass&&(int64_t)cb_cp[110]<=-3){cb_cp[38]=6;cb_cp[39]=cb_cp[110];IOSleep(8000);return;}
   // Android a5xx_pm_resume cores first; without them the CP cannot execute
   // even though every RBBM read succeeds. Log before the first write.
   powerCore(gp,&cb_cp[83]);

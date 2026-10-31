@@ -14,8 +14,9 @@
 #include <kern/sched_prim.h>
 #include <pexpert/pexpert.h>
 extern "C" {
-volatile uint64_t cb_gpu[64];
+volatile uint64_t cb_gpu[80];
 void cheeseburger_gpu_smmu_setup(void);
+int cheeseburger_gpu_smmu_bypass(void);
 void cheeseburger_gpu_cp_probe(void);
 }
 namespace {
@@ -48,12 +49,18 @@ static void worker(void*,wait_result_t){
  if(delay>600)delay=600;
  if(delay<1)delay=1;
  for(unsigned i=0;i<delay;++i)IOSleep(1000);
- fill(0,64,0xdeadbeef);
+ fill(0,80,0xdeadbeef);
  cb_gpu[61]=0;cb_gpu[62]=0;cb_gpu[63]=0;
  W gcc;if(!mapw(gcc,0x100000,0xb0000)){cb_gpu[61]=0xffffffff;cb_gpu[63]=0xffff;return;}
  cb_gpu[0]=rd(gcc,0x71004);          // GCC_GPU_CFG_AHB_CBCR
  cb_gpu[1]=rd(gcc,0x71010);          // GCC_GPU_BIMC_GFX_CBCR
  cb_gpu[2]=rd(gcc,0x71028);          // GCC_GPU_MISC
+ // ClockDxe descriptors: gcc_hlos1/2_gpu_smmu_clk at 0x7d000/0x7e000 and
+ // VDD_HLOS1/2_GPU_SMMU at 0x7d024/0x7e024. Read-only: these domains carry
+ // the SMMU's table-walk/memory path, which ATOS waits on.
+ cb_gpu[64]=rd(gcc,0x7d000);cb_gpu[65]=rd(gcc,0x7d024);
+ cb_gpu[66]=rd(gcc,0x7e000);cb_gpu[67]=rd(gcc,0x7e024);
+ cb_gpu[68]=rd(gcc,0x7d004);cb_gpu[69]=rd(gcc,0x7e004);
  bool ahb=(cb_gpu[0]&1)&&!((cb_gpu[0]>>31)&1);
  if(!ahb){cb_gpu[63]=1;return;}
  W cc;if(!mapw(cc,0x5065000,0x9000)){cb_gpu[61]=0xfffffffe;cb_gpu[63]=1;return;}
@@ -75,6 +82,8 @@ static void worker(void*,wait_result_t){
  cb_gpu[62]|=smmu?0x10u:0u;
  unsigned setup=0;PE_parse_boot_argn("cheeseburger-gpu-smmu-setup",&setup,sizeof setup);
  if(smmu&&setup)cheeseburger_gpu_smmu_setup();
+ // Diagnostic mode 2: SID0 bypass for a physical-address CP fetch.
+ if(smmu==2)cheeseburger_gpu_smmu_bypass();
  unsigned cp=0;if(PE_parse_boot_argn("cheeseburger-gpu-cp",&cp,sizeof cp)&&cp&&smmu&&setup)cheeseburger_gpu_cp_probe();
  cb_gpu[63]=3;
 }

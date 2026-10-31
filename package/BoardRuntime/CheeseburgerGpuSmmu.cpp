@@ -56,7 +56,7 @@ struct MicroIo {
  void delay(unsigned us){IODelay(us);}
  void mark(const char *){if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step("smresume");}
 };
-static void reset(){for(unsigned i=0;i<24;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;}
+static void reset(){for(unsigned i=0;i<24;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;cb_smmu[20]=0;}
 static IOBufferMemoryDescriptor *gRootBuf=nullptr;
 static uint64_t gRootPA=0;
 static volatile uint64_t *gRootVA=nullptr;
@@ -200,6 +200,19 @@ extern "C" int cheeseburger_gpu_smmu_atos(uint64_t iova,uint64_t *par,volatile u
  *par=(atsr&1)?0xffffffffffffffffull:p;
  if(after&(1u<<2))return -4;
  return (atsr&1)?-2:0;
+}
+// Diagnostic only: route the GPU non-secure stream (SID 0) through SMMU
+// bypass and let the CP fetch from physical addresses. This deliberately
+// removes GPU memory isolation for one bring-up run so the CP/NoC path can be
+// tested independently of the translation walk; the ZAP/PAS chain still runs
+// and the secure stream (SID 2) is untouched. Never use as the final mapping.
+extern "C" int cheeseburger_gpu_smmu_bypass(void){
+ W *sp=smmuMap();if(!sp)return -1;
+ W &s=*sp;
+ wr(s,0xc00,0x00010000u);   // S2CR0: TYPE=BYPASS, CBNDX ignored
+ cb_smmu[21]=rd(s,0xc00);cb_smmu[20]=1;
+ IOLog("CB GPU SMMU: SID0 bypass s2cr=%x (diagnostic)\n",uint32_t(cb_smmu[21]));
+ return 0;
 }
 extern "C" uint64_t cheeseburger_gpu_smmu_root(void){return gRootPA;}
 extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){

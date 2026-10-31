@@ -162,7 +162,7 @@ extern volatile uint64_t cb_touch[28];
 extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
 extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
 extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
-extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
+extern volatile uint64_t cb_gpu[80] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[24] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
@@ -331,6 +331,11 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   {int n=snprintf(gpu,sizeof gpu,"GSMMU");
    for(unsigned k=0;k<15;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[45+k]&0xffffffffull);}
    at=put(out,at,cap,gpu,sizeof gpu);}
+  snprintf(gpu,sizeof gpu,"GPU6 hlos1=%08llx/%08llx hlos2=%08llx/%08llx d4=%08llx/%08llx ahb=%08llx bimc=%08llx",
+    cb_gpu[64]&0xffffffffull,cb_gpu[65]&0xffffffffull,cb_gpu[66]&0xffffffffull,
+    cb_gpu[67]&0xffffffffull,cb_gpu[68]&0xffffffffull,cb_gpu[69]&0xffffffffull,
+    cb_gpu[0]&0xffffffffull,cb_gpu[1]&0xffffffffull);
+  at=put(out,at,cap,gpu,sizeof gpu);
  }
  if (&cb_smmu[0] && cb_smmu[15]==0x5e7) {
   char sm[220];
