@@ -5,6 +5,7 @@ GPU 只读审计见 `docs/P21_ADRENO540_REVIEW_20261031.md`；依据审计确定
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
 **当前 GPU/CP 阶段的完整现状、问题与解决记录、审计清单见 `docs/P21_GPU_CP_STATUS_REPORT.md`（2026-10-31，供另一 agent 审计）。**
+**P0 证据冻结已完成（2026-10-31，离线）**：门禁现在写 `gate-<UTC>.json` 并校验 packaging 指向本候选镜像；新增 `scripts/p21-freeze-round.py`；最新轮产物冻结在 `out/p21/gpu-cp/rounds/20261031T114334Z-cp-early2/`（含镜像/内核/固件/payload/ADT/配置副本与 gate/pins/boot/monitor/retrieval 引用），5 个历史轮次以哈希补录，索引 `out/p21/gpu-cp/rounds/INDEX.md`。旧 `offline-gate.json`/`pins.json` 已标记失效。
 最近一轮（镜像 `aea9a9fa…`、内核 `6ccfb681…`，GPU 工作提前到 ~75–99 s）日志 `20261031T112909Z`（boot `0x510ea570`，8 rounds）：
 五 buffer 映射全通；`begin` 打印（98.7 s）后日志中断，从代码顺序与已持久证据看未观察到 reset 写入（不能证明其后未执行）；**用户已确认是手动返回 Recovery，400 s 自动复位未生效**。
 按用户要求已暂停，不继续构建/启动。

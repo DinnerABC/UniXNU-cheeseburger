@@ -11,6 +11,7 @@ import lzma
 import re
 import struct
 import sys
+import time
 import zlib
 from pathlib import Path
 
@@ -20,9 +21,23 @@ import bundle  # noqa: E402
 
 bundle.MAX_BYTES = 256 * 1024 * 1024
 
+OUT = None
+STAMP = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+
+
+def write_record(record):
+    # Every run leaves an immutable per-run record next to the candidate so a
+    # later round cannot overwrite the evidence for this image.
+    if OUT is None:
+        return
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / f'gate-{STAMP}.json').write_text(json.dumps(record, indent=2) + '\n')
+
 
 def fail(reason):
-    print(json.dumps({'result': 'PREBOOT_GATE_P21_FAIL', 'reason': reason}))
+    record = {'result': 'PREBOOT_GATE_P21_FAIL', 'reason': reason, 'gate_utc': STAMP}
+    write_record(record)
+    print(json.dumps(record))
     sys.exit(2)
 
 
@@ -31,7 +46,9 @@ def sha(path):
 
 
 def main(candidate):
+    global OUT
     C = R / candidate
+    OUT = C
     packaging_path = C / 'uefi/packaging.json'
     if not packaging_path.is_file():
         fail(f'missing {packaging_path}')
@@ -41,6 +58,8 @@ def main(candidate):
     image = R / packaging['image']
     if not image.is_file():
         fail(f'missing image {image}')
+    if image.resolve() != (C / 'uefi/boot-p21-up1.img').resolve():
+        fail('packaging.json names a different image than this candidate')
     if sha(image) != packaging['sha256']:
         fail('image hash differs from packaging.json')
 
@@ -100,16 +119,20 @@ def main(candidate):
         if needle not in args:
             fail(f'{needle} missing from boot arguments')
 
-    print(json.dumps({
+    record = {
         'result': 'PREBOOT_GATE_P21_PASS',
+        'gate_utc': STAMP,
         'candidate': candidate,
+        'image': str(image.relative_to(R)),
         'image_sha256': packaging['sha256'],
         'kernel_sha256': kernel_in_payload,
         'firmware_sha256': packaging['firmware_sha256'],
         'expanded_payload_sha256': manifest['sha256'],
         'args_bytes': len(args),
         'pins_log_checked': pins_checked,
-    }))
+    }
+    write_record(record)
+    print(json.dumps(record))
 
 
 if __name__ == '__main__':

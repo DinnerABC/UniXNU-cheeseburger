@@ -23,6 +23,19 @@
    每项注明哈希来源（终端输出重建或日志）。
 5. 验收：任一 manifest 能独立重算出对应镜像/内核/固件哈希；gate 记录与镜像一一对应。
 
+### P0 执行状态（2026-10-31 已完成，离线）
+
+- `scripts/unattended/preboot-gate-p21.py` 现在把每次结果写为候选目录下的 `gate-<UTC>.json`，
+  并新增“packaging.json 必须指向本候选 boot 镜像”的检查；本次已对当前镜像 `aea9a9fa…` 重新运行门禁，
+  记录为 `out/p21/fb-qup3/gate-20261031T114312Z.json`（PASS，args 669，pins 命中）。
+- 新增 `scripts/p21-freeze-round.py`：冻结当前轮的镜像/内核/ADT/payload/固件/配置副本与全部哈希、
+  gate/pins、boot/monitor/retrieval 引用、git 状态；历史轮次可用 `--reconstruct` 以哈希方式补录。
+- 最新轮已冻结：`out/p21/gpu-cp/rounds/20261031T114334Z-cp-early2/`（约 392 MB，含产物副本，
+  boot `0x510ea570`）。5 个历史轮次已补录为 `reconstructed`（仅哈希，产物已被覆盖），索引见
+  `out/p21/gpu-cp/rounds/INDEX.md`。
+- `out/p21/fb-qup3/offline-gate.json`、`pins.json` 已用 `STALE-EVIDENCE.md` 标记为旧记录，禁止引用。
+- 注意：`out/` 在 `.gitignore` 中，证据副本只在本机/仓库卷；提交的是脚本与文档。
+
 ## P1 reset 失败路径与执行上下文审计（离线）
 
 问题（审计发现 2）：`gpuReset` 先写 `VBIFHalt=15`，ack 超时、idle 失败或后续检查失败时直接返回，
