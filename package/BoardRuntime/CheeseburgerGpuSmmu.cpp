@@ -63,8 +63,10 @@ static bool ensureTable(uint64_t &pa,volatile uint64_t *&va){
  if(gTableCount>=32)return false;
  gTables[gTableCount++]={pa,va};return true;
 }
+static volatile uint64_t gMapDiag[4];
 static bool mapPage(uint64_t iova,uint64_t pa){
- if(!gRootVA||(iova&4095)||(pa&4095))return false;
+ gMapDiag[2]=iova;gMapDiag[3]=pa;
+ if(!gRootVA||(iova&4095)||(pa&4095)){gMapDiag[0]=1;return false;}
  volatile uint64_t *t=gRootVA;
  for(unsigned level=0;level<3;++level){
   unsigned shift=39-9*level;
@@ -72,13 +74,13 @@ static bool mapPage(uint64_t iova,uint64_t pa){
   uint64_t e=t[idx];
   if(!e){
    uint64_t npa=0;volatile uint64_t *nva=nullptr;
-   if(!ensureTable(npa,nva))return false;
+   if(!ensureTable(npa,nva)){gMapDiag[0]=2;gMapDiag[1]=level;return false;}
    t[idx]=npa|3;cleanTable(t);
    t=nva;
   }else{
-   if((e&0xfffULL)!=3)return false;
+   if((e&0xfffULL)!=3){gMapDiag[0]=3;gMapDiag[1]=(level<<32)|(e&0xffffffff);return false;}
    t=findTable(e&~0xfffULL);
-   if(!t)return false;
+   if(!t){gMapDiag[0]=4;gMapDiag[1]=(level<<32)|(e&0xffffffff);return false;}
   }
  }
  const uint64_t attrs=3ULL|(1ULL<<6)|(2ULL<<8)|(1ULL<<10)|(1ULL<<11)|(3ULL<<53);
@@ -111,10 +113,17 @@ static void mapTest(W &s,unsigned ctx){
 // issued after the whole range.
 extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned pages){
  if(!gRootVA||!pages||(iova&4095)||(pa&4095)||iova<0x1000000ULL||
-    iova+uint64_t(pages)*4096>((1ULL<<40))||pa+uint64_t(pages)*4096>(1ULL<<36))return -1;
- for(unsigned i=0;i<pages;++i)if(!mapPage(iova+uint64_t(i)*4096,pa+uint64_t(i)*4096))return -2;
+    iova+uint64_t(pages)*4096>((1ULL<<40))||pa+uint64_t(pages)*4096>(1ULL<<36)){
+  IOLog("CB GPU SMMU map reject: iova=%llx pa=%llx pages=%u\n",iova,pa,pages);return -1;
+ }
+ for(unsigned i=0;i<pages;++i)if(!mapPage(iova+uint64_t(i)*4096,pa+uint64_t(i)*4096)){
+  IOLog("CB GPU SMMU map fail: page=%u stage=%llu info=%llx iova=%llx pa=%llx\n",
+   i,gMapDiag[0],gMapDiag[1],gMapDiag[2],gMapDiag[3]);return -2;
+ }
  W s;if(!mapw(s,0x5040000,0x10000))return -3;
- return tlbSync(s,0x8000,true)?0:-4;
+ bool ok=tlbSync(s,0x8000,true);
+ IOLog("CB GPU SMMU map ok=%d iova=%llx pages=%u tlb=%x\n",ok?1:0,iova,pages,ok?0:rd(s,0x8000+0x7f4));
+ return ok?0:-4;
 }
 extern "C" void cheeseburger_gpu_smmu_setup(void){
  reset();

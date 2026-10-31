@@ -24,7 +24,9 @@
   - `SSETUP st=0 root=1606cf000 sctlr=201e36 smr=80000000 s2cr=0 cb=1167 tcr=802018 fsr=400`，无 fault；FSR 0x400 是 AArch64 格式位，符合 sagit 对安静 bank 的说明。
   - 该根表尚未映射任何 buffer，GPU 仍无 DMA；CP 仍 halted。
 - **叶子页表映射已验证**：在 SMMU 上下文中加一级/二级/三级表，把 4 KiB 测试 buffer 映射到 GPU VA `0x1000000`；每页写后 clean，CBn_TLBIALL+TLBSYNC 通过。镜像 `b2404510…`（内核 `c6653ea2…`、payload `d6f7db2f…`、固件 `2c91e9ac…`，args 623），日志 `20261031T071612Z`（boot `0x4fc90115`）：`SMAP st=0 va=1000000 pa=15fad9000 pte=6000015fad9e43`，root0=`15fb3a003`；自动回 Recovery。
-- **下一步（综合探针）**：把 a530_pm4/pfp + a540_gpmu 打成 QGFW 容器并嵌入内核（私有头，不提交），一次启动里完成：固件解析（PFP/PM4 字节数、GPMU words）、ring/固件/GPMU 命令 buffer 的物理分配与 SMMU 多 VA 映射、CP/RBBM/VBIF/TrustControl/SECVID/GPMU 状态读取；确认 halt/非安全状态后再做 CP configure/reset/ME_INIT/GPMU 0xbabeface。sagit 的 `AdrenoStartup.h`、`AdrenoFirmware.h`、`PageTables.h` 是同一 SoC 参考。
+- **综合探针第一版结果**：QGFW 私有头（`scripts/p21-gpu-firmware-header.py`，不提交固件）解析成功：`fw=48312`、PM4 `19648`、PFP `16816`、GPMU `2947` words；ring/PM4/PFP/GPMU/fence 五个物理连续 buffer 均分配成功（`GCP1 pa ring=10a5c7000 pm4=10a5cf000 pfp=10a5d4000 gpmu=10a5d9000`）。但通用 SMMU walker 在第一个 ring 映射返回 `st=5`（`GCP0 map=deadbeef`），而同轮 `SMAP st=0` 的单元映射正常；GCP2 因此未读到 CP/Trust/SECVID 状态。已加 `CB GPU SMMU map fail: page/stage/info` 与每 buffer `CB GPU CP map ... r=` 诊断。
+- **黑屏与自动复位**：综合探针的两次启动均黑屏、用户手动回 Recovery；日志中 `AUTORESET issued=1`，内核和自动复位都运行过，黑屏仍是已知的间歇显示分支（同镜像会翻转），不是 CP 探针 panic 的证据。下一次启动仍按 400 s + BCB 标记。
+- **下一步**：让 CP 映射使用**全新根表**（CP 探针开启时跳过 mapTest，避免共享 L1/L2 表），用逐级诊断确认 walker 失败点；映射通过后再读取 CP/RBBM/VBIF/Trust/SECVID/GPMU，然后进入 CP configure/reset/ME_INIT 与 GPMU 0xbabeface。
 
 ## 2026-10-31：GPU 第 1–2 步——A540 固件/寄存器取证与只读探针（GPU 未上电）
 
