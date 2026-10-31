@@ -2,6 +2,21 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：MDP5 扫描配置已读出，页翻转路径已实现（可选开关）
+
+- 探针日志 `20261031T022932Z`（`stage=9`，读完 pipe 后卡在 DSI 寄存器读取——XNU 侧读 `0xc994000` 会挂住，后续不再读 DSI）：
+  - `MDSS_HW=0x30000001`、`MDP_HW=0x30000000`；
+  - **VIG0** 是活动 pipe：`SRC0_ADDR=0x9d400000`（GOP 扫描缓冲）、`SRC_STRIDE_A=0x10e0`（4320 字节 = 1080×4）、`SRC_FORMAT=0x000237ff`；
+  - **LM0** `OUT_SIZE=0x07800438`（1080×1920），其余 LM 为 0；
+  - **CTL0** 的 `LAYER(LM0)=0x01000005`（VIG0 参与混合），`CTL1` 的 `OP=0x00020020`（CMD_MODE + INTF2，命令模式 DSI，因此翻转后需要发 `CTL_START`）。
+- 实现（`package/BoardRuntime/NativeLegacyDisplay.cpp` 的 `flippath`，开关 `cheeseburger-fb-flip=1`）：
+  1. 自检：在 8 条 pipe 中找 `SRC0_ADDR == GOP 物理地址` 的那条（本机为 VIG0），记录原始 stride；
+  2. 每帧取 `IOMemoryDescriptor::getPhysicalSegment(0)`，要求物理连续且覆盖 `stride*height`，否则走拷贝；
+  3. 写 `PIPE_SRC0_ADDR`/`SRC_STRIDE_A`，写 `CTL_FLUSH=(pipe|LM0)` 再写 `CTL_START=1`（照 Linux `mdp5_ctl_commit`）；首次用 5 个 CTL 逐个试探，读 `PIPE_CURRENT_SRC0_ADDR` 确认真的是目标地址，命中即记住该 CTL；
+  4. 任何一步不满足都把地址/stride 恢复成 GOP 值并回退到 CPU 拷贝；计数 `cb_disp[126]`（翻转成功帧）/`[127]`（回退帧），日志行 `DISP … flip=ok/fb`。
+- 镜像 `2d8c0767…`（内核 `33df5596…`、payload `74de0b75…`、固件 `c0ccaa55…`，args 463，含 `cheeseburger-fb-flip=1`），pins 命中、门禁 PASS，临时 boot 一次 OKAY，未写分区。
+- 判读：若界面不再“从上到下逐行刷新”、`flip` 计数增长 → 零拷贝生效；若 `flip=0/N` 且画面与之前一致 → 翻转条件不满足（物理不连续/CTL 未命中），仍走拷贝，不影响可用性。
+
 ## 2026-10-31：确认“USB 之后不进桌面”是间歇性早期卡死；启动参数内置化
 
 - 对照实验（同一镜像 `214ba057…` 连开两次）：第一次 `backboardd absent`、`EXITS total=50`、`clients=0 frames=0`；第二次（日志 `20261030T193108Z`）`clients=51 frames=14`、`EXITS total=612`、`backboardd p56 threads=16`、触摸 `sink/send/rep=287` 全部正常。结论：**不是 USB/探针改动引入的回归**，是该端口已知的间歇性早期用户态卡死（与首帧停顿不同一阶段）。
