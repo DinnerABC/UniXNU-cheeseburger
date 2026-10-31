@@ -7,6 +7,7 @@ GPU 只读审计见 `docs/P21_ADRENO540_REVIEW_20261031.md`；依据审计确定
 **当前 GPU/CP 阶段的完整现状、问题与解决记录、审计清单见 `docs/P21_GPU_CP_STATUS_REPORT.md`（2026-10-31，供另一 agent 审计）。**
 **P0 证据冻结已完成（2026-10-31，离线）**：门禁现在写 `gate-<UTC>.json` 并校验 packaging 指向本候选镜像；新增 `scripts/p21-freeze-round.py`；最新轮产物冻结在 `out/p21/gpu-cp/rounds/20261031T114334Z-cp-early2/`（含镜像/内核/固件/payload/ADT/配置副本与 gate/pins/boot/monitor/retrieval 引用），5 个历史轮次以哈希补录，索引 `out/p21/gpu-cp/rounds/INDEX.md`。旧 `offline-gate.json`/`pins.json` 已标记失效。
 **P1 reset 失败路径已收口（2026-10-31，离线 host-verified）**：`CheeseburgerGpuStart.h` 模板化 reset/configure/start；所有失败保持 CP/VBIF halt、标记 abandoned、不再 unhalt/kick（kick 超时也会重新 halt）；host 模型 8/8 通过（`out/p21/gpu-cp/host-tests/20261031T115416Z/`），内核用新模板重编通过（native `fb78e5c4…`，未打包/未启动）。
+**P2 可观察性与控制 A/B 已完成（2026-10-31）**：CBHB 心跳环（日志窗口最后 31 块、独立线程每 10 s 直写、不经 console/msgbuf；auto-reset 写 `mark`/`smc`；CP reset 每步写 `halt/ack/idle/swrst/cm3/trust/cfg/addr/kick/done/fail`），读取端输出 `heartbeat.json`，codec 8/8。三轮实机：A 短行无环 `0x52b799d2`、B 短行+环 `0x512997ee`、C 长行+环 `0x511b5457`，全部 66 rounds 自动复位；B/C 心跳同型（tick 28–308、mark 329、smc 333）→ **行长、五映射、console、8 s 睡眠都不触发停住**；此前中断更可能发生在 full-start 的 reset 写入阶段。三轮已冻结。下一步 D：full-start + 每步心跳定位具体卡点。
 最近一轮（镜像 `aea9a9fa…`、内核 `6ccfb681…`，GPU 工作提前到 ~75–99 s）日志 `20261031T112909Z`（boot `0x510ea570`，8 rounds）：
 五 buffer 映射全通；`begin` 打印（98.7 s）后日志中断，从代码顺序与已持久证据看未观察到 reset 写入（不能证明其后未执行）；**用户已确认是手动返回 Recovery，400 s 自动复位未生效**。
 按用户要求已暂停，不继续构建/启动。
