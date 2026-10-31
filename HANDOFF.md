@@ -25,7 +25,8 @@
   - 该根表尚未映射任何 buffer，GPU 仍无 DMA；CP 仍 halted。
 - **叶子页表映射已验证**：在 SMMU 上下文中加一级/二级/三级表，把 4 KiB 测试 buffer 映射到 GPU VA `0x1000000`；每页写后 clean，CBn_TLBIALL+TLBSYNC 通过。镜像 `b2404510…`（内核 `c6653ea2…`、payload `d6f7db2f…`、固件 `2c91e9ac…`，args 623），日志 `20261031T071612Z`（boot `0x4fc90115`）：`SMAP st=0 va=1000000 pa=15fad9000 pte=6000015fad9e43`，root0=`15fb3a003`；自动回 Recovery。
 - **综合探针第一版结果**：QGFW 私有头（`scripts/p21-gpu-firmware-header.py`，不提交固件）解析成功：`fw=48312`、PM4 `19648`、PFP `16816`、GPMU `2947` words；ring/PM4/PFP/GPMU/fence 五个物理连续 buffer 均分配成功（`GCP1 pa ring=10a5c7000 pm4=10a5cf000 pfp=10a5d4000 gpmu=10a5d9000`）。但通用 SMMU walker 在第一个 ring 映射返回 `st=5`（`GCP0 map=deadbeef`），而同轮 `SMAP st=0` 的单元映射正常；GCP2 因此未读到 CP/Trust/SECVID 状态。已加 `CB GPU SMMU map fail: page/stage/info` 与每 buffer `CB GPU CP map ... r=` 诊断。
-- **黑屏与自动复位**：综合探针的两次启动均黑屏、用户手动回 Recovery；日志中 `AUTORESET issued=1`，内核和自动复位都运行过，黑屏仍是已知的间歇显示分支（同镜像会翻转），不是 CP 探针 panic 的证据。下一次启动仍按 400 s + BCB 标记。
+- **黑屏根因（用户澄清 + 对照）**：黑屏是**整屏黑**（连屏幕日志都不显示），但系统在跑、ADB/日志可回收。对照 1（`270928d3…`：UEFI GPU 上电关闭、GPU/SMMU/CP 探针关闭）→ 屏幕恢复并自动回 Recovery。对照 2（`ca8d45f0…`：UEFI 上电/时钟保留，仅跳过 `SetClockFreqHz(gpucc_gfx3d_clk,257MHz)`，XNU GPU 探针开启）→ 屏幕正常，`GPU0 stage=3 flags=f`，67 轮完整运行并自动回 Recovery（日志 `20261031T085221Z`，boot `0x4e20d0e1`）。结论：**整屏黑由 `gfx3d` 频率/PLL 改动造成**，不是 CP 映射或系统卡死；此前 CP 探针轮的黑屏也都是这一步。
+- **下一步**：保持 `UNIXNU_GPU_RATE=0`（GPU 按默认频率运行）继续 SMMU/CP 探针；随后用 root clock（`gpucc_gfx3d_clk_src`）或 sagit 私有 PLL 顺序安全升频，避免动到显示的 PLL/时钟。
 - **下一步**：让 CP 映射使用**全新根表**（CP 探针开启时跳过 mapTest，避免共享 L1/L2 表），用逐级诊断确认 walker 失败点；映射通过后再读取 CP/RBBM/VBIF/Trust/SECVID/GPMU，然后进入 CP configure/reset/ME_INIT 与 GPMU 0xbabeface。
 
 ## 2026-10-31：GPU 第 1–2 步——A540 固件/寄存器取证与只读探针（GPU 未上电）

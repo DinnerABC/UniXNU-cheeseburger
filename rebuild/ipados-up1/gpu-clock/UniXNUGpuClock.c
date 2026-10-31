@@ -27,6 +27,7 @@
 // Opt-in power experiment. 0 keeps the image read-only; set to 1 only with the
 // 400 s kernel auto-reset image as the safety net.
 #define UNIXNU_GPU_POWER 1
+#define UNIXNU_GPU_RATE 0
 
 EFI_GUID gEfiClockProtocolGuid = EFI_CLOCK_PROTOCOL_GUID;
 
@@ -204,7 +205,7 @@ PowerClock (
   return Enable;
 }
 
-STATIC EFI_STATUS
+STATIC EFI_STATUS __attribute__((unused))
 PowerRate (
   GPU_POWER_LOG *Log,
   CONST CHAR8   *Name,
@@ -302,9 +303,11 @@ UniXnuGpuPowerEnable (
   PowerClock (&Log, "gpucc_rbcpr_clk");
   PowerClock (&Log, "gpucc_rbbmtimer_clk");
   PowerClock (&Log, "gpucc_gfx3d_isense_clk");
+#if UNIXNU_GPU_RATE
   if (EFI_ERROR (PowerRate (&Log, "gpucc_gfx3d_clk", 257000000))) {
     return;
   }
+#endif
   if (EFI_ERROR (PowerClock (&Log, "gpucc_gfx3d_clk"))) {
     return;
   }
