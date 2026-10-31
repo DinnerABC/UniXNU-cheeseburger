@@ -2,6 +2,14 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：界面改成手机比例——`/chosen/display-scale` 由 1 改为 3
+
+- 身份核对（官方 `/zh/guide/mobilegestalt`）：ADT 早已是 iPhone 行（`iPhone10,3`/`D22`/`iPhone X`/idiom `phone`/subtype 2436/scale 3/无 menu/`home-button-type=2`），与 P23 iOS 16 donor 一致；sheng 用 iPad 行（`iPad7,1`/`J120`、scale 2）。问题不在 model/product。
+- 真正原因：启动参数 `offline-legacy-unit-scale=1` 让驱动把 `/chosen/display-scale` 发布成 1，逻辑点=物理像素（1080×1920 pt 的大画布），任何界面都会铺成平板布局。按身份改为 **3**（360×640 pt），用户确认界面变为**手机比例**。
+- 附带预期：渲染 surface 从 1242×2208 回到 1080×1920（1:1，不再 CPU 缩放），帧率与 MDP 翻转都受益；待日志确认。
+- 镜像 `a41b663e…`（内核 `37e500c3…` 未变、payload `0880db2d…`、固件 `6b0cf1b2…`，args 463），pins 命中、门禁 PASS，未写分区。
+- 若后续身份仍被判定为平板，按手册删除 Data 里的 `.../systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist`；本机 Data 是自定义 seed（`owner-data-1g.dbr`），需要从 seed 剥离并更新 payload 固定哈希。
+
 ## 2026-10-31：卡顿真因是扫描缓冲走非缓存映射（每帧约 0.9 s），改为缓存写 + 每帧一次 clean
 
 - 翻转没有生效（日志 `flip=0/0`）的原因：**iOS 渲染的 surface 是 1242×2208、stride 5120**，而面板是 1080×1920；驱动每帧走 `p21_scale` 做 CPU 缩放，翻转要求尺寸一致，因此从未进入翻转分支。日志实测 `P21 SCALE 1242x2208 -> 1080x1920 … ticks=17147001`（19.2 MHz 计数器 ≈ 0.89 s/帧）。
