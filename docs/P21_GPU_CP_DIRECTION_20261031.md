@@ -120,6 +120,14 @@
 - 下一步：在安全路径下补 GCP8/GCP9 只读回读（ME/PFP/RB 高低字、CP_PROTECT/ADDR_MODE、TCR/TTBR/SMR/S2CR、
   PTE 抽样），并核对 ZAP/PAS 前提；之后再评估 SCTLR/secure 世界对 CP 取指的影响。
 
+### F 轮结果（2026-10-31，只读回读）
+
+- `GCP8` 证明 ME/PFP/RB 基址、RB_CNTL=0x800020c、CP_ADDR_MODE=1、CP_PROTECT_CNTL=7 全部正确回读。
+- `GCP9`：SCTLR=0x1027、TCR=0x802018、SMR=0x80000000、TTBR0 低字=0x201e9000 正确；
+  **待核**：TTBR0 高字回读 1（期望 0）、S2CR 打印 `fffffff700000000`（期望 0），疑似 64-bit 打印伪影；
+  PTE 查询少下潜一级（已修源码），下一轮验证叶子 PTE。
+- CP 仍 `RBRead=0`、trust=1、无 fault；secure 模式/ZAP/PAS 是下一个决策点。
+
 ## P3 SMMU 与 CP 前置验证（硬件，待 P2 判据可用）
 
 问题（审计发现 4/5/9）：五映射只证明软件建表/TLB 报告成功；configure 只回读关键子集；

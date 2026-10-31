@@ -167,6 +167,23 @@
   2. secure 模式未被清除（trust=1），CP 仍不取 ring；无 SMMU/CP fault。
   3. 下一步不再是“避免卡死”，而是“用安全路径查明 CP 为什么不取 ring”，并核对 ZAP/PAS 前提。
 
+### 2.9 F 轮：configure/SMMU 只读回读（2026-10-31）
+
+- 镜像 `c7a64a40…`、内核 `ac8f24fe…`，日志 `20261031T133223Z`，boot `0x5121fa54`，66 rounds，
+  自动复位、无黑屏（与 E 相同的安全 full-start）。
+- `GCP8`：`me=2008000/0 pfp=200d000/0 rb=2000000/0 ctl=800020c am=1 prot=7` ——
+  ME/PFP/RB 基址高低字、RB_CNTL、CP_ADDR_MODE_CNTL、CP_PROTECT_CNTL 全部按写入值回读。
+- `GCP9`：`sctlr=1027 tcr=802018 ttbr=201e9000/1 smr=80000000 s2cr=fffffff700000000 pte=14102f003`。
+  - `sctlr=0x1027`、`tcr=0x802018`、`smr=0x80000000`、TTBR0 低字 `0x201e9000` 符合预期；
+  - **两处异常**：TTBR0 高字回读为 `1`（期望 0）；`s2cr` 打印为 `fffffff700000000`（期望 0）。
+    这两项与 BootLog 长行/64-bit varargs 的可疑格式同时出现（此前 SSETUP 也有 `fffffff6…` 前缀），
+    需用 `%x` 分高低字重测后才能判定是寄存器值还是打印问题；
+  - `pte=0x14102f003` 是 L3 表描述符而非叶子：软件的 `cheeseburger_gpu_smmu_lookup` 少下潜一级，
+    **已在源码修复**（下一轮可验证真实叶子 PTE）。
+- `GCP5 rc=-4 r=0 w=9`、`GCP6 trust=1`、CP/SMMU fault 均 0；与 E 一致。
+- 结论：configure/地址编程正确；CP 仍不取 ring，且 secure 未清。接下来需要（a）修正打印/TTBR 重测，
+  （b）评估 ZAP/PAS 前提；在此之前不重复强制 `TRUST_CNTL` 写。
+
 ## 3. 遇到的问题与解决方式
 
 | # | 问题 | 解决/结论 | 状态 |
