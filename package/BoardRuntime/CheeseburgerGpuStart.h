@@ -193,13 +193,14 @@ public:
         r.mark("addr");
         rec.stage = 2;
 
+        // sagit order: release the engine first, then stage the ring and kick.
+        r.publish(); wr(VBIFHalt, 0); wr(MEControl, 0);
         unsigned cursor = 0;
         ring[cursor++] = packet7(0x48, 8);  // CP_ME_INIT, A540 payload
         static const uint32_t init[] = {0x2f, 3, 0x20000000, 0, 0, 0, 0, 0};
         for (unsigned i = 0; i < sizeof init / sizeof init[0]; ++i) ring[cursor++] = init[i];
         r.clean((volatile void *)ring, ringDwords * 4);
         r.mark("kick");
-        r.publish(); wr(VBIFHalt, 0); wr(MEControl, 0);
         r.publish(); wr(RBWrite, cursor);
 
         for (unsigned waited = 0; waited < 300000; waited += 10) {

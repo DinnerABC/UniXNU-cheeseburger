@@ -40,3 +40,27 @@ def encode(boot_id, seq, sec, tag, state, rounds, size=4096):
     line = ('CBHB0001 boot=%016x seq=%d sec=%d tag=%s state=%d rounds=%d\n'
             % (boot_id, seq, sec, tag, state, rounds)).encode('ascii')
     return line + b'\0' * (size - len(line))
+
+
+def collect(window, boot_id, free_first, free_count):
+    """Collect the heartbeat slots, keep only this boot, and count losses.
+
+    tick/step/auto-reset use disjoint sub-rings, so records never collide. A
+    slot that is empty or holds another boot's record is reported, not merged.
+    """
+    records, foreign, empty = [], 0, 0
+    for i in range(free_first, free_first + free_count):
+        r = parse(window[i * 4096:(i + 1) * 4096])
+        if r is None:
+            empty += 1
+        elif int(r['boot'], 16) != boot_id:
+            foreign += 1
+        else:
+            records.append(r)
+    records.sort(key=lambda r: (r['sec'], r['tag'], r['seq']))
+    by_tag = {}
+    for r in records:
+        by_tag.setdefault(r['tag'], []).append(r['seq'])
+    gaps = {tag: sum(1 for a, b in zip(v, v[1:]) if b != a + 1) for tag, v in by_tag.items()}
+    return {'records': records, 'foreign': foreign, 'empty': empty, 'gaps': gaps,
+            'free_first': free_first, 'free_count': free_count}

@@ -21,11 +21,12 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 extern "C" {
-volatile uint64_t cb_cp[80];
+volatile uint64_t cb_cp[96];
 extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
+uint64_t cheeseburger_gpu_smmu_root(void);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
 namespace {
@@ -101,7 +102,7 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
-static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<80;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
+static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<96;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 // The reset/configure/start state machine lives in CheeseburgerGpuStart.h so a
 // host register model can inject every failure point offline.
 struct Mmio {
@@ -224,6 +225,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     cb_cp[75]=rd(sm,0x8020);cb_cp[76]=rd(sm,0x8024);
     cb_cp[77]=rd(sm,0x800);cb_cp[78]=rd(sm,0xc00);}
    {uint64_t pte=0;if(cheeseburger_gpu_smmu_lookup(ring.gva,&pte)==0)cb_cp[79]=pte;}
+   cb_cp[80]=cheeseburger_gpu_smmu_root();cb_cp[81]=ring.pa;
    captureFaults(m);
    IOLog("CB GPU start: kick rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x\n",rc,
     uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),

@@ -18,15 +18,10 @@ report.update(msg_blocks=h[7],slot_blocks=h[10],slot_count=h[11],slots_written=h
 decoder=R.parent/'upstream/UniXNU-sheng/scripts/read-sheng-log.py';subprocess.run([sys.executable,str(decoder),'--decode',str(out/'window.bin'),'--out',str(out/'decoded')],check=True)
 # Independent liveness block at the last window block (outside msg/slot areas).
 free_first=h[9]+h[10]*h[11];free_count=max(0,h[5]-free_first)
-records=[]
-for i in range(free_first,h[5]):
- r=heartbeat_record.parse(raw[i*4096:(i+1)*4096])
- if r:records.append(r)
-records.sort(key=lambda r:(r['sec'],r['seq']))
-hb={'free_first':free_first,'free_count':free_count,'records':records,
-    'last':records[-1] if records else None}
+hb=heartbeat_record.collect(raw,h[3],free_first,free_count)
+hb['last']=hb['records'][-1] if hb['records'] else None
 report['heartbeat']=hb
-if records:
+if hb['records']:
  for d in (out/'decoded').iterdir():
   if d.is_dir():(d/'heartbeat.json').write_text(json.dumps(hb,indent=2)+'\n')
 (out/'retrieval.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2));print('Saved:',out)

@@ -10,6 +10,7 @@
 #include <kern/sched_prim.h>
 #include <pexpert/pexpert.h>
 #include <string.h>
+#include "CheeseburgerGpuWalk.h"
 extern "C" {
 volatile uint64_t cb_smmu[16];
 volatile uint64_t cb_map[4];
@@ -139,22 +140,16 @@ extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned page
  return ok?0:-4;
 }
 // Read-only software walk of the live tables for diagnostics; no MMIO.
+struct KernelTables {
+ volatile uint64_t *root(){return gRootVA;}
+ uint64_t entry(volatile uint64_t *t,unsigned index){return t[index];}
+ volatile uint64_t *next(uint64_t pa){return findTable(pa);}
+};
+extern "C" uint64_t cheeseburger_gpu_smmu_root(void){return gRootPA;}
 extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
- if(!gRootVA||!pte||(iova&4095))return -1;
- *pte=0;
- // Same descent as mapPage: three table levels, then the leaf in the L3 table.
- volatile uint64_t *t=gRootVA;
- for(unsigned level=0;level<3;++level){
-  const uint64_t e=t[(iova>>(39-9*level))&511];
-  if(!e)return -2;
-  if((e&0xfffULL)!=3)return -4;
-  t=findTable(e&~0xfffULL);
-  if(!t)return -5;
- }
- const uint64_t e=t[(iova>>12)&511];
- if(!e)return -2;
- *pte=e;
- return (e&3)==3?0:-3;
+ if(!pte||(iova&4095))return -1;
+ KernelTables tables;
+ return CheeseburgerGpu::lookupLeaf(tables,iova,*pte);
 }
 extern "C" void cheeseburger_gpu_smmu_setup(void){
  reset();

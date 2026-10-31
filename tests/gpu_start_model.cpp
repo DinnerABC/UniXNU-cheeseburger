@@ -3,10 +3,12 @@
 // cleanup contract offline: every failure must leave MEControl/VBIFHalt halted
 // and must never submit, while the success path leaves the CP running.
 #include "../package/BoardRuntime/CheeseburgerGpuStart.h"
+#include "../package/BoardRuntime/CheeseburgerGpuWalk.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <vector>
 
 using namespace CheeseburgerGpu;
@@ -65,6 +67,42 @@ struct Mock {
     void publish() {}
     void clean(volatile void *, unsigned) {}
 };
+
+static void check(bool ok, const char *name);
+
+struct HostTables {
+    std::vector<std::vector<uint64_t>> t; // 0 invalid, 1 root, 2.. tables
+    std::map<uint64_t, unsigned> bypa;
+    HostTables() { t.emplace_back(512, 0); t.emplace_back(512, 0); }
+    unsigned add(uint64_t pa) { t.emplace_back(512, 0); bypa[pa] = unsigned(t.size()) - 1; return unsigned(t.size()) - 1; }
+    unsigned root() { return 1; }
+    uint64_t entry(unsigned id, unsigned i) { return id < t.size() ? t[id][i] : 0; }
+    unsigned next(uint64_t pa) { auto it = bypa.find(pa); return it == bypa.end() ? 0 : it->second; }
+};
+
+static void walker_cases() {
+    HostTables h;
+    const unsigned l1 = h.add(0x1000), l2 = h.add(0x2000), l3 = h.add(0x3000);
+    h.t[1][0] = 0x1000 | 3;       // root[0] -> L1
+    h.t[l1][0] = 0x2000 | 3;      // L1[0] -> L2
+    h.t[l2][16] = 0x3000 | 3;     // L2[16] -> L3
+    h.t[l3][0] = 0x400000 | 0x6c3;
+    uint64_t pte = 0;
+    CheeseburgerGpu::lookupLeaf(h, 0x2000000, pte);
+    check(pte == (0x400000 | 0x6c3), "walk/leaf");
+    h.t[l3][1] = 0x500000 | 0x6c3;
+    CheeseburgerGpu::lookupLeaf(h, 0x2001000, pte);
+    check(pte == (0x500000 | 0x6c3), "walk/boundary");
+    h.t[1][0] = 0;
+    check(CheeseburgerGpu::lookupLeaf(h, 0x2000000, pte) == -2, "walk/missing");
+    h.t[1][0] = 5;
+    check(CheeseburgerGpu::lookupLeaf(h, 0x2000000, pte) == -4, "walk/invalid-desc");
+    h.t[1][0] = 0x9000 | 3;
+    check(CheeseburgerGpu::lookupLeaf(h, 0x2000000, pte) == -5, "walk/broken-link");
+    h.t[1][0] = 0x1000 | 3;
+    h.t[l3][0] = 1;
+    check(CheeseburgerGpu::lookupLeaf(h, 0x2000000, pte) == -3, "walk/invalid-leaf");
+}
 
 static unsigned failures = 0;
 static void check(bool ok, const char *name) {
@@ -160,7 +198,17 @@ int main() {
         check(m.rbControlWrites == 0 && m.rbWriteWrites == 0, "no-reset/no-submit");
         halted_after_failure(m, "no-reset/halted");
     }
+    walker_cases();
+    // Idempotent cleanup must not unhalt.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        engine.abandon(rec);
+        engine.abandon(rec);
+        check(m.unhaltWrites == 0 && m.reg[MEControl / 4] == Halt, "abandon/twice");
+    }
     if (failures) { std::printf("RESULT FAIL %u\n", failures); return 1; }
-    std::printf("RESULT PASS 9/9\n");
+    std::printf("RESULT PASS\n");
     return 0;
 }

@@ -166,7 +166,7 @@ extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
-extern volatile uint64_t cb_cp[80] __attribute__((weak_import));
+extern volatile uint64_t cb_cp[96] __attribute__((weak_import));
 extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
 extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
 volatile uint64_t cb_boot_id=0;
@@ -175,7 +175,11 @@ volatile uint64_t cb_boot_id=0;
 // window, written directly and never through msgbuf/console. A console or
 // msgbuf stall therefore cannot erase this record. The reader parses it as a
 // separate heartbeat.json; it is not part of the header/msg/slot structures.
-static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq) {
+// Producers own disjoint sub-rings so a concurrent tick/marker/step write can
+// never overwrite another producer's record. 31 free blocks: 22 tick, 6 step,
+// 3 auto-reset. The reader groups by tag and filters by the header boot id.
+enum {HbTickSlots = 22, HbStepSlots = 6, HbResetSlots = 3, HbSlots = HbTickSlots + HbStepSlots + HbResetSlots};
+static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq, unsigned base, unsigned count) {
   if (!buf || !boot_log_blocks || !cb_boot_id || !boot_log_ticks_start || boot_log_state != 2) return;
   const uint64_t now = boot_log_freq ? (log_ticks() - boot_log_ticks_start) / boot_log_freq : 0;
   memset(buf, 0, LogBlock);
@@ -185,23 +189,28 @@ static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq) {
            tag, (unsigned)boot_log_state, (unsigned)boot_log_rounds);
   // Use every block after the slot area as a small heartbeat ring so a fault
   // boot still keeps the ticks leading up to the stop, not only the last one.
-  const uint64_t lba = boot_log_hb_count ? boot_log_hb_first + (seq % boot_log_hb_count)
-                                         : boot_log_blocks - 1;
+  uint64_t lba;
+  if (boot_log_hb_count >= HbSlots) {
+    if (base + count > HbSlots) return;
+    lba = boot_log_hb_first + base + (seq % count);
+  } else {
+    lba = boot_log_blocks - 1;
+  }
   if (native_ufs_log_write(lba, 1, buf)) native_ufs_log_sync();
 }
 void cheeseburger_bootlog_heartbeat(void) {
   static uint64_t seq;
-  heartbeat_record(boot_log_heartbeat_buffer, "tick", ++seq);
+  heartbeat_record(boot_log_heartbeat_buffer, "tick", ++seq, 0, HbTickSlots);
 }
 void cheeseburger_bootlog_autoreset(const char *tag) {
   static uint64_t seq;
-  heartbeat_record(boot_log_autoreset_buffer, tag ? tag : "mark", ++seq);
+  heartbeat_record(boot_log_autoreset_buffer, tag ? tag : "mark", ++seq, HbTickSlots + HbStepSlots, HbResetSlots);
 }
 // Reset/start step markers: the probe calls this around each GPU register step
 // so a stall leaves the last reached step in the heartbeat ring.
 void cheeseburger_bootlog_step(const char *tag) {
   static uint64_t seq;
-  heartbeat_record(boot_log_step_buffer, tag ? tag : "step", ++seq);
+  heartbeat_record(boot_log_step_buffer, tag ? tag : "step", ++seq, HbTickSlots, HbStepSlots);
 }
 static void heartbeat_worker(void *arg, wait_result_t result) {
   (void)arg; (void)result;
@@ -359,6 +368,15 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    at=put(out,at,cap,cp,sizeof cp);
    snprintf(cp,sizeof cp,"GCP9 sctlr=%llx tcr=%llx ttbr=%llx/%llx smr=%llx s2cr=%llx pte=%llx bid=%llx",
      cb_cp[73],cb_cp[74],cb_cp[75],cb_cp[76],cb_cp[77],cb_cp[78],cb_cp[79],cb_boot_id);
+   at=put(out,at,cap,cp,sizeof cp);
+   snprintf(cp,sizeof cp,"GCP10 ttbr=%x/%x smr=%x s2cr=%x pte=%llx root=%llx ringpa=%llx fsr=%x gfsr=%x bid=%llx",
+     (uint32_t)(cb_cp[75]),(uint32_t)(cb_cp[76]),(uint32_t)(cb_cp[77]),(uint32_t)(cb_cp[78]),
+     cb_cp[79],cb_cp[80],cb_cp[81],(uint32_t)(cb_cp[53]),(uint32_t)(cb_cp[54]),cb_boot_id);
+   at=put(out,at,cap,cp,sizeof cp);
+   snprintf(cp,sizeof cp,"KEY bid=%llx clk=%x/%x/%x trust=%x stg=%llu rc=%llx r=%llx w=%llx cpfsr=%llx gfsr=%llx hberr=%u frames=%llu",
+     cb_boot_id,(uint32_t)(cb_cp[56]),(uint32_t)(cb_cp[57]),(uint32_t)(cb_cp[58]),(uint32_t)(cb_cp[48]),
+     cb_cp[38],cb_cp[39],cb_cp[42],cb_cp[43],(uint32_t)(cb_cp[53]),(uint32_t)(cb_cp[54]),
+     (unsigned)boot_log_errors,(unsigned long long)p20_display_frames);
    at=put(out,at,cap,cp,sizeof cp);
   }
  }
