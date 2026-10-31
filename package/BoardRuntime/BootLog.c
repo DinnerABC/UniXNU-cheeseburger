@@ -158,6 +158,7 @@ extern volatile uint64_t cb_touch[28];
 extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
 extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
 extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
+extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -254,6 +255,20 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     native_data_persist_pages,native_data_persist_loaded,native_data_persist_writes,native_data_persist_syncs,
     native_data_persist_errors,native_data_persist_first_lba,native_data_persist_present);
   at=put(out,at,cap,data,sizeof data);
+ }
+ if (&cb_gpu[0] && cb_gpu[63]) {
+  char gpu[240];
+  snprintf(gpu,sizeof gpu,"GPU0 gcc ahb=%08llx bimc=%08llx misc=%08llx stage=%llu flags=%llx err=%llx",
+    cb_gpu[0]&0xffffffff,cb_gpu[1]&0xffffffff,cb_gpu[2]&0xffffffff,cb_gpu[63],cb_gpu[62],cb_gpu[61]);at=put(out,at,cap,gpu,sizeof gpu);
+  for(unsigned i=4;i<28;i+=12){int n=snprintf(gpu,sizeof gpu,"GPU%u gpucc",(i-4)/12+1);
+   for(unsigned k=0;k<12 && i+k<28;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[i+k]&0xffffffffull);}
+   at=put(out,at,cap,gpu,sizeof gpu);}
+  {int n=snprintf(gpu,sizeof gpu,"GPU3 gpu");
+   for(unsigned k=0;k<17;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[28+k]&0xffffffffull);}
+   at=put(out,at,cap,gpu,sizeof gpu);}
+  {int n=snprintf(gpu,sizeof gpu,"GSMMU");
+   for(unsigned k=0;k<15;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[45+k]&0xffffffffull);}
+   at=put(out,at,cap,gpu,sizeof gpu);}
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];

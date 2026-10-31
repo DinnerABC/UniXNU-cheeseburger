@@ -2,6 +2,18 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：GPU 第 1–2 步——A540 固件/寄存器取证与只读探针（GPU 未上电）
+
+- 按官方 `/zh/porting/gpu` 顺序，先确认 GPU 代际与输入：本机 A540（a5xx，无 A740 式 GMU；CP 固件 + GPMU 由 CP 写入）。同 SoC 参考 `out/p23/metal-review/sagit-source`（pin `898998c`）及其 QcomGPU/GPUCC/SMMU/RPM 源码，已取到 `docs/upstream/reference/sagit/`。
+- **固件已取证**（Recovery 内只读）：vendor 分区 `/dev/block/sdf6` 以 `-o ro` 挂载后拉取 `a530_pfp.fw`（16820 B）、`a530_pm4.fw`（19652 B）、`a540_gpmu.fw2`（11736 B）、`a540_zap.mdt/.b00/.b01/.b02/.elf`；随后已卸载。文件与 SHA-256 在 `out/p21/gpu/firmware/` 与 `out/p21/gpu/firmware.sha256`（私有输入，不提交、不随仓库分发）。
+- 只读探针（`package/BoardRuntime/CheeseburgerGpuProbe.cpp`，启动参数 `cheeseburger-gpu-probe=60`）：先读 GCC，只有 `GCC_GPU_CFG_AHB_CBCR` 使能且未 halted 才读 GPUCC；只有 GPUCC 报告 GX 上电且 gfx3d 运行时才读 GPU/SMMU；否则填 `0xdeadbeef`。
+- 镜像 `d1f6ca23…`（内核 `dd0e4ad9…`、payload `24e72e75…`、固件 `b104d7f1…`，args 510），pins 命中、门禁 PASS；日志 `20261031T050242Z`（boot `0x4e273a84`）：
+  - `GPU0 gcc ahb=20008001 bimc=00000001 misc=00010000 stage=2 flags=1 err=0`：AHB/BIMC 在跑；
+  - GPUCC：`0x1008=00005ff4`（CX GDSC bit31=0）、`0x1094=00222001`（GX bit31=0）、`0x1098=80000620`、`0x1054/0x10d0/0x1124=80000000`（rbcpr/gfx3d/rbbmtimer/isense 全部 halted）；
+  - GPU/SMMU 按设计跳过（全 `deadbeef`）；同轮 Data 以 `state=2` 恢复，`err=0`。
+- 结论：GPUCC 总线可访问，但 GPU 电源域与时钟完全未开；UEFI/内核都没有对 GPU 上电。固件 `ClockDxe` 含 `VDD_GPU_CX`、`VDD_GPU_GX`、`VDD_HLOS1/2_GPU_SMMU` 与全部 `gpucc_*`/`gcc_gpu_*` 时钟名，并安装 `EFI_CLOCK_PROTOCOL`（GUID `241AFAE6-885F-4F6C-A7EA-C28EAB79C3E5`，含电源域、复位、频率与按名查找 ID）；本地头文件在 `upstream/uefi-sheng/Silicon/Qualcomm/QcomPkg/Include/Protocol/EFIClock.h`。
+- 下一步（尚未执行）：在 UniXNUPkg 里做一个 opt-in 的 UEFI 探针——定位 Clock 协议、按名取 GPU 时钟/电源域 ID，先只读记录状态；确认后再使能 CX/GX 与 gfx3d 并读 GPU RBBM ID/Status。之后才是 SMMU 上下文、CP/GPMU 固件加载与提交路径。
+
 ## 2026-10-31：持久 Data 打通（mode1 只读 → mode2 初始化 → 跨重启恢复）
 
 - 背景：此前 Data 只有 payload 内 1 GiB seed 的内存稀疏盘（`owner-data-1g.dbr`），重启即丢；官方 RamBlock 已有 overlay 机制，缺的是 UFS 侧的 `native_ufs_store_*` 回调（本仓库原先只提供 `gpt_check`，其余由 `no-store-provider.c` 返回 0）。
