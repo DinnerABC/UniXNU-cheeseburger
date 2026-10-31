@@ -164,9 +164,9 @@ extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
 extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
 extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
-extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
+extern volatile uint64_t cb_smmu[24] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
-extern volatile uint64_t cb_cp[96] __attribute__((weak_import));
+extern volatile uint64_t cb_cp[112] __attribute__((weak_import));
 extern volatile uint64_t cb_zap[32] __attribute__((weak_import));
 extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
 extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
@@ -337,6 +337,9 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(sm,sizeof sm,"SSETUP st=%llu root=%llx sctlr=%llx smr=%llx s2cr=%llx cb=%llx tcr=%llx fsr=%llx ids=%llx/%llx/%llx",
     cb_smmu[0],cb_smmu[1],cb_smmu[2],cb_smmu[3],cb_smmu[4],cb_smmu[5],cb_smmu[8],cb_smmu[9],
     cb_smmu[10],cb_smmu[11],cb_smmu[12]);at=put(out,at,cap,sm,sizeof sm);
+  snprintf(sm,sizeof sm,"SMICRO before=%llx after=%llx impl0=%llx result=%lld bid=%llx",
+    cb_smmu[16],cb_smmu[17],cb_smmu[18],(long long)cb_smmu[19],cb_boot_id);
+  at=put(out,at,cap,sm,sizeof sm);
   if (&cb_map[0] && cb_map[0]!=0xdeadbeef) {
    snprintf(sm,sizeof sm,"SMAP st=%llu va=%llx pa=%llx pte=%llx",
      cb_map[0],cb_map[1],cb_map[2],cb_map[3]);at=put(out,at,cap,sm,sizeof sm);
@@ -379,6 +382,10 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    at=put(out,at,cap,cp,sizeof cp);
    snprintf(cp,sizeof cp,"GCP12 rptr=%llx cpctl=%llx ucode=%llx bid=%llx",
      cb_cp[93],cb_cp[94],cb_cp[95],cb_boot_id);
+   at=put(out,at,cap,cp,sizeof cp);
+   snprintf(cp,sizeof cp,"GCP13 nsg=%llx gsyn=%llx/%llx/%llx ssyn=%llx/%llx/%llx cb0=%llx/%llx rw=%llx/%llx fpte=%llx bid=%llx",
+     cb_cp[96],cb_cp[97],cb_cp[98],cb_cp[99],cb_cp[100],cb_cp[101],cb_cp[102],
+     cb_cp[103],cb_cp[104],cb_cp[106],cb_cp[105],cb_cp[108],cb_boot_id);
    at=put(out,at,cap,cp,sizeof cp);
    snprintf(cp,sizeof cp,"KEY bid=%llx clk=%x/%x/%x trust=%x stg=%llu rc=%llx r=%llx w=%llx cpfsr=%llx gfsr=%llx hberr=%u frames=%llu",
      cb_boot_id,(uint32_t)(cb_cp[56]),(uint32_t)(cb_cp[57]),(uint32_t)(cb_cp[58]),(uint32_t)(cb_cp[48]),

@@ -11,12 +11,14 @@
 #include <pexpert/pexpert.h>
 #include <string.h>
 #include "CheeseburgerGpuWalk.h"
+#include "CheeseburgerSmmuMicro.h"
 extern "C" {
-volatile uint64_t cb_smmu[16];
+volatile uint64_t cb_smmu[24];
 volatile uint64_t cb_map[4];
 volatile uint64_t cb_mapdiag[4];
 volatile uint64_t cb_mapret[4];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
+void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
 namespace {
 struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
@@ -47,7 +49,14 @@ static W *smmuMap(){
  if(!gSmmuMapped)gSmmuMapped=mapw(gSmmuW,0x5040000,0x10000);
  return gSmmuMapped?&gSmmuW:nullptr;
 }
-static void reset(){for(unsigned i=0;i<16;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;}
+struct MicroIo {
+ W &s;
+ uint32_t read(unsigned off){return rd(s,off);}
+ void write(unsigned off,uint32_t v){wr(s,off,v);}
+ void delay(unsigned us){IODelay(us);}
+ void mark(const char *){if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step("smresume");}
+};
+static void reset(){for(unsigned i=0;i<24;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;}
 static IOBufferMemoryDescriptor *gRootBuf=nullptr;
 static uint64_t gRootPA=0;
 static volatile uint64_t *gRootVA=nullptr;
@@ -198,11 +207,30 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  // until they are confirmed against this SoC's SMMU implementation.
  wr(s,ctx,0x1027);wr(s,0xc00,0);wr(s,0x800,0x80000000u);
  if(!tlbSync(s,ctx,false)){cb_smmu[0]=9;cb_smmu[5]=rd(s,ctx);return;}
+ // Vendor arm-smmu IMPL_DEF1 micro-MMU control (DTB qcom,micro-mmu-control
+ // 0x6000). LOCAL_HALT_REQ is bit 2; IDLE is bit 3. This DTB does not set
+ // qcom,enable-static-cb, so a direct write is the vendor path. A request bit
+ // that survives the write means the resume did not happen: stop here instead
+ // of starting the CP on a halted translation pipeline.
+ {
+  MicroIo io{s};
+  const auto micro=CheeseburgerGpu::resumeMicroMmu(io,3000);
+  cb_smmu[16]=micro.before;cb_smmu[17]=micro.after;
+  cb_smmu[19]=uint64_t(int64_t(micro.result));
+  cb_smmu[18]=rd(s,0x2000);
+  if(micro.result==CheeseburgerGpu::MicroResult::Timeout||micro.result==CheeseburgerGpu::MicroResult::Invalid){
+   cb_smmu[0]=10;
+   IOLog("CB GPU SMMU micro-MMU resume failed: result=%d before=%x after=%x\n",
+    int(micro.result),micro.before,micro.after);
+   return;
+  }
+ }
  cb_smmu[0]=0;
  cb_smmu[2]=rd(s,0);cb_smmu[3]=rd(s,0x800);cb_smmu[4]=rd(s,0xc00);
  cb_smmu[5]=rd(s,ctx);cb_smmu[6]=rd(s,ctx+0x20);cb_smmu[7]=rd(s,ctx+0x24);
  cb_smmu[8]=rd(s,ctx+0x30);cb_smmu[9]=rd(s,ctx+0x58);
  IOLog("CB GPU SMMU: root=%llx sctlr=%x smr=%x s2cr=%x cb=%x tcr=%x fsr=%x ids=%x/%x/%x\n",
   gRootPA,cb_smmu[2],cb_smmu[3],cb_smmu[4],cb_smmu[5],cb_smmu[8],cb_smmu[9],id0,id1,id2);
+ IOLog("CB GPU SMMU: micro=%x/%x impl0=%x\n",uint32_t(cb_smmu[16]),uint32_t(cb_smmu[17]),uint32_t(cb_smmu[18]));
  unsigned mt=0;if(PE_parse_boot_argn("cheeseburger-gpu-map-test",&mt,sizeof mt)&&mt)mapTest(s,ctx);
 }

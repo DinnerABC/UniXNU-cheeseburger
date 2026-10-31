@@ -339,3 +339,29 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
   `CP_RB_RPTR_ADDR` 指向已映射的 fence 页），kick 失败后先重发一次 doorbell，并记录 kick 之后的
   **live MEControl/VBIFHalted、scratch RPTR、CP_CNTL、ME ucode debug**，用于区分“引擎已停”与
   “引擎在跑但 ring 不前进”。宿主模型同步更新并通过。
+
+### 11.8 第四轮：vendor ring 游标（boot `0x5358a52f`，镜像 `ac371b8a…`）
+
+- ZAP 认证与核心域上电仍成功；改用 vendor 配置 `CP_RB_CNTL=0x20C` 并把 `CP_RB_RPTR_ADDR`
+  指向已映射 fence 页；kick 失败后重发一次 doorbell。结果仍 `rc=-4 r=0 w=9`。
+- kick 之后 **live `MEControl=0x303`**（写 0 后仍回读 halt）、`VBIFHalted=0xf000f`、scratch RPTR=0、
+  `CP_CNTL=0`、`0x830=0xffffffff`；`Status=0xc00003c1`（bit30 与 CP AHB busy 相关），
+  CB0/SID2/CB1/CB2 fault 均 0。说明“unhalt 请求没有保持”，且 AHB busy 位被置起，更像是取指通路被
+  挂起/中止，而不是 ring 内容错误。
+- 第五轮：读取 SMMU `IMPL_DEF1` micro-MMU 控制（vendor `ARM_SMMU_IMPL_DEF1 = base+0x6000`，DTB
+  `qcom,micro-mmu-control=0x6000`）；若 `LOCAL_HALT_REQ(bit2)` 被置位，按 `arm_smmu_resume` 清除并
+  回读（心跳 `smresume`）。该寄存器若被启动链留在 halt，所有 GPU 翻译会静默停住且不产生 context fault。
+
+### 11.9 第五轮：micro-MMU 未处于 halt（boot `0x53a7c4e1`，镜像 `a25d8223…`）
+
+- `SMICRO` 原值：`0x178`（bit3 IDLE=1，bit2 LOCAL_HALT_REQ=**0**），恢复后仍 `0x178`；即启动链没有把
+  SMMU micro-MMU 留在 halt，本轮未触发恢复写。该假设被实机否定。
+- CP 仍 `RPTR=0/WPTR=9`、live `MEControl=0x303`、无 fault；说明还有别的取指/初始化前提。
+- 按审计复核修正：
+  - `CheeseburgerSmmuMicro.h` 把 micro-MMU 恢复做成宿主可测模板：请求位 bit2、IDLE bit3；
+    `arm_smmu_resume` 语义只要求请求位读回 0。超时或 `0xffffffff` 读回现在会**停止该次 GPU 初始化**
+    （`cb_smmu[0]=10`、`cb_smmu[19]<0`），CP kick 前有门禁；宿主测试 10/10（无需恢复、恢复成功、
+    超时、无效读回）。
+  - scratch RPTR 读取前先 `dsb`、按 VA flush（clean+invalidate）再 `dsb`，读后 `dmb`；同时记录
+    寄存器 RPTR/WPTR、scratch 值、fence 叶子 PTE、nsGFSR/nsGFSYNR、secure GFSYNR 与 CB0 FSYNR，
+    避免把 CPU 缓存的旧 0 当成“GPU 未写回”。

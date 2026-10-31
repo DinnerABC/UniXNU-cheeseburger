@@ -125,3 +125,15 @@ Images, private logs and signing material stay out of Git.
   NO_UPDATE with an unset scratch on this board. After a kick timeout, read the
   live MEControl/VBIFHalted and the scratch RPTR; the reset snapshot is not the
   post-kick state.
+- The SMMU IMPL_DEF1 micro-MMU control at `SMMU+0x6000` (DTB
+  `qcom,micro-mmu-control`) can be left halted by the boot chain; a halted
+  translation pipeline stalls GPU fetches without a context fault. Read
+  `LOCAL_HALT_REQ` (bit 2) before CP start and clear it exactly as
+  `arm_smmu_resume` does, recording both values.
+- A micro-MMU resume that times out or reads 0xffffffff must abort that GPU
+  initialization (`cb_smmu[0]=10`, `cb_smmu[19]<0`) and must never reach a CP
+  kick; keep the host cases for intact/resumed/timeout/invalid.
+- The CP scratch cursor is device-written DMA. Flush by VA (clean+invalidate)
+  and barrier before reading it, and report register RPTR/WPTR, scratch value,
+  the fence leaf PTE and the global/secure/CB0 fault syndromes together; a
+  cached zero is not evidence that the CP did not write.

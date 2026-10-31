@@ -21,7 +21,8 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 extern "C" {
-volatile uint64_t cb_cp[96];
+volatile uint64_t cb_cp[112];
+extern volatile uint64_t cb_smmu[24];
 extern volatile uint64_t cb_zap[32];
 extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
@@ -104,7 +105,7 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
-static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<96;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
+static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<112;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 // The reset/configure/start state machine lives in CheeseburgerGpuStart.h so a
 // host register model can inject every failure point offline.
 struct Mmio {
@@ -146,6 +147,11 @@ static void captureFaults(Mmio &m){
   // TrustControl=1 the CP may be attributed to the secure stream.
   cb_cp[89]=rd(sm,0x808);cb_cp[90]=rd(sm,0xc08);
   cb_cp[91]=rd(sm,0x9058);cb_cp[92]=rd(sm,0xa058);
+  // Global and per-stream fault syndromes: while TrustControl=1 the CP may be
+  // attributed to the secure stream, whose faults are not in CB0.
+  cb_cp[96]=rd(sm,0x448);cb_cp[97]=rd(sm,0x450);cb_cp[98]=rd(sm,0x454);cb_cp[99]=rd(sm,0x458);
+  cb_cp[100]=rd(sm,0x50);cb_cp[101]=rd(sm,0x54);cb_cp[102]=rd(sm,0x58);
+  cb_cp[103]=rd(sm,0x805c);cb_cp[104]=rd(sm,0x8060);
  }
 }
 }
@@ -226,6 +232,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);
   if(start>=2){cb_cp[38]=9;IOSleep(8000);return;}  // log-only: no GPU write
+  // A failed micro-MMU resume leaves the translation pipeline halted; never
+  // reach a CP kick in that state.
+  if((int64_t)cb_smmu[19]<0){cb_cp[38]=7;cb_cp[39]=uint64_t(int64_t(cb_smmu[19]));IOSleep(8000);return;}
   // Android a5xx_pm_resume cores first; without them the CP cannot execute
   // even though every RBBM read succeeds. Log before the first write.
   powerCore(gp,&cb_cp[83]);
@@ -267,11 +276,21 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     cb_cp[73]=rd(sm,0x8000);cb_cp[74]=rd(sm,0x8030);
     cb_cp[75]=rd(sm,0x8020);cb_cp[76]=rd(sm,0x8024);
     cb_cp[77]=rd(sm,0x800);cb_cp[78]=rd(sm,0xc00);}
-   {uint64_t pte=0;if(cheeseburger_gpu_smmu_lookup(ring.gva,&pte)==0)cb_cp[79]=pte;}
+   {uint64_t pte=0;if(cheeseburger_gpu_smmu_lookup(ring.gva,&pte)==0)cb_cp[79]=pte;
+    if(cheeseburger_gpu_smmu_lookup(fence.gva,&pte)==0)cb_cp[108]=pte;}
    cb_cp[80]=cheeseburger_gpu_smmu_root();cb_cp[81]=ring.pa;
+   cb_cp[105]=m.read(CheeseburgerGpu::RBWrite);cb_cp[106]=m.read(CheeseburgerGpu::RBRead);
    // Live post-kick state: the CP's scratch cursor, CP_CNTL and the ME ucode
    // debug word distinguish "engine halted" from "engine running, ring stuck".
+   // The scratch page was zeroed by the CPU and its mapping was flushed before
+   // the kick, but the GPU's DMA write goes to Normal-NC memory. Flush by VA
+   // (clean+invalidate) and barrier before reading so a resident clean line
+   // cannot hide the GPU's cursor; keep register RPTR separate from this value.
+   __asm__ volatile("dsb sy":::"memory");
+   flush_dcache((vm_offset_t)fence.va,4096,FALSE);
+   __asm__ volatile("dsb sy":::"memory");
    cb_cp[93]=*(volatile uint32_t*)fence.va;
+   __asm__ volatile("dmb sy":::"memory");
    cb_cp[94]=m.read(0x831*4);cb_cp[95]=m.read(0x830*4);
    captureFaults(m);
    IOLog("CB GPU start: kick rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x\n",rc,
@@ -286,6 +305,10 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    IOLog("CB GPU start: live rptr=%x cpctl=%x ucode=%x scratch=%x me=%x vbif=%x\n",
     uint32_t(cb_cp[42]),uint32_t(cb_cp[94]),uint32_t(cb_cp[95]),uint32_t(cb_cp[93]),
     uint32_t(cb_cp[60]),uint32_t(cb_cp[61]));
+   IOLog("CB GPU start: faults2 nsg=%x gsyn=%x/%x/%x ssyn=%x/%x/%x cb0=%x/%x rw=%x/%x fpte=%llx\n",
+    uint32_t(cb_cp[96]),uint32_t(cb_cp[97]),uint32_t(cb_cp[98]),uint32_t(cb_cp[99]),
+    uint32_t(cb_cp[100]),uint32_t(cb_cp[101]),uint32_t(cb_cp[102]),
+    uint32_t(cb_cp[103]),uint32_t(cb_cp[104]),uint32_t(cb_cp[106]),uint32_t(cb_cp[105]),cb_cp[108]);
   }
   IOSleep(8000);
  }
