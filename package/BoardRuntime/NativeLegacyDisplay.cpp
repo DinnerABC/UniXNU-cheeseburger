@@ -33,6 +33,10 @@ extern "C" bool native_legacy_prepare_scanout(void);
 extern "C" void native_legacy_transfer_observed(IOReturn,const void *,uint64_t);
 extern "C" void native_legacy_copy_timing_observed(uint64_t ticks,uint64_t bytes);
 extern "C" void native_legacy_retirement_observed(IOService *);
+// Scanout writes go through a cacheable mapping and are cleaned once per frame:
+// the write-combining mapping costs about 0.9 s per 1080x1920 frame on this
+// board because every 64-bit store is a separate uncached transaction.
+extern "C" void flush_dcache(vm_offset_t,unsigned,boolean_t);
 // GPU hand-off (boot-arg sheng-fb-gpu=1): the frame is offered to the privileged GPU client instead of being copied; the swap retires when the
 // client reports the GPU copy done (native_legacy_gpu_complete). A refused offer or a failed copy uses the CPU copy below and is counted.
 extern "C" bool native_legacy_gpu_offer(void *display,IOMemoryDescriptor *,uint64_t stride,uint32_t width,uint32_t height);
@@ -336,6 +340,7 @@ public:
                 native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
             }
             __asm__ volatile("dsb sy" ::: "memory");
+            flush_dcache((vm_offset_t)bootMapping->getVirtualAddress(),(unsigned)bootMapping->getLength(),FALSE);
             shadowValid=false;
             transferred=true;
             native_legacy_frame_observed(1,0,0,0,0,0);
@@ -384,6 +389,7 @@ public:
             bool copied=p21_scale_pixels(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
                 bootMapping->getLength(),video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),
                 source->getLength(),sourceStride,sourceWidth,sourceHeight,width,height,scaleRow,scaleRowBytes);
+            flush_dcache((vm_offset_t)bootMapping->getVirtualAddress(),(unsigned)bootMapping->getLength(),FALSE);
             __asm__ volatile("dsb sy" ::: "memory");
             uint64_t end;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(end));
             if(copied){native_legacy_copy_timing_observed(end-begin,length);p21_scale_ticks=end-begin;p21_scale_stride=sourceStride;++p21_scale_count;}
@@ -468,6 +474,7 @@ public:
             }
             stored=length;
         }
+        flush_dcache((vm_offset_t)bootMapping->getVirtualAddress(),(unsigned)bootMapping->getLength(),FALSE);
         __asm__ volatile("dsb sy" ::: "memory");
         {uint64_t copyEnd;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(copyEnd));native_legacy_copy_timing_observed(copyEnd-copyStart,stored);}
         OSSafeReleaseNULL(source);transferred=true;
@@ -608,7 +615,7 @@ public:
            video.v_width>16384 || video.v_height>16384 || video.v_rowBytes<video.v_width*4 ||
            video.v_rowBytes>UINT64_MAX/video.v_height)return false;
         // ARM64 write-combine maps to Normal Inner/Outer Non-Cacheable, not Device.
-        IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapWriteCombineCache);
+        IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapDefaultCache);
         if(!mapping)return false;
         bool valid=mapping->getVirtualAddress() && mapping->getPhysicalAddress()==video.v_baseAddr &&
                    mapping->getLength()==video.v_rowBytes*video.v_height;
