@@ -28,7 +28,11 @@
 - **黑屏根因（用户澄清 + 对照）**：黑屏是**整屏黑**（连屏幕日志都不显示），但系统在跑、ADB/日志可回收。对照 1（`270928d3…`：UEFI GPU 上电关闭、GPU/SMMU/CP 探针关闭）→ 屏幕恢复并自动回 Recovery。对照 2（`ca8d45f0…`：UEFI 上电/时钟保留，仅跳过 `SetClockFreqHz(gpucc_gfx3d_clk,257MHz)`，XNU GPU 探针开启）→ 屏幕正常，`GPU0 stage=3 flags=f`，67 轮完整运行并自动回 Recovery（日志 `20261031T085221Z`，boot `0x4e20d0e1`）。结论：**整屏黑由 `gfx3d` 频率/PLL 改动造成**，不是 CP 映射或系统卡死；此前 CP 探针轮的黑屏也都是这一步。
 - **SMMU setup 安全、CP 探针是黑屏变量**：镜像 `7ee28350…`（rate=0、`smmu=1`、`smmu-setup=1`、`cp=0`）**进入桌面**并自动回 Recovery；而同配置打开 CP 探针的 `29dd9fdc…` 整屏黑。结论：SMMU 上下文/setup 本身安全，整屏黑出现在 CP 探针的 buffer 映射/状态阶段。
 - **早期钩子失败**：把 GPU/CP 探针挂到 `cheeseburger_ufs_register`（UFS 注册时启动、5 s 后执行）时，日志只有 **1 轮**，启动在探针前停住；该钩子太早，已回退到 display late probe。
-- **下一步**：CP 探针每个 buffer 映射后 `IOSleep(3000)`，让持久日志在本轮 boot ID 下写入 `MAPD/GCP0`；即使映射导致整屏黑，也能拿到失败级别/返回码，再修 walker。SMMU setup 已可保留。
+- **CP 多页映射已通过（关键）**：给每个 buffer 映射后加 3 s 落盘延时；镜像 `a4af3b18…`（rate=0、`smmu=1/setup=1`、`cp=1`，内核 `212411c7…`、payload `55332957…`、固件 `b6582421…`），日志 `20261031T095634Z`（boot `0x5090409d`）：
+  - `CB GPU CP map: iova=2000000 pages=8 r=0`、`2008000 pages=5 r=0`、`200d000 pages=5 r=0`；
+  - `MAPD … ret=0 tlb=0`（ring/pm4/pfp）；此前的 `st=5` 是旧 walker/共享表问题，已消失；
+  - 该轮只到 14 轮，用户提前返回，gpmu/fence 映射与 `GCP2` CP 状态尚未执行（`GCP2` 仍 `deadbeef`）。
+- **下一步**：同一镜像再跑一次，即使黑屏也等到约 200 s，让 gpmu/fence 映射与 `GCP2`（MEControl/VBIF/RB/Trust/SECVID/GPMU）落盘；然后进入 CP configure/reset/ME_INIT 与 GPMU 0xbabeface。SMMU setup 与多页映射已可保留。
 - **升频**：仍保持 `UNIXNU_GPU_RATE=0`；等 CP/GPMU 跑通后再用 root clock 或 sagit PLL 顺序安全升频。
 - **下一步**：让 CP 映射使用**全新根表**（CP 探针开启时跳过 mapTest，避免共享 L1/L2 表），用逐级诊断确认 walker 失败点；映射通过后再读取 CP/RBBM/VBIF/Trust/SECVID/GPMU，然后进入 CP configure/reset/ME_INIT 与 GPMU 0xbabeface。
 

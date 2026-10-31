@@ -113,11 +113,13 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  cb_cp[5]=ring.bytes;cb_cp[6]=pm4.bytes;cb_cp[7]=pfp.bytes;
  cb_cp[20]=pm4.pa;cb_cp[21]=pfp.pa;cb_cp[22]=gpmu.pa;cb_cp[23]=ring.pa;cb_cp[24]=gpmu.bytes;
  unsigned seq=0;uint64_t gva=0x2000000ULL;
- if(!mapBuf(ring,gva,seq)){cb_cp[0]=5;return;}gva+=ring.bytes;
- if(!mapBuf(pm4,gva,seq)){cb_cp[0]=6;return;}gva+=pm4.bytes;
- if(!mapBuf(pfp,gva,seq)){cb_cp[0]=7;return;}gva+=pfp.bytes;
- if(!mapBuf(gpmu,gva,seq)){cb_cp[0]=8;return;}gva+=gpmu.bytes;
- if(!mapBuf(fence,gva,seq)){cb_cp[0]=9;return;}
+ // Persist each map result before the next step: the panel may black here and
+ // the run is often returned manually, so a quick all-at-once map could be lost.
+ if(!mapBuf(ring,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=ring.bytes;
+ if(!mapBuf(pm4,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=pm4.bytes;
+ if(!mapBuf(pfp,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=pfp.bytes;
+ if(!mapBuf(gpmu,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=gpmu.bytes;
+ if(!mapBuf(fence,gva,seq)){IOSleep(3000);return;}
  cb_cp[25]=ring.gva;cb_cp[26]=pm4.gva;cb_cp[27]=pfp.gva;cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
  cb_cp[30]=seq;
  W gp;if(!mapw(gp,0x5000000,0x40000)){cb_cp[0]=10;return;}
