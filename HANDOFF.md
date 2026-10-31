@@ -14,6 +14,10 @@
 - **下一轮假设与改动（未验证）**：冷状态 `TrustControl=1`（secure 模式），sagit 的提交前提要求 `TrustControl==0`，Linux a5xx 在无 ZAP 时用 `RBBM_SECVID_TRUST_CNTL=0` 手动退出安全模式；同时把 CB0 SCTLR 从 `0x1167` 改为 sagit 实测的 `0x1027`（M|EAE|CFCFG|CFRE，无 CFIE/HUPCF；`0x1167` 会在意外 context fault 时 halt SMMU，可能静默卡住 CP 取指）。并捕获 `CP_HW_FAULT/CP_PROTECT_STATUS/CP_AHB_FAULT` 与 SMMU `CB0_FSR/GFSR`，kick 等待延长到约 3 s。诊断行 `GCP6 trust/cpcnl/cphw/cpprot/cphb/smfsr/smg`。
 - 判读：若 `GCP6 trust=0` 且 `GCP5 r=9` → secure 模式是根因；若仍 r=0，则看 `smfsr/smg`（SMMU 取指 fault）或 `cphw/cpprot`（CP 内部 fault）决定是修页表/stream 还是 CP 配置。
 
+- **secure 模式/ SCTLR 轮结果**（镜像 `adb12b45…`，内核 `3b76b685…`，日志 `20261031T110117Z`，boot `0x50993220`，67 rounds，自动回 Recovery）：`GCP5 stage=1 rc=-2 vbif=f000f me=deadbeef`、`GCP6` 全 `deadbeef`——**reset 在 idle 前置检查处失败**（VBIF 停流 ack 已成功），根本没有进入 SW reset / TrustControl 清除 / kick。上一轮同代码在同位置通过，所以这不是代码路径差异，而是 GPU 状态在快照（128 s）与启动（193 s）之间漂移或 VBIF 停流后的瞬时 busy。`GCP2` 快照仍是 `me=303 st=800001c1 trust=1`。
+- **下一轮诊断（未验证）**：启动阶段先读 GPUCC `0x1008/0x1094/0x1098`（CX/GX/gfx3d 是否仍在线）写入 `GCP7 cx/gx/gfx`；`GCP7 st/me/vbif/ry` 记录 reset 前 `Status`、`MEControl`、`VBIFHalted` 和 idle 重试次数（最多 20×10 ms，吸收 VBIF drain 的瞬时 busy）。映射间隔缩短（begin 2 s、之后 1 s），让启动阶段在约 155 s 而不是 193 s 执行，减少状态漂移窗口。
+- 判读：`cx/gx/gfx` 若为掉电值（bit31 清零或全 1）→ 先解决 XNU 侧 GPU 供电/时钟 vote（UEFI EFIClock 的 vote 在 ExitBootServices 后是否失效）；若供电正常且 `ry>0` 后 idle 通过 → 继续看 kick。若 `st` 仍非 idle 且取值为 `0xffffffff`，说明该寄存器读取时 GPU 不可访问。
+
 ## 2026-10-31：A540 时钟清点、400 s 自动回 Recovery、触摸方向修正
 
 - **GPU 时钟清点（UEFI EFIClock，只读）**：镜像 `eaa7eb87…`（内核 `dd0e4ad9…`、payload `24e72e75…`、固件 `00642106…`），日志 `20261031T051621Z`（boot `0x53b3ffcc`）。窗口尾部块 8161 的 `UP1GPU1` 行：`clock=0 ver=10005`；`VDD_GPU_CX/GX`、`VDD_HLOS1/2_GPU_SMMU` 域 ID 全部解析成功；`gcc_gpu_cfg_ahb_clk` 75 MHz 在跑；`gpucc_gfx3d_clk`/`rbcpr`/`rbbmtimer`/`isense` 关闭、19.2 MHz。同轮 XNU GPU 探针仍 `stage=2`（GPUCC 可读、CX/GX 关闭）。

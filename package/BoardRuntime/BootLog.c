@@ -162,7 +162,7 @@ extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
-extern volatile uint64_t cb_cp[56] __attribute__((weak_import));
+extern volatile uint64_t cb_cp[64] __attribute__((weak_import));
 extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
 extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
 volatile uint64_t cb_boot_id=0;
@@ -305,6 +305,9 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    at=put(out,at,cap,cp,sizeof cp);
    snprintf(cp,sizeof cp,"GCP6 trust=%llx cpcnl=%llx cphw=%llx cpprot=%llx cphb=%llx smfsr=%llx smg=%llx bid=%llx",
      cb_cp[48],cb_cp[49],cb_cp[50],cb_cp[51],cb_cp[52],cb_cp[53],cb_cp[54],cb_boot_id);
+   at=put(out,at,cap,cp,sizeof cp);
+   snprintf(cp,sizeof cp,"GCP7 cx=%llx gx=%llx gfx=%llx st=%llx me=%llx vbif=%llx ry=%llu bid=%llx",
+     cb_cp[56],cb_cp[57],cb_cp[58],cb_cp[59],cb_cp[60],cb_cp[61],cb_cp[62],cb_boot_id);
    at=put(out,at,cap,cp,sizeof cp);
   }
  }

@@ -20,7 +20,7 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 extern "C" {
-volatile uint64_t cb_cp[56];
+volatile uint64_t cb_cp[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 }
@@ -87,18 +87,17 @@ static bool allocBuf(Buf &b,uint32_t bytes){
 }
 static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  b.gva=gva;
- // Log before the call and hold for one BootLog round (5 s plus write time):
- // the previous run lost the 4th map entirely, so the last committed line must
- // name the buffer that was being mapped, not the one before it.
+ // Log before the call. The five-buffer map is now proven; keep only a short
+ // hold so the start phase runs closer to the register-state snapshot.
  IOLog("CB GPU CP map begin: iova=%llx pa=%llx pages=%u seq=%u\n",gva,b.pa,b.bytes/4096,seq);
- IOSleep(8000);
+ IOSleep(2000);
  int r=cheeseburger_gpu_smmu_map(gva,b.pa,b.bytes/4096);
  IOLog("CB GPU CP map: iova=%llx pa=%llx pages=%u r=%d seq=%u\n",gva,b.pa,b.bytes/4096,r,seq);
  if(r==0)cb_cp[8]|=uint64_t(1)<<seq;
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
-static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<56;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
+static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<64;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 // ---- CP reset/configure/start, ported from the pinned sagit AdrenoStartup.h
 // (Linux v6.12 a5xx_gpu.c). Registers here are DWORD indices in the sagit
 // enum, so each access multiplies by four.
@@ -153,7 +152,15 @@ static int gpuReset(G &g){
  g.wr(kVBIFHalt,15);
  unsigned waited=0;while((g.rd(kVBIFHalted)&15)!=15){if(waited>=100000)return -1;g.delay(10);waited+=10;}
  cb_cp[40]=g.rd(kVBIFHalted);
- if(!idleStatus(g.rd(kStatus)))return -2;
+ cb_cp[60]=g.rd(kMEControl);
+ cb_cp[61]=g.rd(kVBIFHalted);
+ // The previous run failed here with no fault interrupt; the drain busy bit
+ // can lag the halt ack by microseconds, so sample before declaring failure.
+ uint32_t status=g.rd(kStatus);
+ unsigned retries=0;
+ while(!idleStatus(status)&&retries<20){g.delay(10000);status=g.rd(kStatus);++retries;}
+ cb_cp[59]=status;cb_cp[62]=retries;
+ if(!idleStatus(status))return -2;
  if((g.rd(kMEControl)&kHalt)!=kHalt)return -3;
  g.wr(kRBBMSwReset,1);(void)g.rd(kRBBMSwReset);g.wr(kRBBMSwReset,0);
  g.wr(kInterruptMask,0);g.wr(kMEControl,kHalt);g.wr(kVBIFHalt,15);
@@ -258,13 +265,13 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  IOSleep(8000); // let one BootLog round persist the state before any map
  // Persist each map result before the next step: the panel may black here and
  // the run is often returned manually, so a quick all-at-once map could be lost.
- if(!mapBuf(ring,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=ring.bytes;
- if(!mapBuf(pm4,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=pm4.bytes;
- if(!mapBuf(pfp,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=pfp.bytes;
+ if(!mapBuf(ring,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=ring.bytes;
+ if(!mapBuf(pm4,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=pm4.bytes;
+ if(!mapBuf(pfp,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=pfp.bytes;
  cb_cp[25]=ring.gva;cb_cp[26]=pm4.gva;cb_cp[27]=pfp.gva;
  cb_cp[30]=seq;
- if(!mapBuf(gpmu,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=gpmu.bytes;
- if(!mapBuf(fence,gva,seq)){IOSleep(3000);return;}
+ if(!mapBuf(gpmu,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=gpmu.bytes;
+ if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;}
  cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
  cb_cp[30]=seq;cb_cp[0]=0;
  IOLog("CB GPU CP: fw=%u pm4=%u pfp=%u gpmu=%u ring=%u map=%u me=%x vbif=%x/%x trust=%x\n",
@@ -276,13 +283,18 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  if(PE_parse_boot_argn("cheeseburger-gpu-start",&start,sizeof start)&&start&&gp.v){
   G g;g.v=gp.v;
   cb_cp[38]=1;cb_cp[39]=0;
-  IOLog("CB GPU start: begin ring=%llx pm4=%llx pfp=%llx\n",
-   ring.gva,pm4.gva,pfp.gva);
+  // GPUCC power state at start time: GX/CX collapse would explain a register
+  // state drift between the snapshot and the reset.
+  W cc;if(mapw(cc,0x5065000,0x9000)){
+   cb_cp[56]=rd(cc,0x1008);cb_cp[57]=rd(cc,0x1094);cb_cp[58]=rd(cc,0x1098);}
+  IOLog("CB GPU start: begin ring=%llx pm4=%llx pfp=%llx cx=%x gx=%x gfx=%x\n",
+   ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);
   int rc=gpuReset(g);
   cb_cp[39]=uint64_t(int32_t(rc));
-  IOLog("CB GPU start: reset rc=%d me=%x vbif=%x trust=%x cpcnl=%x\n",rc,
-   uint32_t(cb_cp[41]),uint32_t(cb_cp[40]),uint32_t(cb_cp[48]),uint32_t(cb_cp[49]));
+  IOLog("CB GPU start: reset rc=%d me=%x vbif=%x st=%x ry=%u trust=%x cpcnl=%x\n",rc,
+   uint32_t(cb_cp[60]),uint32_t(cb_cp[61]),uint32_t(cb_cp[59]),unsigned(cb_cp[62]),
+   uint32_t(cb_cp[48]),uint32_t(cb_cp[49]));
   IOSleep(8000);
   if(rc==0){
    cb_cp[38]=2;
