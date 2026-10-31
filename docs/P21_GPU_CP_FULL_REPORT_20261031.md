@@ -478,3 +478,12 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
 - round 14 采用**明确标注的 SID0 bypass 诊断**（`cheeseburger-gpu-smmu=2`）：保留 ZAP/PAS 认证，
   只把非安全 GPU stream 设为 bypass，CP 用物理地址取指；若 `RPTR` 前进，即证明 SMMU 翻译是阻塞点，
   GPU/NoC/CP 路径本身可用。该模式仅用于 bring-up 诊断，不作为最终映射。
+
+### 11.20 round 14：SID0 bypass 诊断未自动返回
+
+- 镜像 `88c93af8…`（内核 `7a506feb…`，payload `635cc812…`，固件 `dc372a92…`），args `cheeseburger-gpu-smmu=2`
+  （保留 ZAP/PAS 与 SID2，只把 SID0 设为 bypass，CP 用物理地址取指）。`gate 20261031T224749Z` PASS。
+- 临时启动一次后 900 s 监视器 `NO_RECOVERY`，ADB/Fastboot/USB 均无设备；round 14 窗口未回收。
+- **不能据此声称 CP 已执行**：bypass 改变了失败形态，但停点未知。候选已冻结；配置已恢复 `smmu=1`。
+- 返回 Recovery 后：先读 round 14 窗口（boot ID、RPTR/WPTR/scratch、心跳/控制台）；据结果决定
+  “SMMU 翻译是阻塞点，分析随后停住”或“bypass 本身导致停住”。在回收日志前不启动新候选。
