@@ -4,10 +4,13 @@
 // image into an owned physical region and performs the documented PAS chain:
 // init(metadata) -> mem_setup(region) -> copy image -> authenticate.
 //
-// Host tests cover the archive/MDT rules and the PAS state machine. Only the
-// secure monitor can accept the signature; a successful SMC here is the only
-// evidence that authentication happened, and it is still not proof that the CP
-// fetches commands. Nothing in this file writes RBBM_SECVID_TRUST_CNTL.
+// The same-SoC vendor driver and sagit authenticate after CP_ME_INIT/engine
+// start and only then submit CP_SET_SECURE_MODE; the caller runs this chain
+// after a successful engine start and halts on failure. Host tests cover the
+// archive/MDT rules and the PAS state machine. Only the secure monitor can
+// accept the signature; a successful SMC here is the only evidence that
+// authentication happened, and it is still not proof that the CP fetches
+// commands. Nothing in this file writes RBBM_SECVID_TRUST_CNTL.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/thread.h>
@@ -122,7 +125,8 @@ static void record(const QcomSecure::Reply &r, unsigned slot) {
 }  // namespace
 
 // Returns 0 only after the secure monitor reported success for init, mem_setup
-// and authenticate. On any failure the caller must leave the GPU halted.
+// and authenticate. On any failure the caller must halt/abandon the engine;
+// authentication gates all user submissions, not the ME_INIT engine start.
 extern "C" int cheeseburger_gpu_zap_load(volatile uint32_t *gpu) {
     for (unsigned i = 0; i < 32; ++i) cb_zap[i] = 0xdeadbeef;
     cb_zap[0] = 0;

@@ -398,3 +398,26 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
 - 可能原因（未验证）：读取上述 SMMU 寄存器在 EL1 触发总线错误/panic；`--no-reset` 的 panic 路径不会自动
   复位。已从代码移除这些未验证读取，只保留本机已安全读过的 CB0/S2CR/0x48/0x8058 与 CB0 FSYNR；
   在设备返回并完成一次只读验证前不再启动该候选。
+
+### 11.13 顺序修正：先 ME_INIT，再 ZAP 认证（离线构建轮）
+
+- 对照 vendor `adreno_a5xx.c`（`a5xx_rb_start`: microcode bases → CP_ME_CNTL=0 →
+  `a5xx_send_me_init` → `a5xx_set_unsecured_mode` → GPMU；ZAP 在 `microcode_load`/`unsecure`
+  阶段处理）和 sagit bridge（reset → ME_INIT/GPMU → PAS init/setup/auth → 提交前
+  CP_SET_SECURE_MODE），本机此前的 “PAS 认证 → RBBM SW reset → ME_INIT” 顺序与同 SoC 实现相反。
+- 本轮改为：**core power → halt/SW reset → CP_ME_INIT engine start → PAS init/setup/auth →
+  （用户提交前才需要 CP_SET_SECURE_MODE）**。认证仍是所有用户提交的前置；认证失败会
+  `engine.abandon()` 保持 halt。失败路径仍只读 CPU scratch 与本机已安全读过的 SMMU 寄存器。
+- 新增诊断：成功后记录 post-auth `TrustControl`、`MEControl`、`VBIFHalted`、`RBWrite`/`RBRead`，
+  用于判断 `auth_and_reset` 是否影响已初始化的引擎。
+- 设备当前未连接；候选先离线构建与门禁，设备回 Recovery 并回收 round 8 窗口后再单次启动。
+
+### 11.14 增加 SMMU 硬件 ATOS 迁移探针（离线）
+
+- 在 buffer 映射完成后、任何 CP 写之前，写 CB0 `ATS1PR`（0x8800，64 位 IOVA），轮询 `ATSR`
+  （0x88f0）的 ACTIVE 位，读取 `PAR_LO/HI`（0x8050/0x8054）；记录 ring 与 pm4 的原始 PAR、
+  返回码和期望 PA。ATOS 走真实 stage-1 walk，不写内存，也不依赖软件 PTE 查询。
+- 判读：`PAR==期望 PA`（bit0 故障位为 0）→ SMMU 取指路径可用，停顿在 CP/安全流/NoC 侧；
+  `PAR` 故障或超时 → 已定位为 CPU 配置的 SMMU 上下文问题。该诊断不改变任何安全状态。
+- 本轮候选（顺序修正 + 安全读集 + ATOS）已在设备缺席时离线构建、门禁通过；设备返回并回收
+  round 8 窗口后再单次启动。

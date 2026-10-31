@@ -144,3 +144,14 @@ Images, private logs and signing material stay out of Git.
 - After a failed kick, capture only CPU-owned memory (the scratch cursor) and
   the SMMU register file; never read GPU MMIO there. This keeps the failure
   record complete without risking the bus that just failed.
+- Same-SoC order for the GPU ZAP: take ownership (halt/SW reset), start the
+  engine with CP_ME_INIT, then run the PAS init/setup/authenticate chain, and
+  submit CP_SET_SECURE_MODE only before user work. The vendor driver and sagit
+  both authenticate after engine start; running PAS before the reset left the
+  CP unable to fetch. The auth result still gates every submission: halt and
+  abandon the engine on failure.
+- Before a CP kick, probe the installed SMMU tables with the hardware ATOS
+  path (CB_ATS1PR at CB+0x800 = 0x8800, CB_ATSR at 0x88f0, PAR at 0x8050/54)
+  and record the raw PAR plus the expected PA. A software PTE lookup does not
+  prove the hardware walk; the ATOS result localizes a fetch stall to the
+  context or away from it.

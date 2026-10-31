@@ -29,6 +29,7 @@ void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
+int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
@@ -214,6 +215,14 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;}
  cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
  cb_cp[30]=seq;cb_cp[0]=0;
+ // Hardware walk of the installed tables before any CP write. A matching PAR
+ // proves the SMMU can translate the ring/firmware; a fault localizes the
+ // fetch stall to the CPU-programmed context instead of the CP itself.
+ {uint64_t par=0,par2=0;int ar=cheeseburger_gpu_smmu_atos(ring.gva,&par);
+  int ar2=cheeseburger_gpu_smmu_atos(pm4.gva,&par2);
+  cb_cp[109]=par;cb_cp[110]=uint64_t(int32_t(ar));cb_cp[111]=par2;
+  IOLog("CB GPU SMMU atos: ring par=%llx rc=%d pm4=%llx rc2=%d expect=%llx/%llx\n",
+   par,ar,par2,ar2,ring.pa,pm4.pa);}
  IOLog("CB GPU CP: fw=%u pm4=%u pfp=%u gpmu=%u ring=%u map=%u me=%x vbif=%x/%x trust=%x\n",
   gpu_firmware_size,fw.cpBytes(0),fw.cpBytes(1),fw.gpmuWords(),ring.bytes,seq,
   uint32_t(cb_cp[9]),uint32_t(cb_cp[10]),uint32_t(cb_cp[11]),uint32_t(cb_cp[18]));
@@ -246,15 +255,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   IOLog("CB GPU power: before rbccu=%x/%x sp=%x/%x after=%x/%x\n",
    uint32_t(cb_cp[83]),uint32_t(cb_cp[84]),uint32_t(cb_cp[85]),uint32_t(cb_cp[86]),
    uint32_t(cb_cp[87]),uint32_t(cb_cp[88]));
-  // Formal secure-world premise: authenticated ZAP (PAS-13) must succeed before
-  // any CP reset or CP_ME_INIT submission. Failure leaves the GPU halted.
-  int zrc=cheeseburger_gpu_zap_load(gp.v);
-  cb_cp[82]=uint64_t(int32_t(zrc));
-  if(zrc){cb_cp[38]=8;cb_cp[39]=uint64_t(int32_t(zrc));IOSleep(8000);return;}
-  {uint64_t after[6];powerCore(gp,after);cb_cp[87]=after[4];cb_cp[88]=after[5];
-   IOLog("CB GPU power: after-zap rbccu=%x/%x sp=%x/%x\n",
-    uint32_t(after[0]),uint32_t(after[1]),uint32_t(after[2]),uint32_t(after[3]));}
-  IOSleep(8000); // let BootLog persist the ZAP result before the reset writes
+  IOSleep(8000); // let BootLog persist the core-domain result before reset
   unsigned clearTrust=0;
   PE_parse_boot_argn("cheeseburger-gpu-trust-clear",&clearTrust,sizeof clearTrust);
   int rc=engine.reset(rec,clearTrust!=0);
@@ -290,6 +291,30 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     IOSleep(8000);
     return;
    }
+   // The CP engine is initialized (RBRead advanced). Both the device vendor
+   // driver and sagit authenticate the ZAP after CP_ME_INIT/engine start and
+   // only then submit CP_SET_SECURE_MODE; running the PAS chain before the
+   // reset left the engine unable to fetch. Authentication still gates every
+   // user submission: if it fails here we halt and abandon the engine.
+   int zrc=cheeseburger_gpu_zap_load(gp.v);
+   cb_cp[82]=uint64_t(int32_t(zrc));
+   if(zrc){
+    engine.abandon(rec);
+    cb_cp[38]=8;cb_cp[39]=uint64_t(int32_t(zrc));
+    IOLog("CB GPU start: ZAP failed after ME_INIT zrc=%d; engine halted\n",zrc);
+    IOSleep(8000);
+    return;
+   }
+   {uint64_t after[6];powerCore(gp,after);cb_cp[87]=after[4];cb_cp[88]=after[5];
+    IOLog("CB GPU power: after-zap rbccu=%x/%x sp=%x/%x\n",
+     uint32_t(after[0]),uint32_t(after[1]),uint32_t(after[2]),uint32_t(after[3]));}
+   cb_cp[48]=m.read(CheeseburgerGpu::TrustControl);
+   cb_cp[60]=m.read(CheeseburgerGpu::MEControl);cb_cp[61]=m.read(CheeseburgerGpu::VBIFHalted);
+   cb_cp[105]=m.read(CheeseburgerGpu::RBWrite);
+   cb_cp[107]=m.read(CheeseburgerGpu::RBRead);
+   IOLog("CB GPU start: post-auth trust=%x rptr=%x->%x wptr=%x me=%x vbif=%x\n",
+    uint32_t(cb_cp[48]),uint32_t(cb_cp[42]),uint32_t(cb_cp[107]),uint32_t(cb_cp[105]),
+    uint32_t(cb_cp[60]),uint32_t(cb_cp[61]));
    cb_cp[64]=m.read(CheeseburgerGpu::MEBase);cb_cp[65]=m.read(CheeseburgerGpu::MEBase+4);
    cb_cp[66]=m.read(CheeseburgerGpu::PFPBase);cb_cp[67]=m.read(CheeseburgerGpu::PFPBase+4);
    cb_cp[68]=m.read(CheeseburgerGpu::RBBase);cb_cp[69]=m.read(CheeseburgerGpu::RBBase+4);

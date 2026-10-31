@@ -154,6 +154,21 @@ struct KernelTables {
  uint64_t entry(volatile uint64_t *t,unsigned index){return t[index];}
  volatile uint64_t *next(uint64_t pa){return findTable(pa);}
 };
+// Read-only hardware translation probe (ARM SMMU CB_ATS1PR/ATSR/PAR). It
+// exercises the real stage-1 walk of the installed tables; a fault or a
+// mismatched PA is a concrete SMMU failure, unlike a software PTE lookup.
+// No memory is written and the micro-MMU stays running (vendor
+// iova_to_phys_hard_no_halt path). Returns 0 with the raw PAR in *par.
+extern "C" int cheeseburger_gpu_smmu_atos(uint64_t iova,uint64_t *par){
+ W *sp=smmuMap();if(!sp||!par)return -1;
+ W &s=*sp;const unsigned cb=0x8000;const uint64_t va=iova&~0xfffull;
+ wr(s,cb+0x800,uint32_t(va));wr(s,cb+0x804,uint32_t(va>>32));
+ uint32_t st=0;unsigned waited=0;
+ for(;waited<1000;++waited){st=rd(s,cb+0x8f0);if(!(st&1))break;IODelay(1);}
+ if(st&1){*par=0xffffffffffffffffull;return -2;}
+ *par=uint64_t(rd(s,cb+0x50))|(uint64_t(rd(s,cb+0x54))<<32);
+ return 0;
+}
 extern "C" uint64_t cheeseburger_gpu_smmu_root(void){return gRootPA;}
 extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
  if(!pte||(iova&4095))return -1;
