@@ -83,17 +83,31 @@
   **PMRD**（`PowerChangeOverride`、`idle sleep timer`）电源状态切换窗口。前两轮 start 在 ~188 s
   （PMRD 之后）均未冻结。→ **推测：冻结与 PMRD 电源切换窗口相关，而非某条 GPU 寄存器写。**
 
-### 2.5 本轮（进行中，结果未回收）
+### 2.5 本轮结果（已回收，boot `0x510ea570`）
 
 - 镜像 `aea9a9fa18d420614246ce29f027ea784729556a2f9f3d2742d15b5001570565`，
   内核 `6ccfb681c17dff0cdaacc6e7626952d64d1d465c9a5400badabb7bf6f9db2dfd`，
   payload `61666a13b3ead3ff1783789f2e6d446434c4712cdbe2aa62f90fba3046ed8d41`，
   固件 `b51ed09655a95360c98dfc3b5c2f84ec877704458cbe9150ca11b1049d9a855a`，args 669，门禁 PASS。
-- 变更：`cheeseburger-gpu-probe=8`（GPU 探针+映射+CP 启动提前到约 75–120 s，避开 ~150 s PMRD 窗口）；
-  启动阶段不再额外映射 GPUCC，改用上一拍 `cb_gpu` 快照；保留 `TrustControl=0`、`CB0 SCTLR=0x1027`、
-  fault 捕获、idle 重试（20×10 ms）。
-- **截至本报告：设备未在 ADB/Fastboot 枚举（USB 上无设备），监视器仍在等待；本轮日志尚未回收。**
-  按前几轮规律，**推测本轮同样发生了硬件停住/黑屏**（未验证，需等设备返回 Recovery 后读日志）。
+- 日志 `out/p21/persistent-logs/20261031T112909Z/`：boot `0x510ea570`，**8 rounds**，0 写入错误，state=2；
+  writer 相对运行时间 `uptime_s=35`（约等于内核 ~102 s 写最后一轮）。
+- 时间线（内核时间戳）：
+  - 76.71 s `CB GPU SMMU:` `cb=1027`、`fsr=400`（无 fault）；CP 冷状态与 2.3 完全一致
+    （`me=303 vbif=0/f0000 rb=0/0/0/0 st=800001c1 trust=1`）。
+  - 86.7–98.7 s：ring/PM4/PFP/GPMU/fence 依次 `r=0 tlb=0`（5/5）。
+  - 98.725 s `CB GPU CP:` 汇总；98.7258 s `CB GPU start: begin … cx=80001fe0 gx=a0222000 gfx=621`。
+  - **98.7258 s 是整轮最后一条内核消息**；之后没有 userland 消息（正常每 ~1 s 有 CoreAnalyticsHub 行），
+    也没有 `reset rc=` 行。writer 在 ~102 s 写最后一轮后停止。
+- **本轮没有执行任何 GPU 写操作**（begin 之后先 `IOSleep(8000)`，reset 在 ~106.7 s 才开始）。
+- **设备最终回到了 Recovery**：监视器 `polls=245`（≈自启动 503 s）在 Recovery 检测到设备并回收日志，
+  时间上符合“400 s 自动复位 + Recovery 启动/ADB 枚举”；但用户尚未确认这是自动返回还是手动返回，
+  **该点未验证**（`misc` BCB 已被消费，但手动进 Recovery 也会被清空，不能区分）。
+- 两种解释（需下一轮/用户确认）：
+  - (a) **内核在 ~99 s 停住**：那么 400 s 自动复位不可能执行，设备只能是手动返回。
+  - (b) **仅控制台/日志捕获路径停住**（例如某线程在 IOLog/console 路径持锁或卡住），
+    userland 与 auto-reset 线程仍在跑，所以 400 s 自动复位成功、设备自行返回。
+  - 现象差异：本轮 begin 后 3 s 内没有任何 userland 控制台行，更像 (a)；但设备最终回到 Recovery 又更像 (b)。
+    本轮日志不足以区分，需在下一轮加“不依赖控制台”的存活标记。
 
 ## 3. 遇到的问题与解决方式
 
@@ -106,17 +120,19 @@
 | 5 | 门禁“firmware pin scan has no hit” | FD 是压缩容器，直接扫 FD 找不到 hash；改为扫 VM 构建树的 `FV/FVMAIN.Fv`/FFS/`.efi`（`out/p21/fb-qup3/scan-pins.py`） | 已解决 |
 | 6 | CP `rbRead=0`、无 CP 错误中断 | 已对比 sagit/Linux：`RB_CNTL`、`ME_INIT` 包、instr base 一致；下一假设 secure 模式（`TrustControl=1`）与 CB0 `SCTLR`（`0x1167` 有 CFIE/HUPCF，`0x1027` 对齐 sagit） | **未解决** |
 | 7 | reset 前 idle 检查失败（rc=-2） | VBIF 停流 ack 后 `Status` 非 idle；已加 20×10 ms 重试并记录 `Status/MEControl/VBIFHalted` 原值（`GCP7`） | 部分缓解，根因未定 |
-| 8 | ~151–157 s 冻结（黑屏） | 冻结发生在 8 s 等待中、无 GPU 写；与 PMRD 电源切换窗口重合；本轮把 GPU 工作提前到 75–120 s | **未验证**（本轮结果待回收） |
+| 8 | `CB GPU start: begin` 之后日志中断（151 s 轮黑屏手动回；99 s 轮自行回 Recovery） | 两次都发生在 begin 后的 8 s 等待内、**均无 GPU 写**；99 s 轮不在 PMRD 窗口，说明 PMRD 不是必要条件。共同点是“5 次 SMMU 映射完成后立即 begin 打印”。现无法区分“内核停住”与“仅控制台/日志捕获停住” | **未解决**，需下一轮加不依赖控制台的存活标记 |
+| 9 | 持久日志 writer 在关键打印后停止 | 最后一条恰是我们的 IOLog；writer 在下一轮（~5 s 后）也没写。可能是一致性/控制台锁问题，也可能是 SoC 停住 | **未解决** |
 
 ## 4. 当前状态（重点）
 
 ### 4.1 设备
 
-- 设备最后一次已知落点：本轮（镜像 `aea9a9fa…`，boot 预计 `0x5…`）启动后**没有自动回到 Recovery**；
-  截至报告时 **ADB 与 Fastboot 都没有枚举，USB 上无设备**。监视器（`monitor-gpu-early2.log`，900 s 超时）
-  仍在等待。**需要在设备上手动进入 Recovery** 后再读取日志（`scripts/logging/read-cheeseburger-log.py`）。
-- 上一轮已回收的日志：`out/p21/persistent-logs/20261031T111210Z/`（boot `0x5230df48`，18 rounds）。
-- 本轮 misc BCB 已预置并回读（`misc-readback29.bin`）；若设备自动复位会回 Recovery，未自动复位则说明内核未能执行 PSCI 复位（或已停住）。
+- **设备当前在 Recovery**（ADB 枚举正常，`ro.bootmode=recovery`）；本轮日志已回收：
+  `out/p21/persistent-logs/20261031T112909Z/`（boot `0x510ea570`，8 rounds）。
+- 本轮设备在约 **503 s**（自启动）被监视器发现于 Recovery；是否符合“400 s 自动复位”路径**尚无用户确认**
+  （用户未像前几轮那样报告黑屏/手动返回）。misc BCB 已消费（`misc-now7.bin` 全零），但手动进 Recovery 也会被清空，不能作为判据。
+- 上一轮：`out/p21/persistent-logs/20261031T111210Z/`（boot `0x5230df48`，黑屏、用户手动回）。
+- 本轮 misc BCB 已预置并回读（`misc-readback29.bin`）；下一次启动前需重新写入。
 
 ### 4.2 代码/镜像
 
@@ -130,14 +146,20 @@
 
 ### 4.3 未决问题（按优先级）
 
-1. **CP 为什么不取 ring（RBRead=0）**：需要先拿到一轮完整的 `GCP6`（CP_HW_FAULT / CP_PROTECT_STATUS /
-   CP_AHB_FAULT / SMMU CB0_FSR / GFSR）与 `GCP5 r/w`，而当前 reset 前置检查/冻结使这些字段多为 `deadbeef`。
-2. **reset idle 前置检查不稳**：`Status` 在 VBIF 停流后有时非 idle；需要判断是 drain 瞬时 busy、
-   GPU 域掉电，还是 PMRD 介入。`GCP7` 已能记录 `cx/gx/gfx/st/me/vbif/ry`，但本轮未产生日志。
-3. **PMRD 窗口冲突**：~150–157 s 系统电源切换时执行 GPU 访问会整机停住（上轮推测）。本轮提前执行的效果待验证。
-4. **XNU 侧 GPU 电源/时钟 vote**：目前只有 UEFI EFIClock 上电；XNU 没有 RPM/RSC vote。
+1. **“日志在 begin 后停止”到底是内核停住还是仅日志/控制台停住**：两次都发生在 begin 后的 8 s 等待内、
+   无 GPU 写；99 s 轮设备最终回到 Recovery。下一轮需要**不依赖控制台与 UFS writer 的存活标记**
+   （例如由独立内核线程在固定时间改一个会被 photo/录像以外的路径读到的内存，或用 auto-reset 标记落盘），
+   否则无法区分 (a) 内核停住 / (b) 仅 console+writer 停住。
+2. **CP 为什么不取 ring（RBRead=0）**：只有 188 s 那两轮完整执行了 reset/kick，`GCP6` 仍未取到
+   （一轮 reset idle 失败，一轮日志中断）。需要先解决第 1 项与 idle 检查，才能拿到 `CP_HW_FAULT /
+   CP_PROTECT_STATUS / CP_AHB_FAULT / CB0_FSR / GFSR`。
+3. **reset idle 前置检查不稳**：`Status` 在 VBIF 停流后有时非 idle；需要判断是 drain 瞬时 busy、
+   GPU 域掉电，还是 PMRD 介入。`GCP7` 已能记录 `cx/gx/gfx/st/me/vbif/ry`，但关键轮次日志中断。
+4. **PMRD 窗口**：151 s 轮与 PMRD 切换重合，但 99 s 轮不在该窗口也发生中断，所以 **PMRD 不是必要条件**
+   （此前归因需降级为“可能相关”）。
+5. **XNU 侧 GPU 电源/时钟 vote**：目前只有 UEFI EFIClock 上电；XNU 没有 RPM/RSC vote。
    `CheeseburgerPlatformPower.cpp` 只是 Apple ABI 兼容壳（不是 RPM 驱动）。是否需要补 vote 尚无证据。
-5. **升频**：`gfx3d` 仍保持 rate=0；CP/GPMU 跑通后再按 sagit root clock/PLL 顺序安全升频。
+6. **升频**：`gfx3d` 仍保持 rate=0；CP/GPMU 跑通后再按 sagit root clock/PLL 顺序安全升频。
 
 ## 5. 给审计 agent 的核对点
 
@@ -162,8 +184,13 @@
 
 ## 6. 下一步（待审计后执行，不在本报告内启动）
 
-- 设备回 Recovery 后先回收本轮日志（按 boot ID），补齐 `GCP5/GCP6/GCP7`。
-- 若本轮仍冻结：优先判断是 PMRD 窗口、GPU 域掉电还是 idle 检查竞态；考虑让 CP 启动在
-  “GPU 探针同一拍”（不 sleep）或等待 PMRD 稳定后再执行，并给每个可能停住的寄存器访问前加落盘标记。
-- 若 `GCP6` 拿到：按 `smfsr/smg`（SMMU 取指 fault）或 `cphw/cpprot`（CP 内部 fault）分别处理。
+> 按用户要求，本报告完成后**暂停**，不继续构建或启动；以下仅为候选方案。
+
+- 先做**存活判据**：在 CP 启动阶段由一个独立内核线程/定时器写“与 console、UFS writer 无关”的标记
+  （例如固定时刻改 `cb_cp`/专用页并让下一次 boot 的 Data 或固定 RAM 位置可读，或让 auto-reset 在 PSCI 前
+  将标记写入 UFS store），用于区分“内核停住”与“仅日志停住”。
+- 在无法区分前，**不再把“日志中断”直接当成“内核冻结”**；此前 PMRD 归因已降级为“可能相关”。
+- 减少关键路径上的控制台 IOLog（改用 `cb_cp` 行 + BootLog 轮询），避免 console 锁参与。
+- 拿到稳定 `GCP6` 后：按 `smfsr/smg`（SMMU 取指 fault）或 `cphw/cpprot`（CP 内部 fault）分别处理；
+  `GCP5 r=9` 才是 CP 真正执行 ME_INIT。
 - CP 起来后再做 GPMU（AGC 0x9800、`CP_INDIRECT_BUFFER`、`CM3_SYSRESET=0`、`GPMUReady==0xbabeface`）。
