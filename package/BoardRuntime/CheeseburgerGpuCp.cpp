@@ -21,6 +21,7 @@ static const unsigned gpu_firmware_size=0;
 #endif
 extern "C" {
 volatile uint64_t cb_cp[64];
+extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 }
@@ -285,8 +286,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   cb_cp[38]=1;cb_cp[39]=0;
   // GPUCC power state at start time: GX/CX collapse would explain a register
   // state drift between the snapshot and the reset.
-  W cc;if(mapw(cc,0x5065000,0x9000)){
-   cb_cp[56]=rd(cc,0x1008);cb_cp[57]=rd(cc,0x1094);cb_cp[58]=rd(cc,0x1098);}
+  // Reuse the probe's GPUCC snapshot instead of mapping GPUCC again here:
+  // the extra GPUCC mapping coincided with a PMRD power-state transition.
+  cb_cp[56]=cb_gpu[11];cb_cp[57]=cb_gpu[19];cb_cp[58]=cb_gpu[20];
   IOLog("CB GPU start: begin ring=%llx pm4=%llx pfp=%llx cx=%x gx=%x gfx=%x\n",
    ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);

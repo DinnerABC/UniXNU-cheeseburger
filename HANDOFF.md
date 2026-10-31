@@ -17,6 +17,8 @@
 - **secure 模式/ SCTLR 轮结果**（镜像 `adb12b45…`，内核 `3b76b685…`，日志 `20261031T110117Z`，boot `0x50993220`，67 rounds，自动回 Recovery）：`GCP5 stage=1 rc=-2 vbif=f000f me=deadbeef`、`GCP6` 全 `deadbeef`——**reset 在 idle 前置检查处失败**（VBIF 停流 ack 已成功），根本没有进入 SW reset / TrustControl 清除 / kick。上一轮同代码在同位置通过，所以这不是代码路径差异，而是 GPU 状态在快照（128 s）与启动（193 s）之间漂移或 VBIF 停流后的瞬时 busy。`GCP2` 快照仍是 `me=303 st=800001c1 trust=1`。
 - **下一轮诊断（未验证）**：启动阶段先读 GPUCC `0x1008/0x1094/0x1098`（CX/GX/gfx3d 是否仍在线）写入 `GCP7 cx/gx/gfx`；`GCP7 st/me/vbif/ry` 记录 reset 前 `Status`、`MEControl`、`VBIFHalted` 和 idle 重试次数（最多 20×10 ms，吸收 VBIF drain 的瞬时 busy）。映射间隔缩短（begin 2 s、之后 1 s），让启动阶段在约 155 s 而不是 193 s 执行，减少状态漂移窗口。
 - 判读：`cx/gx/gfx` 若为掉电值（bit31 清零或全 1）→ 先解决 XNU 侧 GPU 供电/时钟 vote（UEFI EFIClock 的 vote 在 ExitBootServices 后是否失效）；若供电正常且 `ry>0` 后 idle 通过 → 继续看 kick。若 `st` 仍非 idle 且取值为 `0xffffffff`，说明该寄存器读取时 GPU 不可访问。
+- **供电/PMRD 轮结果（整屏黑，手动回）**（镜像 `b15bb427…`，内核 `d771e2ec…`，日志 `20261031T111210Z`，boot `0x5230df48`，18 rounds）：`GCP7 cx=80001fe0 gx=a0222000 gfx=621`（启动时 CX/GX/gfx3d 均在线），`GCP5 stage=1 rc=0`，`GCP6/GCP7 st/me/vbif` 仍 `deadbeef`。控制台 `CB GPU start: begin …` 时间戳 **151.73 s**，最后一条内核消息 **157.33 s**——冻结发生在 begin 之后的 8 s 等待里、**尚未执行任何 GPU 写操作**。上两轮 start 在 ~188 s（PMRD 电源状态切换之后）均稳定；日志显示 ~150–157 s 正是系统自身 **PMRD** 做 `PowerChangeOverride / idle sleep timer` 的窗口。结论：冻结与 PMRD 电源切换窗口相关，而不是某条 GPU 寄存器写。
+- **下一轮（未验证）**：`cheeseburger-gpu-probe=8`，让 GPU 探针 + CP 映射 + reset/kick 在约 **75–120 s** 完成，避开 ~150 s 的 PMRD 切换；启动阶段不再额外映射 GPUCC（改用上一拍 `cb_gpu` 里的 GPUCC 快照，`GCP7` 仍可读 `cx/gx/gfx`）。其余（TrustControl=0、SCTLR=0x1027、fault 捕获、idle 重试）保留。
 
 ## 2026-10-31：A540 时钟清点、400 s 自动回 Recovery、触摸方向修正
 
