@@ -29,7 +29,10 @@ static void (*sink)(void *);static void *sinkCtx;
 static void (*pendingSink)(void *);static void *pendingCtx;
 static CbRmi rmi;
 static CbRmiWire wire;
-static unsigned clockCtl,transform=3;
+// The A540 panel is mounted inverted, but the current iOS UI is upright, so the
+// raw axes must not be flipped. CheeseBurger touch: keep the boot override for
+// a one-axis retry without a rebuild.
+static unsigned clockCtl,transform=0;
 static bool irqMode;static volatile uint32_t pending;
 static bool map(Window &w,uint64_t pa,unsigned size){IODeviceMemory *m=IODeviceMemory::withRange(pa,size);w.map=m?m->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;OSSafeReleaseNULL(m);w.v=w.map?(volatile uint32_t*)w.map->getVirtualAddress():nullptr;return w.v;}
 static uint32_t rd(Window &w,unsigned off){uint32_t x=w.v[off/4];__asm__ volatile("dmb sy":::"memory");return x;}

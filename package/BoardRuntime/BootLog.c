@@ -159,6 +159,7 @@ extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
 extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
 extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
 extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
+extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -269,6 +270,11 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   {int n=snprintf(gpu,sizeof gpu,"GSMMU");
    for(unsigned k=0;k<15;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[45+k]&0xffffffffull);}
    at=put(out,at,cap,gpu,sizeof gpu);}
+ }
+ if (&cb_reset[0] && cb_reset[0]) {
+  char rst[160];
+  snprintf(rst,sizeof rst,"AUTORESET requested=%llu elapsed=%llu issued=%llu rc=%llx starterr=%llx",
+    cb_reset[1],cb_reset[2],cb_reset[3],cb_reset[4],cb_reset[5]);at=put(out,at,cap,rst,sizeof rst);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];

@@ -2,6 +2,13 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：A540 时钟清点、400 s 自动回 Recovery、触摸方向修正
+
+- **GPU 时钟清点（UEFI EFIClock，只读）**：镜像 `eaa7eb87…`（内核 `dd0e4ad9…`、payload `24e72e75…`、固件 `00642106…`），日志 `20261031T051621Z`（boot `0x53b3ffcc`）。窗口尾部块 8161 的 `UP1GPU1` 行：`clock=0 ver=10005`；`VDD_GPU_CX/GX`、`VDD_HLOS1/2_GPU_SMMU` 域 ID 全部解析成功；`gcc_gpu_cfg_ahb_clk` 75 MHz 在跑；`gpucc_gfx3d_clk`/`rbcpr`/`rbbmtimer`/`isense` 关闭、19.2 MHz。同轮 XNU GPU 探针仍 `stage=2`（GPUCC 可读、CX/GX 关闭）。
+- **400 s 自动复位**：新增 `package/BoardRuntime/CheeseburgerAutoReset.cpp`，启动参数 `cheeseburger-auto-reset=400`，按内核启动时间计时；到点写 `CB auto reset` 标记、等 4 s 让持久日志落盘，再发 PSCI SYSTEM_RESET（SMC64 `0x84000009`）。首次无 BCB 时复位落 Android；写入 misc BCB `command=boot-recovery`（4 KiB 块备份到 `out/p21/misc/misc-before.bin`、只改命令字段、写后回读一致）后，镜像 `416bdf28…` 在 400 s 自动回到 Recovery（日志 `20261031T053946Z`，boot `0x4f697e23`，`AUTORESET issued=1`）。**BCB 会被 Recovery 消费清零，每次启动前要重写标记**；标记写的是 `/dev/block/sda4`（misc）第一个 4 KiB 块。
+- **触摸方向修正**：日志证明触摸驱动与 HID 正常（`stage=4`、F01/F12、`TOUCH19 rep=498 nodrv=0`），但面板倒装使 `transform=3` 的双轴翻转与 UI 相反，用户此前误判为“触摸不可用”。已把默认 `transform` 改为 0（保留 `cheeseburger-touch-transform` boot arg 供单轴复查），用户确认上/下/左/右方向正常。修复镜像 `285cd7d8…`（内核 `c2f78d8b…`、payload `59855d79…`、固件 `75b56a83…`，args 569）。
+- **下一步**：GPU 第 2 步上电——用 EFIClock 按序使能 `VDD_GPU_CX/GX`、GPUCC 时钟与 `gfx3d` 257 MHz，再读 GPU/SMMU；代码已在 `rebuild/ipados-up1/gpu-clock/UniXNUGpuClock.c` 的 `UNIXNU_GPU_POWER` 开关后，默认仍关闭，需配合 400 s 自动回 Recovery 与 BCB 标记做 opt-in 实验。
+
 ## 2026-10-31：GPU 第 1–2 步——A540 固件/寄存器取证与只读探针（GPU 未上电）
 
 - 按官方 `/zh/porting/gpu` 顺序，先确认 GPU 代际与输入：本机 A540（a5xx，无 A740 式 GMU；CP 固件 + GPMU 由 CP 写入）。同 SoC 参考 `out/p23/metal-review/sagit-source`（pin `898998c`）及其 QcomGPU/GPUCC/SMMU/RPM 源码，已取到 `docs/upstream/reference/sagit/`。

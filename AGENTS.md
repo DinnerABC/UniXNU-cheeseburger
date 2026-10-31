@@ -28,3 +28,11 @@ board's addresses, IDs, storage geometry, touch controller or GPU driver.
 
 If delegated, at most two low-tier subagents simultaneously; bounded read-only
 work by default. Main agent owns hardware, security and final integration.
+
+## Commit discipline
+
+Every source or documentation change must be committed before the round ends.
+Check `git status` first, keep commits small, and record the build/device
+evidence in the message or HANDOFF so any candidate can be rolled back,
+compared or used as a reference. Never carry a round's changes uncommitted.
+Images, private logs and signing material stay out of Git.

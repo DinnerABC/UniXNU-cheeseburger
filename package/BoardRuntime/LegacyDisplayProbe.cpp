@@ -582,6 +582,7 @@ extern "C" void cheeseburger_touch_probe(void);
 extern "C" void cheeseburger_usb_probe(void);
 extern "C" void cheeseburger_disp_probe(void);
 extern "C" void cheeseburger_gpu_probe(void);
+extern "C" void cheeseburger_auto_reset_start(void);
 void native_legacy_display_late_probe(void) {
     native_hid_input_probe();
     cheeseburger_buttons_probe();
@@ -589,6 +590,7 @@ void native_legacy_display_late_probe(void) {
     cheeseburger_usb_probe();
     cheeseburger_disp_probe();
     cheeseburger_gpu_probe();
+    cheeseburger_auto_reset_start();
     native_keystore_probe();
     /* Unselected board peripheral; no MSM8998 provider qualified. */
     /* Unselected board peripheral; no MSM8998 provider qualified. */
