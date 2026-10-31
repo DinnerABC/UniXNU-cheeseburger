@@ -26,7 +26,7 @@
 
 // Opt-in power experiment. 0 keeps the image read-only; set to 1 only with the
 // 400 s kernel auto-reset image as the safety net.
-#define UNIXNU_GPU_POWER 0
+#define UNIXNU_GPU_POWER 1
 
 EFI_GUID gEfiClockProtocolGuid = EFI_CLOCK_PROTOCOL_GUID;
 
@@ -227,7 +227,10 @@ PowerRate (
   return Set;
 }
 
-STATIC VOID
+// Kept for the next step (a gated read after the bus/NoC path is qualified);
+// the first UEFI read after power-up stopped the boot, so this build does not
+// call it.
+STATIC VOID __attribute__((unused))
 PowerReadGpu (
   GPU_POWER_LOG *Log
   )
@@ -297,6 +300,9 @@ UniXnuGpuPowerEnable (
   }
   PowerDomain (&Log, "VDD_HLOS1_GPU_SMMU");
   PowerDomain (&Log, "VDD_HLOS2_GPU_SMMU");
-  PowerReadGpu (&Log);
+  // Do not read GPU/GPUCC/SMMU MMIO here: after the clock driver powers the
+  // domains, the first UEFI read stopped the boot (black screen, no kernel).
+  // Report completion and let a later, explicitly gated probe read registers.
+  PowerAdd (&Log, AsciiSPrint (Log.Line + Log.Len, sizeof (Log.Line) - Log.Len, " | P:done"));
 #endif
 }
