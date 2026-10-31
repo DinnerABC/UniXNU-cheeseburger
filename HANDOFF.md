@@ -1,5 +1,7 @@
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
+GPU 只读审计与后续优先级见 `docs/P21_ADRENO540_REVIEW_20261031.md`；当前候选门禁及 pins 为旧轮记录，不能证明最新镜像通过。
+
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
 **当前 GPU/CP 阶段的完整现状、问题与解决记录、审计清单见 `docs/P21_GPU_CP_STATUS_REPORT.md`（2026-10-31，供另一 agent 审计）。**
