@@ -374,6 +374,12 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      (uint32_t)(cb_cp[75]),(uint32_t)(cb_cp[76]),(uint32_t)(cb_cp[77]),(uint32_t)(cb_cp[78]),
      cb_cp[79],cb_cp[80],cb_cp[81],(uint32_t)(cb_cp[53]),(uint32_t)(cb_cp[54]),cb_boot_id);
    at=put(out,at,cap,cp,sizeof cp);
+   snprintf(cp,sizeof cp,"GCP11 rbccu=%llx/%llx sp=%llx/%llx smr2=%llx s2cr2=%llx cb1=%llx cb2=%llx bid=%llx",
+     cb_cp[83],cb_cp[84],cb_cp[85],cb_cp[86],cb_cp[89],cb_cp[90],cb_cp[91],cb_cp[92],cb_boot_id);
+   at=put(out,at,cap,cp,sizeof cp);
+   snprintf(cp,sizeof cp,"GCP12 rptr=%llx cpctl=%llx ucode=%llx bid=%llx",
+     cb_cp[93],cb_cp[94],cb_cp[95],cb_boot_id);
+   at=put(out,at,cap,cp,sizeof cp);
    snprintf(cp,sizeof cp,"KEY bid=%llx clk=%x/%x/%x trust=%x stg=%llu rc=%llx r=%llx w=%llx cpfsr=%llx gfsr=%llx hberr=%u frames=%llu",
      cb_boot_id,(uint32_t)(cb_cp[56]),(uint32_t)(cb_cp[57]),(uint32_t)(cb_cp[58]),(uint32_t)(cb_cp[48]),
      cb_cp[38],cb_cp[39],cb_cp[42],cb_cp[43],(uint32_t)(cb_cp[53]),(uint32_t)(cb_cp[54]),

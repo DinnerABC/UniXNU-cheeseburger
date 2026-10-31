@@ -107,3 +107,21 @@ Images, private logs and signing material stay out of Git.
 - `cheeseburger-gpu-start=1` always requires this ZAP chain; there is no bypass
   switch. Record the raw SMC `x0/x1` for every step, plus TrustControl before
   and after (read only).
+- On this board PAS init/mem_setup accepted a 40-bit physical region above
+  4 GiB (`0x111300000`) even though the MDT link addresses are 32-bit: the
+  destination bound for `imageInto` is 40 bits, not the loader-era 32-bit one.
+  The `physicalMask` passed to `inTaskWithPhysicalMask` is a placement request;
+  verify the returned address against the reported width and fall back.
+- A successful PAS `authenticate` does not by itself clear `RBBM_SECVID_TRUST_CNTL`
+  on this SoC: sagit's submission allows `trust==1` only together with an
+  authenticated ZAP, and Android writes the trust register only when no ZAP is
+  available. Never conclude failure from `trust==1` alone and never write it.
+- The RBCCU and SP core power domains (0xa887/0xa881 and status bit 20) are
+  separate from the GPUCC clock vote. Android's `a5xx_pm_resume` enables them
+  before any CP use; with them off every RBBM read still succeeds but the CP
+  cannot execute. Read the status before writing and keep the step observable.
+- Use the device vendor's ring configuration: `CP_RB_CNTL = 0x20C` (RPTR shadow
+  enabled) with `CP_RB_RPTR_ADDR` pointing at a mapped 4 KiB page. Do not pair
+  NO_UPDATE with an unset scratch on this board. After a kick timeout, read the
+  live MEControl/VBIFHalted and the scratch RPTR; the reset snapshot is not the
+  post-kick state.

@@ -148,6 +148,10 @@ static void test_valid_layout() {
     check(!image.imageInto(region.data(), uint32_t(region.size()), 0x201000), "image/reject-unaligned");
     check(!image.imageInto(region.data(), 0x1000, 0x200000), "image/reject-short-region");
     check(image.imageInto(region.data(), uint32_t(region.size()), 0x300000), "image/relocate-second-page");
+    // The device's iOS arena is above 4 GiB and PAS accepted a 40-bit region.
+    check(image.imageInto(region.data(), uint32_t(region.size()), 0x111300000ull), "image/high-physical");
+    check(!image.imageInto(region.data(), uint32_t(region.size()), 0x10000000000ull),
+          "image/reject-over-40-bit");
 }
 
 static void test_archive_rejections() {

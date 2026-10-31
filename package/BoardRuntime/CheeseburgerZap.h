@@ -167,8 +167,12 @@ public:
         return true;
     }
     bool imageInto(void *destination, uint32_t bytes, uint64_t physical) const {
+        // Link-time addresses are 32-bit, but the destination is a physical
+        // region and the SMC64 PAS ABI carries a 40-bit physical address: on
+        // this board PMS init and mem_setup both accepted a region above 4 GiB,
+        // so the earlier 32-bit destination bound only blocked our own copy.
         if (!valid_ || !destination || bytes < extent_ || !physical || (physical & 4095) ||
-            physical > (1ULL << 32) - extent_ ||
+            physical > (1ULL << 40) - extent_ ||
             (relocate_ ? (physical & (uint64_t(alignment_) - 1)) != 0 : physical != first_)) return false;
         auto *out = static_cast<uint8_t *>(destination);
         for (uint32_t i = 0; i < extent_; ++i) out[i] = 0;  // BSS, holes and final padding

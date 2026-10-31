@@ -296,3 +296,46 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
 
 - 本机安全监视器是否接受该元数据/物理区域（签名、PAS-13 平台依赖、GPU 电源租约）；
 - 认证成功是否足以让 CP 取 ring（`RPTR` 前进）；GPMU/fence 尚未开始。
+
+### 11.5 首轮 ZAP 实机结果（boot `0x79802690`，镜像 `395384a0…`）
+
+- 日志 `out/p21/persistent-logs/20261031T155808Z/`：59 rounds、写入错误 0、心跳 27 条、400 s 自动回 Recovery。
+- `ZAP0 rc=ffffffffffffff90(-112) md=10a257000 img=111300000 al=100000 m=40 i=0/0 s=0/0 a=deadbeef t=1 sup=0`；
+  控制台 `CB GPU ZAP: image copy rejected 8192/8192 pa=111300000`。
+- **已确认**：SCM probe 成功；PAS `init(metadata_pa=0x10a257000)` 与 `setup(region_pa=0x111300000, 0x2000)`
+  均返回 `x0=0`，即安全监视器接受 **>4 GiB 的 40 位物理地址**。`sup=0` 与 sagit 的“非授权结果”一致。
+- **本地缺陷**：`Image::imageInto` 沿用了 sagit 装载器的 32 位目的地址上限，把本机 40 位 region 拒绝了；
+  不是 PAS/硬件失败。已改为 40 位上限并在宿主测试加入 40 位接受/超界拒绝。
+- `allocBuf` 的物理掩码只是放置请求，返回的高地址必须复核；现在 32 位尝试越界即释放并回退 40 位，
+  并记录真实宽度（`mm/rm`）。
+- 失败按约定停用 GPU：`GCP5 stage=8`、CP 未 reset，`frames=4`，CPU 显示路径正常；`t=1` 未变（未写 TRUST_CNTL）。
+- **未验证**：`authenticate()` 与 CP 取 ring；下一轮只需完成镜像拷贝、cache clean 与 auth。
+
+### 11.6 第二轮：ZAP 认证成功（boot `0x523473ba`，镜像 `830a3f29…`）
+
+- 日志 `out/p21/persistent-logs/20261031T161549Z/`：59 rounds、写入错误 0、心跳 27 条、400 s 自动回。
+- `ZAP0 rc=0 md=10a258000 img=111100000 al=100000 m=40 i=0/0 s=0/0 a=0/0 t=1->1 sup=0`；
+  控制台 `CB GPU ZAP: ok ... init=0/0 setup=0/0 auth=0/0 trust=1->1 sup=0`。
+- **已确认**：PAS `init`、`mem_setup`、`authenticate` 三次 SMC 原始 `x0` 均为 0，签名被安全监视器接受；
+  metadata 与 image 都在 40 位物理区。这是“认证成功”的设备证据，不是 CP 执行证据。
+- 认证后 `RBBM_SECVID_TRUST_CNTL` 仍为 1。对照 sagit `AdrenoSubmit.h`：提交前的安全条件允许
+  `trust==1`，但要求 `authenticatedZAP`；只有 ZAP 不可用时 Android 才写 `TRUST_CNTL=0`。因此
+  “认证成功 ≠ TrustControl=0”，不能把 t=1 单独当作失败。
+- 同一轮 CP reset rc=0、kick rc=-4、`RPTR=0 WPTR=9`、`CP_HW_FAULT/PROTECT/AHB=0`、`CB0 FSR=0x400`、
+  `GFSR=0`；显示 frames=4。即认证与上下文都成功但 CP 仍未取 ring。
+- **下一假设**：GPU 的 RBCCU/SP 核心电源域由 `a5xx_pm_resume` 单独打开（0xa887/0xa881 + 状态位 20），
+  它们不属于 GPUCC 时钟投票；若未打开，RBBM 可读但 CP 微引擎不运行。第三轮加入上电与回读，并记录
+  SID2/S2CR2 与 CB1/CB2 fault（secure stream 归属）。
+
+### 11.7 第三轮：RBCCU/SP 上电（boot `0x51f37561`，镜像 `58cd0feb…`）
+
+- `CB GPU power: before rbccu=778001/1 sp=778001/1 after=140000/140001`：**RBCCU 与 SP 核心域的
+  status bit20 原本为 0（未上电）**；按 `a5xx_pm_resume` 写 0xA887/0xA881=0x778000 后两域均为
+  `0x00140000`（bit20=1）。ZAP 认证后仍为 `0x140000`。这是本轮新增的、此前从未执行的电源步骤。
+- 认证仍成功（`i=0/0 s=0/0 a=0/0`），CP reset rc=0、kick rc=-4、`RPTR=0 WPTR=9`、无 CP/SMMU fault；
+  `SID2 SMR=0 S2CR=0x200ff`（stream 2 为 fault/未映射），CB1/CB2 FSR=0。显示 frames=5、400 s 自动回。
+- 结论：核心域上电是必要但不足的条件；CP 仍未取 ring，且没有可见的 SMMU/CP fault。
+- 第四轮改动：改用设备 vendor 驱动的 ring 配置（`CP_RB_CNTL=0x20C`，不使用 NO_UPDATE；把
+  `CP_RB_RPTR_ADDR` 指向已映射的 fence 页），kick 失败后先重发一次 doorbell，并记录 kick 之后的
+  **live MEControl/VBIFHalted、scratch RPTR、CP_CNTL、ME ucode debug**，用于区分“引擎已停”与
+  “引擎在跑但 ring 不前进”。宿主模型同步更新并通过。

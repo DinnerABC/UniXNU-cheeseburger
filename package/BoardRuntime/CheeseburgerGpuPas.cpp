@@ -85,8 +85,13 @@ static bool allocate(ZapBuffer &b, uint32_t bytes, uint64_t alignment, uint64_t 
     const uint64_t pa0 = b.descriptor->getPhysicalSegment(0, &span, kIOMemoryMapperNone);
     void *const va0 = b.descriptor->getBytesNoCopy();
     const uint64_t aligned = (pa0 + alignment - 1) & ~(alignment - 1);
+    const uint64_t limit = 1ULL << width;
+    // The physical mask is a placement request, not a guarantee: reject a
+    // descriptor that came back outside it and let the caller try the next
+    // width instead of recording a misleading mask.
     if (!pa0 || (pa0 & 4095) || !va0 || span < total || b.descriptor->getLength() != total ||
-        aligned < pa0 || aligned - pa0 > total || bytes > total - (aligned - pa0)) {
+        aligned < pa0 || aligned - pa0 > total || bytes > total - (aligned - pa0) ||
+        aligned >= limit || bytes > limit - aligned) {
         (void)b.descriptor->complete();
         b.descriptor->release();
         b.descriptor = nullptr;
@@ -243,10 +248,10 @@ extern "C" int cheeseburger_gpu_zap_load(volatile uint32_t *gpu) {
     // Read-only state after authentication; the image and metadata pages must
     // not be read, cleared or freed from here on.
     cb_zap[31] = gpu ? gpu[(0xf400 * 4) / 4] : 0xffffffff;
-    IOLog("CB GPU ZAP: ok md=%llx/%u img=%llx/%u al=%x src=%u mask=%u "
+    IOLog("CB GPU ZAP: ok md=%llx/%u img=%llx/%u al=%x src=%u mm=%u rm=%u "
           "init=%d/%x setup=%d/%x auth=%d/%x trust=%x->%x sup=%llx\n",
           metadata.pa, metadata.bytes, region.pa, region.bytes, image.imageAlignment(),
-          image.physicalBase(), region.width,
+          image.physicalBase(), metadata.width, region.width,
           int(cb_zap[19]), uint32_t(cb_zap[20]), int(cb_zap[22]), uint32_t(cb_zap[23]),
           int(cb_zap[25]), uint32_t(cb_zap[26]), uint32_t(cb_zap[30]), uint32_t(cb_zap[31]),
           cb_zap[17]);

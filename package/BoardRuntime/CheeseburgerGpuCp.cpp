@@ -116,11 +116,37 @@ struct Mmio {
  void clean(volatile void *p,unsigned n){flush_dcache((vm_offset_t)p,n,FALSE);}
  void mark(const char *tag){if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step(tag);}
 };
+// Android a5xx_pm_resume turns the RBCCU and SP core power domains on before
+// any CP use. They are separate from the GPUCC clock vote: with them off the
+// RBBM register block stays readable but the micro engine cannot run, which is
+// exactly a halted CP whose ring cursor never moves. The writes are skipped
+// when the domain already reports on.
+static void powerCore(W &gp, volatile uint64_t *out){
+ uint32_t rb=rd(gp,0xa88d*4),sp=rd(gp,0xa88b*4);
+ out[0]=rd(gp,0xa887*4);out[1]=rb;out[2]=rd(gp,0xa881*4);out[3]=sp;
+ if(!(rb&(1u<<20))){
+  if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step("power");
+  __asm__ volatile("dsb sy":::"memory");gp.v[0xa887]=0x778000;__asm__ volatile("dsb sy":::"memory");
+  IODelay(3);
+  for(unsigned i=0;i<100&&!(rd(gp,0xa88d*4)&(1u<<20));++i)IODelay(1);
+ }
+ if(!(sp&(1u<<20))){
+  __asm__ volatile("dsb sy":::"memory");gp.v[0xa881]=0x778000;__asm__ volatile("dsb sy":::"memory");
+  for(unsigned i=0;i<100&&!(rd(gp,0xa88b*4)&(1u<<20));++i)IODelay(1);
+ }
+ out[4]=rd(gp,0xa88d*4);out[5]=rd(gp,0xa88b*4);
+}
 static void captureFaults(Mmio &m){
  cb_cp[50]=m.read(CheeseburgerGpu::CPHwFault);
  cb_cp[51]=m.read(CheeseburgerGpu::CPProtectStatus);
  cb_cp[52]=m.read(CheeseburgerGpu::CPAhbFault);
- W sm;if(mapw(sm,0x5040000,0x10000)){cb_cp[53]=rd(sm,0x8058);cb_cp[54]=rd(sm,0x48);}
+ W sm;if(mapw(sm,0x5040000,0x10000)){
+  cb_cp[53]=rd(sm,0x8058);cb_cp[54]=rd(sm,0x48);
+  // Secure stream (SID 2) and both context banks' fault registers: while
+  // TrustControl=1 the CP may be attributed to the secure stream.
+  cb_cp[89]=rd(sm,0x808);cb_cp[90]=rd(sm,0xc08);
+  cb_cp[91]=rd(sm,0x9058);cb_cp[92]=rd(sm,0xa058);
+ }
 }
 }
 extern "C" void cheeseburger_gpu_cp_probe(void){
@@ -200,11 +226,20 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);
   if(start>=2){cb_cp[38]=9;IOSleep(8000);return;}  // log-only: no GPU write
+  // Android a5xx_pm_resume cores first; without them the CP cannot execute
+  // even though every RBBM read succeeds. Log before the first write.
+  powerCore(gp,&cb_cp[83]);
+  IOLog("CB GPU power: before rbccu=%x/%x sp=%x/%x after=%x/%x\n",
+   uint32_t(cb_cp[83]),uint32_t(cb_cp[84]),uint32_t(cb_cp[85]),uint32_t(cb_cp[86]),
+   uint32_t(cb_cp[87]),uint32_t(cb_cp[88]));
   // Formal secure-world premise: authenticated ZAP (PAS-13) must succeed before
   // any CP reset or CP_ME_INIT submission. Failure leaves the GPU halted.
   int zrc=cheeseburger_gpu_zap_load(gp.v);
   cb_cp[82]=uint64_t(int32_t(zrc));
   if(zrc){cb_cp[38]=8;cb_cp[39]=uint64_t(int32_t(zrc));IOSleep(8000);return;}
+  {uint64_t after[6];powerCore(gp,after);cb_cp[87]=after[4];cb_cp[88]=after[5];
+   IOLog("CB GPU power: after-zap rbccu=%x/%x sp=%x/%x\n",
+    uint32_t(after[0]),uint32_t(after[1]),uint32_t(after[2]),uint32_t(after[3]));}
   IOSleep(8000); // let BootLog persist the ZAP result before the reset writes
   unsigned clearTrust=0;
   PE_parse_boot_argn("cheeseburger-gpu-trust-clear",&clearTrust,sizeof clearTrust);
@@ -219,7 +254,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   IOSleep(8000);
   if(rc==0){
    cb_cp[38]=2;
-   rc=engine.start((volatile uint32_t*)ring.va,ring.bytes/4,ring.gva,pm4.gva,pfp.gva,rec);
+   rc=engine.start((volatile uint32_t*)ring.va,ring.bytes/4,ring.gva,pm4.gva,pfp.gva,fence.gva,rec);
    cb_cp[38]=3;cb_cp[39]=uint64_t(int32_t(rc));
    cb_cp[42]=rec.read;cb_cp[43]=rec.write;cb_cp[44]=rec.irq;cb_cp[45]=rec.cpIrq;
    cb_cp[46]=m.read(CheeseburgerGpu::Status3);cb_cp[47]=m.read(CheeseburgerGpu::Status);
@@ -234,6 +269,10 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     cb_cp[77]=rd(sm,0x800);cb_cp[78]=rd(sm,0xc00);}
    {uint64_t pte=0;if(cheeseburger_gpu_smmu_lookup(ring.gva,&pte)==0)cb_cp[79]=pte;}
    cb_cp[80]=cheeseburger_gpu_smmu_root();cb_cp[81]=ring.pa;
+   // Live post-kick state: the CP's scratch cursor, CP_CNTL and the ME ucode
+   // debug word distinguish "engine halted" from "engine running, ring stuck".
+   cb_cp[93]=*(volatile uint32_t*)fence.va;
+   cb_cp[94]=m.read(0x831*4);cb_cp[95]=m.read(0x830*4);
    captureFaults(m);
    IOLog("CB GPU start: kick rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x\n",rc,
     uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
@@ -241,6 +280,12 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    IOLog("CB GPU start: faults cp=%x/%x/%x smfsr=%x smg=%x\n",
     uint32_t(cb_cp[50]),uint32_t(cb_cp[51]),uint32_t(cb_cp[52]),
     uint32_t(cb_cp[53]),uint32_t(cb_cp[54]));
+   IOLog("CB GPU start: sid2 smr=%x s2cr=%x cb1fsr=%x cb2fsr=%x pow=%x/%x/%x/%x\n",
+    uint32_t(cb_cp[89]),uint32_t(cb_cp[90]),uint32_t(cb_cp[91]),uint32_t(cb_cp[92]),
+    uint32_t(cb_cp[83]),uint32_t(cb_cp[84]),uint32_t(cb_cp[87]),uint32_t(cb_cp[88]));
+   IOLog("CB GPU start: live rptr=%x cpctl=%x ucode=%x scratch=%x me=%x vbif=%x\n",
+    uint32_t(cb_cp[42]),uint32_t(cb_cp[94]),uint32_t(cb_cp[95]),uint32_t(cb_cp[93]),
+    uint32_t(cb_cp[60]),uint32_t(cb_cp[61]));
   }
   IOSleep(8000);
  }

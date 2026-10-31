@@ -13,7 +13,8 @@
 namespace CheeseburgerGpu {
 
 enum : uint32_t {
-    RBBase = 0x800 * 4, RBControl = 0x802 * 4, RBRead = 0x806 * 4, RBWrite = 0x807 * 4,
+    RBBase = 0x800 * 4, RBControl = 0x802 * 4, RBReadAddr = 0x804 * 4, RBReadAddrHi = 0x805 * 4,
+    RBRead = 0x806 * 4, RBWrite = 0x807 * 4,
     MEControl = 0x832 * 4, PFPBase = 0x835 * 4, MEBase = 0x838 * 4, ContextSwitch = 0x83b * 4,
     CPInterruptStatus = 0xb18 * 4, InterruptClear = 0x37 * 4, InterruptMask = 0x38 * 4,
     InterruptStatus = 0x4e1 * 4, Status = 0x4f5 * 4, Status3 = 0x530 * 4,
@@ -23,7 +24,11 @@ enum : uint32_t {
     CPAddrModeCntl = 0x860 * 4, CPProtectCntl = 0x8a0 * 4, CPHwFault = 0xb1a * 4,
     CPProtectStatus = 0xb1c * 4, CPAhbFault = 0xb1b * 4, CPControl = 0x831 * 4,
     Halt = 0x303u,
-    RingControl = 12u | (2u << 8) | (1u << 27),
+    // Vendor A5XX_CP_RB_CNTL_DEFAULT: 32 KiB / 32-byte block, RPTR shadow
+    // enabled at CP_RB_RPTR_ADDR. Linux additionally sets NO_UPDATE and skips
+    // the scratch; the device's vendor driver always provides the scratch, so
+    // follow it and keep the CP from writing its cursor to an unmapped address.
+    RingControl = 12 | (2 << 8),
     ErrorIRQs = 0x7e | (1u << 9) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 28),
     OwnedIRQs = (1u << 20) | 0x7e | (1u << 9) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 28),
     RingDwords = 8192
@@ -174,9 +179,10 @@ public:
     // Loads the CP microcode addresses and submits CP_ME_INIT. A true result
     // means RBRead advanced through the ring. Any failure re-halts and abandons.
     int start(volatile uint32_t *ring, unsigned ringDwords, uint64_t ringVA, uint64_t pm4VA,
-              uint64_t pfpVA, Record &rec) {
+              uint64_t pfpVA, uint64_t scratchVA, Record &rec) {
         if (!resetDone || abandonedFlag || runningFlag) return fail(rec, -11, 0);
-        if (!ring || ringDwords != RingDwords || (ringVA & 4095) || (pm4VA & 4095) || (pfpVA & 4095))
+        if (!ring || ringDwords != RingDwords || (ringVA & 4095) || (pm4VA & 4095) ||
+            (pfpVA & 4095) || (scratchVA & 4095) || !scratchVA)
             return fail(rec, -12, 0);
         for (unsigned i = 0; i < ringDwords; ++i) ring[i] = 0;
         configure();
@@ -184,11 +190,14 @@ public:
         wr(MEBase, uint32_t(pm4VA)); wr(MEBase + 4, uint32_t(pm4VA >> 32));
         wr(PFPBase, uint32_t(pfpVA)); wr(PFPBase + 4, uint32_t(pfpVA >> 32));
         wr(RBBase, uint32_t(ringVA)); wr(RBBase + 4, uint32_t(ringVA >> 32));
+        wr(RBReadAddr, uint32_t(scratchVA)); wr(RBReadAddrHi, uint32_t(scratchVA >> 32));
         wr(ContextSwitch, 0); wr(RBControl, RingControl); wr(RBWrite, 0);
         wr(InterruptMask, 0); wr(InterruptClear, OwnedIRQs);
         if (rd(MEBase) != uint32_t(pm4VA) || rd(PFPBase) != uint32_t(pfpVA) ||
-            rd(RBBase) != uint32_t(ringVA) || rd(RBControl) != RingControl || rd(RBRead) ||
-            rd(RBWrite) || rd(ContextSwitch) || rd(CPAddrModeCntl) != 1 || rd(CPProtectCntl) != 7)
+            rd(RBBase) != uint32_t(ringVA) || rd(RBReadAddr) != uint32_t(scratchVA) ||
+            rd(RBReadAddrHi) != uint32_t(scratchVA >> 32) || rd(RBControl) != RingControl ||
+            rd(RBRead) || rd(RBWrite) || rd(ContextSwitch) ||
+            rd(CPAddrModeCntl) != 1 || rd(CPProtectCntl) != 7)
             return fail(rec, -2, 2);
         r.mark("addr");
         rec.stage = 2;
@@ -203,25 +212,34 @@ public:
         r.mark("kick");
         r.publish(); wr(RBWrite, cursor);
 
-        for (unsigned waited = 0; waited < 300000; waited += 10) {
-            const uint32_t irq = rd(InterruptStatus), cpirq = rd(CPInterruptStatus);
-            if ((irq & ErrorIRQs) || (cpirq & 0x3f)) {
-                rec.irq = irq; rec.cpIrq = cpirq;
-                return fail(rec, -3, 3);
+        auto poll = [&](unsigned budget) {
+            for (unsigned waited = 0; waited < budget; waited += 10) {
+                const uint32_t irq = rd(InterruptStatus), cpirq = rd(CPInterruptStatus);
+                if ((irq & ErrorIRQs) || (cpirq & 0x3f)) { rec.irq = irq; rec.cpIrq = cpirq; return -3; }
+                const uint32_t read = rd(RBRead);
+                if (read == cursor && !(rd(Status) & ~1u) && !(rd(Status3) & (1u << 24))) {
+                    rec.read = read; rec.write = rd(RBWrite); rec.stage = 4; rec.rc = 0;
+                    r.mark("done");
+                    runningFlag = true; resetDone = false;
+                    return 0;
+                }
+                r.delay(10);
             }
-            const uint32_t read = rd(RBRead);
-            if (read == cursor && !(rd(Status) & ~1u) && !(rd(Status3) & (1u << 24))) {
-                rec.read = read; rec.write = rd(RBWrite); rec.stage = 4; rec.rc = 0;
-                r.mark("done");
-                runningFlag = true; resetDone = false;
-                return 0;
-            }
-            r.delay(10);
+            return 1;
+        };
+        int polled = poll(300000);
+        if (polled == 1) {
+            // A doorbell can be lost while the CP is still coming out of reset;
+            // retry once before declaring the kick failed.
+            r.publish(); wr(RBWrite, cursor);
+            polled = poll(100000);
         }
         rec.read = rd(RBRead); rec.write = rd(RBWrite);
         rec.irq = rd(InterruptStatus); rec.cpIrq = rd(CPInterruptStatus);
         rec.status3 = rd(Status3); rec.status = rd(Status);
-        return fail(rec, -4, 3);
+        rec.me = rd(MEControl); rec.vbif = rd(VBIFHalted);  // live, not the reset snapshot
+        if (polled == 0) return 0;
+        return fail(rec, polled == -3 ? -3 : -4, 3);
     }
 };
 

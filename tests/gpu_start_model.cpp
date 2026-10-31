@@ -144,7 +144,7 @@ int main() {
         check(engine.reset(rec) == 0, "success/reset");
         check(rec.trust == 1 && rec.cpControl == 0, "success/trust-readback");
         volatile uint32_t ring[RingDwords] = {0};
-        int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, rec);
+        int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec);
         check(rc == 0, "success/start");
         check(engine.running() && !engine.abandoned(), "success/flags");
         check(rec.read == 9 && rec.write == 9 && rec.stage == 4, "success/ring-pointers");
@@ -153,6 +153,7 @@ int main() {
               ring[3] == 0x20000000, "success/me-init");
         check(m.reg[CPProtectCntl / 4] == 7 && m.reg[CPAddrModeCntl / 4] == 1, "success/configure");
         check(m.reg[RBControl / 4] == RingControl, "success/rb-control");
+        check(m.reg[RBReadAddr / 4] == 0x2015000 && m.reg[RBReadAddrHi / 4] == 0, "success/rptr-scratch");
         static const char *const want[] = {"halt", "ack", "idle", "swrst", "cm3", "ready",
                                            "cfg", "addr", "kick", "done"};
         check(marks_are(m, want, 10), "success/marks");
@@ -181,11 +182,12 @@ int main() {
         Record rec;
         check(engine.reset(rec) == 0, "kick/reset");
         volatile uint32_t ring[RingDwords] = {0};
-        int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, rec);
+        int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec);
         check(rc == -4, "kick/timeout");
         check(rec.abandoned && engine.abandoned(), "kick/abandoned");
         halted_after_failure(m, "kick/halted");
-        check(m.submitWrites == 1 && m.unhaltWrites == 1, "kick/one-submission");
+        // The first doorbell may be lost while the CP leaves reset; the retry is bounded.
+        check(m.submitWrites == 2 && m.unhaltWrites == 1, "kick/bounded-retry");
     }
     // start() without reset must not touch the ring registers.
     {
@@ -193,7 +195,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, rec);
+        int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec);
         check(rc == -11, "no-reset/rc");
         check(m.rbControlWrites == 0 && m.rbWriteWrites == 0, "no-reset/no-submit");
         halted_after_failure(m, "no-reset/halted");
