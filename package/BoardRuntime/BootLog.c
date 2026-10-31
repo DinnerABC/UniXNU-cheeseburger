@@ -160,6 +160,7 @@ extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
 extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
 extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
+extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -270,6 +271,12 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   {int n=snprintf(gpu,sizeof gpu,"GSMMU");
    for(unsigned k=0;k<15;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[45+k]&0xffffffffull);}
    at=put(out,at,cap,gpu,sizeof gpu);}
+ }
+ if (&cb_smmu[0] && cb_smmu[15]==0x5e7) {
+  char sm[220];
+  snprintf(sm,sizeof sm,"SSETUP st=%llu root=%llx sctlr=%llx smr=%llx s2cr=%llx cb=%llx tcr=%llx fsr=%llx ids=%llx/%llx/%llx",
+    cb_smmu[0],cb_smmu[1],cb_smmu[2],cb_smmu[3],cb_smmu[4],cb_smmu[5],cb_smmu[8],cb_smmu[9],
+    cb_smmu[10],cb_smmu[11],cb_smmu[12]);at=put(out,at,cap,sm,sizeof sm);
  }
  if (&cb_reset[0] && cb_reset[0]) {
   char rst[160];

@@ -20,7 +20,10 @@
 - **SMMU 读取成功**：UEFI 增加 `gcc_hlos1/2_gpu_smmu_clk` 使能（capture 均 `On=1`），XNU 用 `cheeseburger-gpu-smmu=1` 读取；镜像 `9ebb59f6…`（内核 `52099388…`、payload `67b9d461…`、固件 `64f45908…`，args 593），日志 `20261031T063813Z`（boot `0x4eebb8fb`，自动回 Recovery）：
   - `GPU0 … stage=3 flags=1f`（含 SMMU 读取位）；
   - `GSMMU SCTLR=00200626 ID0=48016403 ID1=20008003 ID2=00007511 SMR0=0 S2CR0=000200ff CB0=0…`：SMMU 可访问但未使能、无 stream/上下文，符合冷启动状态；ID1 的 global pages=8 与 CB0 偏移 0x8000 一致。
-- **下一步（核心后端）**：SMMU bank0/SID0 上下文与页表、a530_pfp/pm4 + a540_gpmu 固件装载、CP/GPMU 初始化（GPMU 0xbabeface），再进入 CP ring/PM4 提交与 XNU 用户客户端；sagit 的 `QcomGPU/AdrenoStartup.h`、`AdrenoFirmware.h`、`gpu_smmu.h` 是同一 SoC 的可移植参考。
+- **SMMU 上下文已建立（空根表）**：新增 `package/BoardRuntime/CheeseburgerGpuSmmu.cpp`，按 sagit 非安全 bank0/SID0 序列分配 4 KiB 物理连续、清洗过的空 AArch64 根表，配置 global SCTLR、CB0（0x1167）、TCR 0x802018、SMR0=0x80000000、S2CR0=0，并做两次 CBn TLB 同步。镜像 `a2ddc42f…`（内核 `502516eb…`、payload `2428a813…`、固件 `9d6ab661…`，args 623），日志 `20261031T065735Z`（boot `0x4e2f3574`，自动回 Recovery）：
+  - `SSETUP st=0 root=1606cf000 sctlr=201e36 smr=80000000 s2cr=0 cb=1167 tcr=802018 fsr=400`，无 fault；FSR 0x400 是 AArch64 格式位，符合 sagit 对安静 bank 的说明。
+  - 该根表尚未映射任何 buffer，GPU 仍无 DMA；CP 仍 halted。
+- **下一步（核心后端）**：给固件/ring 分配物理连续 buffer 并写入叶子页表（每项清洗），嵌入 a530_pfp/pm4 + a540_gpmu，完成 CP `ME_INIT` 与 GPMU（目标 0xbabeface），再进入 CP ring/PM4 提交与 XNU 用户客户端；sagit 的 `QcomGPU/AdrenoStartup.h`、`AdrenoFirmware.h`、`gpu_smmu.h`/`PageTables.h` 是同一 SoC 的可移植参考。
 
 ## 2026-10-31：GPU 第 1–2 步——A540 固件/寄存器取证与只读探针（GPU 未上电）
 

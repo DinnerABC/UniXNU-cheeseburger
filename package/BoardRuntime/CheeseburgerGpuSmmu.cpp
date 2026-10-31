@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// A540 GPU SMMU bank 0 / SID 0 bring-up, ported from the pinned sagit
+// QcomSMMU sequence (gpu_smmu.h + ContextTLB.h). The first step installs an
+// empty AArch64 stage-1 root table and enables the non-secure context; it does
+// not map any buffer yet, so no GPU DMA can run until firmware/rings are added.
+#include <IOKit/IOLib.h>
+#include <IOKit/IODeviceMemory.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <kern/thread.h>
+#include <kern/sched_prim.h>
+#include <pexpert/pexpert.h>
+#include <string.h>
+extern "C" {
+volatile uint64_t cb_smmu[16];
+void flush_dcache(vm_offset_t,unsigned,boolean_t);
+}
+namespace {
+struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
+static bool mapw(W &w,uint64_t pa,unsigned size){
+ IODeviceMemory *m=IODeviceMemory::withRange(pa,size);
+ w.map=m?m->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+ OSSafeReleaseNULL(m);
+ w.v=w.map?(volatile uint32_t*)w.map->getVirtualAddress():nullptr;
+ return w.v;
+}
+static uint32_t rd(W &w,unsigned off){uint32_t x=w.v[off/4];__asm__ volatile("dmb sy":::"memory");return x;}
+static void wr(W &w,unsigned off,uint32_t x){__asm__ volatile("dsb sy":::"memory");w.v[off/4]=x;__asm__ volatile("dsb sy":::"memory");}
+static bool tlbSync(W &s,unsigned ctx,bool allASIDs){
+ wr(s,ctx+(allASIDs?0x618:0x610),0);
+ wr(s,ctx+0x7f0,0xffffffffu);
+ for(unsigned i=0;i<100000;++i){
+  uint32_t st=rd(s,ctx+0x7f4);
+  if(st==0xffffffffu)return false;
+  if(!(st&1))return true;
+  IODelay(1);
+ }
+ return false;
+}
+static void reset(){for(unsigned i=0;i<16;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;}
+}
+extern "C" void cheeseburger_gpu_smmu_setup(void){
+ reset();
+ W s;if(!mapw(s,0x5040000,0x10000)){cb_smmu[0]=1;return;}
+ uint32_t id0=rd(s,0x20),id1=rd(s,0x24),id2=rd(s,0x28);
+ cb_smmu[10]=id0;cb_smmu[11]=id1;cb_smmu[12]=id2;
+ if(id0==0xffffffffu||id1==0xffffffffu||id2==0xffffffffu){cb_smmu[0]=2;return;}
+ // Same fixed-width checks as sagit QcomSMMU::SMMUStartup::probe.
+ const unsigned widths[]={32,36,40,42,44,48,52};
+ unsigned pages=1u<<(((id1>>28)&7)+1);
+ unsigned groups=id0&255,sidBits=(id0>>9)&15;
+ unsigned inBits=widths[(id2>>8)&15],outBits=widths[id2&15];
+ unsigned out2=widths[(id2>>4)&15];
+ if(inBits>40)inBits=40;
+ if(out2<outBits)outBits=out2;
+ if(outBits>40)outBits=40;
+ if((id0&((1u<<30)|(1u<<27)))!=((1u<<30)|(1u<<27))||!(id2&(1u<<12))||
+    (id1&(1u<<31))||pages!=8||!groups||groups>128||!sidBits||
+    (id1&255)>8||(id1&0xff0000)){cb_smmu[0]=3;return;}
+ unsigned ctx=pages*4096;
+ if(ctx!=0x8000||rd(s,ctx)&1||rd(s,ctx+0x58)||rd(s,0x48)||(rd(s,0)&8)){cb_smmu[0]=4;return;}
+ // SMR0/S2CR0 are free on this cold GPU.
+ if(rd(s,0x800)||rd(s,0xc00)!=0x000200ffu){cb_smmu[0]=5;return;}
+ // One physically contiguous, cache-cleaned, zero root table. Keep it for the
+ // boot; the mapper that adds leaf entries will reuse it.
+ static IOBufferMemoryDescriptor *root=nullptr;
+ root=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
+ if(!root){cb_smmu[0]=6;return;}
+ IOByteCount span=0;uint64_t pa=root->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ void *va=root->getBytesNoCopy();
+ if(!pa||(pa&4095)||span<4096||!va||(pa>>36)){cb_smmu[0]=7;return;}
+ memset(va,0,4096);flush_dcache((vm_offset_t)va,4096,FALSE);
+ cb_smmu[1]=pa;cb_smmu[13]=(outBits<<8)|inBits;
+ // Global setup, then bank 0, exactly as the sagit non-secure sequence.
+ wr(s,0,(rd(s,0)&~(1u|(3u<<14)|(1u<<13)))|0x1c36);
+ wr(s,0x800,0);wr(s,ctx,0);wr(s,0x1800,1);wr(s,0x1000,0x1f300);
+ wr(s,ctx+0x10,(7u<<15)|(1u<<4)|(outBits==40?2u:outBits==36?1u:0u));
+ wr(s,ctx+0x30,(1u<<23)|(2u<<12)|(64-inBits));
+ wr(s,ctx+0x20,(uint32_t)pa);wr(s,ctx+0x24,(uint32_t)(pa>>32));
+ wr(s,ctx+0x28,0);wr(s,ctx+0x2c,0);wr(s,ctx+0x34,0);wr(s,ctx+0x38,0x44);wr(s,ctx+0x3c,0);
+ if(!tlbSync(s,ctx,true)){cb_smmu[0]=8;cb_smmu[5]=rd(s,ctx);return;}
+ wr(s,ctx,0x1167);wr(s,0xc00,0);wr(s,0x800,0x80000000u);
+ if(!tlbSync(s,ctx,false)){cb_smmu[0]=9;cb_smmu[5]=rd(s,ctx);return;}
+ cb_smmu[0]=0;
+ cb_smmu[2]=rd(s,0);cb_smmu[3]=rd(s,0x800);cb_smmu[4]=rd(s,0xc00);
+ cb_smmu[5]=rd(s,ctx);cb_smmu[6]=rd(s,ctx+0x20);cb_smmu[7]=rd(s,ctx+0x24);
+ cb_smmu[8]=rd(s,ctx+0x30);cb_smmu[9]=rd(s,ctx+0x58);
+ IOLog("CB GPU SMMU: root=%llx sctlr=%x smr=%x s2cr=%x cb=%x tcr=%x fsr=%x ids=%x/%x/%x\n",
+  pa,cb_smmu[2],cb_smmu[3],cb_smmu[4],cb_smmu[5],cb_smmu[8],cb_smmu[9],id0,id1,id2);
+}

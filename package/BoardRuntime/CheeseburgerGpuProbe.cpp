@@ -15,6 +15,7 @@
 #include <pexpert/pexpert.h>
 extern "C" {
 volatile uint64_t cb_gpu[64];
+void cheeseburger_gpu_smmu_setup(void);
 }
 namespace {
 struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
@@ -71,6 +72,8 @@ static void worker(void*,wait_result_t){
  unsigned smmu=0;PE_parse_boot_argn("cheeseburger-gpu-smmu",&smmu,sizeof smmu);
  if(smmu){W sm;if(mapw(sm,0x5040000,0x10000))for(unsigned i=0;i<sizeof smmuRegs/sizeof smmuRegs[0];++i)cb_gpu[45+i]=rd(sm,smmuRegs[i]);}
  cb_gpu[62]|=smmu?0x10u:0u;
+ unsigned setup=0;PE_parse_boot_argn("cheeseburger-gpu-smmu-setup",&setup,sizeof setup);
+ if(smmu&&setup)cheeseburger_gpu_smmu_setup();
  cb_gpu[63]=3;
 }
 }
