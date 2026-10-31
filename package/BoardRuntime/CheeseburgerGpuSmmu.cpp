@@ -179,9 +179,10 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  wr(s,ctx+0x20,(uint32_t)gRootPA);wr(s,ctx+0x24,(uint32_t)(gRootPA>>32));
  wr(s,ctx+0x28,0);wr(s,ctx+0x2c,0);wr(s,ctx+0x34,0);wr(s,ctx+0x38,0x44);wr(s,ctx+0x3c,0);
  if(!tlbSync(s,ctx,true)){cb_smmu[0]=8;cb_smmu[5]=rd(s,ctx);return;}
- // sagit's proven GPU control value: M|EAE|CFCFG|CFRE, no CFIE (no fault IRQ
- // source yet) and no HUPCF. 0x1167 additionally halted on unexpected
- // context faults, which can stall the CP fetch silently.
+ // sagit's proven GPU control value. Per arm-smmu.h CB SCTLR bits:
+ // 0x1027 = M(0)|TRE(1)|AFE(2)|CFRE(5)|S1_ASIDPNE(12); 0x1167 adds
+ // CFIE(6)|HUPCF(8) (delta 0x140). Do not assert per-bit fault semantics
+ // until they are confirmed against this SoC's SMMU implementation.
  wr(s,ctx,0x1027);wr(s,0xc00,0);wr(s,0x800,0x80000000u);
  if(!tlbSync(s,ctx,false)){cb_smmu[0]=9;cb_smmu[5]=rd(s,ctx);return;}
  cb_smmu[0]=0;

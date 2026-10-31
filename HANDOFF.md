@@ -1,12 +1,12 @@
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
-GPU 只读审计与后续优先级见 `docs/P21_ADRENO540_REVIEW_20261031.md`；当前候选门禁及 pins 为旧轮记录，不能证明最新镜像通过。
+GPU 只读审计见 `docs/P21_ADRENO540_REVIEW_20261031.md`；依据审计确定的最新修改方向见 `docs/P21_GPU_CP_DIRECTION_20261031.md`（P0 证据冻结 → P1 reset 失败路径 → P2 独立存活判据 → P3 SMMU/CP 验证 → P4 分阶段）。当前候选门禁及 pins 为旧轮记录，不能证明最新镜像通过。
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
 **当前 GPU/CP 阶段的完整现状、问题与解决记录、审计清单见 `docs/P21_GPU_CP_STATUS_REPORT.md`（2026-10-31，供另一 agent 审计）。**
 最近一轮（镜像 `aea9a9fa…`、内核 `6ccfb681…`，GPU 工作提前到 ~75–99 s）日志 `20261031T112909Z`（boot `0x510ea570`，8 rounds）：
-五 buffer 映射全通，`begin` 打印后（98.7 s）日志中断、无 GPU 写；设备最终在 ~503 s 回到 Recovery（是否自动复位待用户确认）。
+五 buffer 映射全通；`begin` 打印（98.7 s）后日志中断，从代码顺序与已持久证据看未观察到 reset 写入（不能证明其后未执行）；**用户已确认是手动返回 Recovery，400 s 自动复位未生效**。
 按用户要求已暂停，不继续构建/启动。
 
 ## 2026-10-31：CP/GPMU 状态读取 + 五个 buffer 全部映射，整机稳定；进入 CP reset/start

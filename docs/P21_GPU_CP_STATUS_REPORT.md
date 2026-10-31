@@ -12,6 +12,9 @@
 - **推测**：有日志线索但未做对照验证。
 - **未验证**：代码已写/已打包，但设备尚未给出结果。
 - 所有 boot ID 均为 `BootLog` 的 `cb_boot_id`；环形窗口里有旧 boot 的行，必须按 boot ID 过滤。
+- **证据对应关系**：`out/p21/fb-qup3/offline-gate.json`（指向 `a4af3b18…`、旧内核）与 `pins.json`
+  （payload `f9bafc4d…`）均为**旧轮记录**，不能证明当前镜像 `aea9a9fa…`；本轮 gate 结果只出现在终端，
+  未落盘。后续按 `docs/P21_GPU_CP_DIRECTION_20261031.md` 的 P0 固化每轮记录。
 - 启动一律 `fastboot boot` 临时启动，未写 boot/recovery/固件/GPT。userdata 只写官方持久日志窗口
   （`out/p21/r14/log-window.json`：userdata 相对 10 GiB、32 MiB）与已授权的持久 Data store。
 - misc 只写 `/dev/block/sda4` 第一个 4 KiB 的 BCB `command` 字段；每轮启动前重写并回读，
@@ -59,17 +62,22 @@
   - ring(8 页)/PM4(5)/PFP(5)/GPMU(3)/fence(1) 全部 `r=0`、`MAPD ret=0 tlb=0`；
     GPU VA = `0x2000000/0x2008000/0x200d000/0x2012000/0x2015000`。
   - `GCP2 me=303 vbif=0/f0000 rb=0/0/0/0 st=800001c1 irq=0 trust=1 sec=0`：
-    `Status=0x800001c1` 与 sagit `haltedPipelineIdle` 掩码 `0x800001c1` 完全一致。
+    该轮 `Status=0x800001c1` 与 sagit `haltedPipelineIdle` 掩码一致。
+    **注意冷状态并非每轮逐 bit 相同**：`20261031T111210Z`（boot `0x5230df48`）同一采样为 `st=0x80000101`
+    （bit6/7 不同），两轮 `me=303`；差异含义尚需结合采样时刻与寄存器定义分析。
   - `GCP4 gready=0 gerr=0 cm3rst=1 prot=0 swrst=0 ahb=1`（GPMU 未加载、CM3 复位）。
   - 同轮显示正常（`DISPLAY clients=129 frames=6`、`SWAP transfer=6`），内核跑满 400 s 自动回 Recovery。
 - 之前“第 4 个映射后整机停住”的问题**未再复现**；本轮差异：SMMU 寄存器窗口整轮只映射一次
   （此前每次 buffer 映射都新建 IOMemoryMap），且 CP 状态读取提前到映射之前。
+- **限制**：`r=0`/`tlb=0` 只证明软件建表与 TLB 同步例程报告成功；**不等于**已验证 stream 路由、
+  PTE 属性、缓存一致性与设备侧 DMA 可达性。
 
 ### 2.4 CP reset/configure/start（已执行，未成功）
 
 - `20261031T104613Z`（boot `0x5121380b`，镜像 `64fdf3d6…`、内核 `e2e767c0…`）：
   `GCP5 stage=3 rc=-4 vbif=f000f me=303 r=0 w=9 irq=0 cpirq=0 st=c00003c1 st3=100000`。
-  - reset() 通过（否则 rc=-1..-6）、configure 回读通过（否则 rc=-2）、`CP_ME_INIT` 已写入 ring（WPTR=9）；
+  - reset() 通过（否则 rc=-1..-6）；`gpuStart` 的**关键寄存器子集**回读通过（否则 rc=-2；
+    未覆盖全部 configure 项，不能称“整套 configure 验证通过”）；`CP_ME_INIT` 已写入 ring（WPTR=9）；
   - **RBRead 始终 0**，`InterruptStatus/CPInterruptStatus` 全 0；`Status` 仅多 bit30（CP 已唤醒）。
   - 结论：CP 微码没有执行，不是 reset/configure 失败。
 - `20261031T110117Z`（boot `0x50993220`，镜像 `adb12b45…`、内核 `3b76b685…`）：
@@ -79,7 +87,7 @@
 - `20261031T111210Z`（boot `0x5230df48`，镜像 `b15bb427…`、内核 `d771e2ec…`）：
   `GCP7 cx=80001fe0 gx=a0222000 gfx=621`（启动时 CX/GX/gfx3d 均在线），
   `CB GPU start: begin` 时间戳 **151.73 s**，最后一条内核消息 **157.33 s**，整屏黑、手动回 Recovery。
-  **冻结发生在 begin 之后的 8 s 等待中、尚未执行任何 GPU 写操作**；日志显示 150–157 s 正是系统自身
+  **从代码顺序与已持久证据看，冻结发生在 begin 之后的 8 s 等待中、未观察到 reset 写入（不能证明其后未执行）**；日志显示 150–157 s 正是系统自身
   **PMRD**（`PowerChangeOverride`、`idle sleep timer`）电源状态切换窗口。前两轮 start 在 ~188 s
   （PMRD 之后）均未冻结。→ **推测：冻结与 PMRD 电源切换窗口相关，而非某条 GPU 寄存器写。**
 
@@ -98,7 +106,7 @@
   - 98.725 s `CB GPU CP:` 汇总；98.7258 s `CB GPU start: begin … cx=80001fe0 gx=a0222000 gfx=621`。
   - **98.7258 s 是整轮最后一条内核消息**；之后没有 userland 消息（正常每 ~1 s 有 CoreAnalyticsHub 行），
     也没有 `reset rc=` 行。writer 在 ~102 s 写最后一轮后停止。
-- **本轮没有执行任何 GPU 写操作**（begin 之后先 `IOSleep(8000)`，reset 在 ~106.7 s 才开始）。
+- **从代码顺序与已持久证据看，本轮未观察到 GPU 写入**（begin 之后先 `IOSleep(8000)`，reset 在 ~106.7 s 才开始）；不排除其后执行过写或系统在其它路径停住。
 - **设备最终回到了 Recovery（用户已确认：手动返回）**：监视器 `polls=245`（≈自启动 503 s）才检测到设备。
   **因此 400 s 自动复位没有生效**。注意：auto-reset 线程在发 PSCI 前也调用 `IOLog`
   （`CheeseburgerAutoReset.cpp:24/31`），所以“控制台/msgbuf 锁被卡住”同样会让 auto-reset 停在 IOLog，
@@ -125,7 +133,7 @@
 | 5 | 门禁“firmware pin scan has no hit” | FD 是压缩容器，直接扫 FD 找不到 hash；改为扫 VM 构建树的 `FV/FVMAIN.Fv`/FFS/`.efi`（`out/p21/fb-qup3/scan-pins.py`） | 已解决 |
 | 6 | CP `rbRead=0`、无 CP 错误中断 | 已对比 sagit/Linux：`RB_CNTL`、`ME_INIT` 包、instr base 一致；下一假设 secure 模式（`TrustControl=1`）与 CB0 `SCTLR`（`0x1167` 有 CFIE/HUPCF，`0x1027` 对齐 sagit） | **未解决** |
 | 7 | reset 前 idle 检查失败（rc=-2） | VBIF 停流 ack 后 `Status` 非 idle；已加 20×10 ms 重试并记录 `Status/MEControl/VBIFHalted` 原值（`GCP7`） | 部分缓解，根因未定 |
-| 8 | `CB GPU start: begin` 之后日志中断（151 s 轮黑屏手动回；99 s 轮亦为用户手动返回） | 两次都发生在 begin 后的 8 s 等待内、**均无 GPU 写**；99 s 轮不在 PMRD 窗口（PMRD 69–72 s 已结束），PMRD 归因可排除。共同点：5 次 SMMU 映射完成后立即 begin 打印；两轮中断的 begin 行都是 6 参数长行，两轮正常走完的是 3 参数短行 | **未解决**，优先验证控制台长行/锁假设 |
+| 8 | `CB GPU start: begin` 之后日志中断（151 s 轮黑屏手动回；99 s 轮亦为用户手动返回） | 两次都发生在 begin 后的 8 s 等待内；从代码顺序与已持久证据看未观察到 reset 写入（不能证明其后未执行）；99 s 轮不在 PMRD 窗口（PMRD 69–72 s 已结束），PMRD 归因可排除。共同点：5 次 SMMU 映射完成后立即 begin 打印；两轮中断的 begin 行都是 6 参数长行，两轮正常走完的是 3 参数短行 | **未解决**，优先验证控制台长行/锁假设 |
 | 9 | 持久日志 writer 在关键打印后停止；400 s auto-reset 未执行 | 最后一条恰是我们的 IOLog；writer 下一轮（~5 s 后）也没写。auto-reset 在 PSCI 前本身会 `IOLog`，控制台锁卡住同样能阻止复位，因此“手动返回”不能证明 SoC 完全停住 | **未解决** |
 
 ## 4. 当前状态（重点）
@@ -174,8 +182,9 @@
    - `CP_RB_CNTL = 12 | (2<<8) | (1<<27)` 与 Linux `MSM_GPU_RB_CNTL_DEFAULT|NO_UPDATE` 的字段位置；
    - `CP_ME_INSTR_BASE_LO/HI`(0x838/0x839)、`CP_PFP_INSTR_BASE_LO/HI`(0x835/0x836)、
      `CP_RB_BASE`(0x800/0x801)、`CP_RB_RPTR/WPTR`(0x806/0x807)；
-   - CB0 `SCTLR=0x1027` 的位定义（M|TRE|AFE|CFRE|S1_ASIDPNE，CFCFG=0 为 stall）与 `0x1167`
-     （额外 CFIE/HUPCF）的差异是否被正确理解；
+   - CB0 `SCTLR` 的逐 bit 解码：按 `arm-smmu.h`，`0x1027 = M(0)|TRE(1)|AFE(2)|CFRE(5)|S1_ASIDPNE(12)`；
+     `0x1167 = 0x1027 | CFIE(6) | HUPCF(8)`（差值 `0x140`）。**不要断言各 fault 位的运行时语义**，
+     需按本机 SMMU 实现核定；
    - 40-bit IA + 4 KiB granule 的起始层级（`firstLevel=0`，shift=39/30/21/12）。
 2. **日志证据是否被如实引用**：抽查 boot ID（`0x50b0c185`、`0x5121380b`、`0x50993220`、`0x5230df48`）
    与 `out/p21/persistent-logs/<UTC>/retrieval.json` 是否一致；本轮日志是否已回收。
