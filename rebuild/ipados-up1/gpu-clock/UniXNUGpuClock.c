@@ -310,6 +310,10 @@ UniXnuGpuPowerEnable (
   }
   PowerDomain (&Log, "VDD_HLOS1_GPU_SMMU");
   PowerDomain (&Log, "VDD_HLOS2_GPU_SMMU");
+  // The SMMU domains are up; give their GCC branches a client vote so the XNU
+  // probe can read bank 0 without touching an unclocked block.
+  PowerClock (&Log, "gcc_hlos1_gpu_smmu_clk");
+  PowerClock (&Log, "gcc_hlos2_gpu_smmu_clk");
   // Keep a client vote on the GCC GPU AHB branch. Do not read GPUCC/GPU here:
   // UEFI's own MMIO map for GCC/GPUCC is not valid for this driver and a
   // direct read raises a synchronous exception. XNU has the mappings.
