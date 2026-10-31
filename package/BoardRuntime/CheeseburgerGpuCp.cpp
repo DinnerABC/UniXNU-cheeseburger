@@ -196,7 +196,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);
   if(start>=2){cb_cp[38]=9;IOSleep(8000);return;}  // log-only: no GPU write
-  int rc=engine.reset(rec);
+  unsigned clearTrust=0;
+  PE_parse_boot_argn("cheeseburger-gpu-trust-clear",&clearTrust,sizeof clearTrust);
+  int rc=engine.reset(rec,clearTrust!=0);
   cb_cp[39]=uint64_t(int32_t(rc));
   cb_cp[40]=rec.vbif;cb_cp[41]=rec.me;
   cb_cp[48]=rec.trust;cb_cp[49]=rec.cpControl;

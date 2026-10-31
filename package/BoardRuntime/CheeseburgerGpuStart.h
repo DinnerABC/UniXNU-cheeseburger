@@ -117,7 +117,7 @@ public:
         haltBestEffort();
     }
 
-    int reset(Record &rec) {
+    int reset(Record &rec, bool clearTrust = false) {
         if (resetDone || abandonedFlag || runningFlag) return fail(rec, -10, 0);
         r.mark("halt");
         wr(VBIFHalt, 15);
@@ -152,13 +152,20 @@ public:
         if (rd(GPMUCM3SysReset) != 1 || rd(GPMUReady) || rd(GPMUError)) return fail(rec, -6, 1);
         r.mark("cm3");
 
-        // No ZAP/PAS handoff in this kernel: take Linux a5xx_gpu.c's fallback
-        // and leave secure mode by clearing RBBM_SECVID_TRUST_CNTL. Verified
-        // semantics on this SoC are still open; the read-back is recorded.
-        wr(TrustControl, 0);
-        rec.trust = rd(TrustControl);
+        // Leaving secure mode by clearing RBBM_SECVID_TRUST_CNTL hung this
+        // SoC's GPU access in the step-marked run, so it is off by default.
+        // Only an explicit opt-in may try it; ZAP/PAS premises come first.
+        if (clearTrust) {
+            r.mark("trustw");
+            wr(TrustControl, 0);
+            r.mark("trustwr");
+            rec.trust = rd(TrustControl);
+        } else {
+            rec.trust = rd(TrustControl);
+        }
         rec.cpControl = rd(CPControl);
-        r.mark("trust");
+        if (clearTrust) r.mark("trust");
+        r.mark("ready");
         rec.stage = 1; rec.rc = 0;
         resetDone = true;
         return 0;

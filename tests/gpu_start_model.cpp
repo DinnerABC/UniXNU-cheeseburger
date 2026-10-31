@@ -104,7 +104,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         check(engine.reset(rec) == 0, "success/reset");
-        check(rec.trust == 0 && rec.cpControl == 0, "success/trust-readback");
+        check(rec.trust == 1 && rec.cpControl == 0, "success/trust-readback");
         volatile uint32_t ring[RingDwords] = {0};
         int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, rec);
         check(rc == 0, "success/start");
@@ -115,9 +115,20 @@ int main() {
               ring[3] == 0x20000000, "success/me-init");
         check(m.reg[CPProtectCntl / 4] == 7 && m.reg[CPAddrModeCntl / 4] == 1, "success/configure");
         check(m.reg[RBControl / 4] == RingControl, "success/rb-control");
-        static const char *const want[] = {"halt", "ack", "idle", "swrst", "cm3", "trust",
+        static const char *const want[] = {"halt", "ack", "idle", "swrst", "cm3", "ready",
                                            "cfg", "addr", "kick", "done"};
         check(marks_are(m, want, 10), "success/marks");
+    }
+    // Explicit secure-mode clear is opt-in and marks the write/read separately.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        check(engine.reset(rec, true) == 0, "trust/reset");
+        static const char *const want[] = {"halt", "ack", "idle", "swrst", "cm3",
+                                           "trustw", "trustwr", "trust", "ready"};
+        check(marks_are(m, want, 9), "trust/marks");
+        check(rec.trust == 0, "trust/readback");
     }
     // Every reset failure keeps CP/VBIF halted and never submits.
     case_reset_failure(Mock::VbifAck, -1, "vbif-ack");
@@ -150,6 +161,6 @@ int main() {
         halted_after_failure(m, "no-reset/halted");
     }
     if (failures) { std::printf("RESULT FAIL %u\n", failures); return 1; }
-    std::printf("RESULT PASS 8/8\n");
+    std::printf("RESULT PASS 9/9\n");
     return 0;
 }
