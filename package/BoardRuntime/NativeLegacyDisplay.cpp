@@ -37,6 +37,73 @@ extern "C" void native_legacy_retirement_observed(IOService *);
 // client reports the GPU copy done (native_legacy_gpu_complete). A refused offer or a failed copy uses the CPU copy below and is counted.
 extern "C" bool native_legacy_gpu_offer(void *display,IOMemoryDescriptor *,uint64_t stride,uint32_t width,uint32_t height);
 extern "C" void native_legacy_gpu_fallback_observed(int status);
+// MDP5 direct scanout (zero-copy page flip). The firmware GOP scans one buffer
+// through a VIG/RGB pipe into LM0; instead of copying the next IOSurface into
+// that GOP buffer, point the same pipe at the surface and flush the CTL, as the
+// Linux mdp5 commit sequence does. Register offsets are the msm8998 MDP5
+// catalog: MDSS 0xc900000, MDP 0xc901000, CTL 0x1000+0x200*i, VIG 0x4000+0x2000*i,
+// RGB 0x14000+0x2000*i, DMA 0x24000+0x2000*i; PIPE_SRC0_ADDR +0x14,
+// PIPE_SRC_STRIDE_A +0x24, PIPE_CURRENT_SRC0_ADDR +0xa4, CTL_FLUSH +0x18,
+// CTL_START +0x1c. Gated by cheeseburger-fb-flip=1; any mismatch falls back to
+// the CPU copy, so a wrong pipe or a non-contiguous surface cannot black the
+// panel by itself.
+extern "C" { extern volatile uint64_t cb_disp[128] __attribute__((weak_import)); }
+namespace flippath {
+struct Win {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
+static Win mdp;
+static bool ready,found;
+static int ctl=-1;
+static uint32_t pipeOff,pipeBit,gopStride;
+static uint32_t gopAddr,lastAddr;
+static bool attach(){
+ IODeviceMemory *m=IODeviceMemory::withRange(0xc900000,0x100000);
+ mdp.map=m?m->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;OSSafeReleaseNULL(m);
+ mdp.v=mdp.map?(volatile uint32_t*)mdp.map->getVirtualAddress():nullptr;
+ return mdp.v;
+}
+static uint32_t rd(uint32_t off){uint32_t x=mdp.v[off/4];__asm__ volatile("dmb sy":::"memory");return x;}
+static void wr(uint32_t off,uint32_t x){mdp.v[off/4]=x;__asm__ volatile("dsb sy":::"memory");}
+static const uint32_t kPipes[8]={0x5000,0x7000,0x9000,0xb000,0x15000,0x17000,0x25000,0x27000};
+static const uint32_t kBits[8]={0x1,0x2,0x4,0x8,0x10,0x20,0x800,0x1000};
+// Find the pipe the firmware scans the GOP buffer with; remember its original
+// stride so a failed flip can put the pipe back exactly where it was.
+static bool prepare(uint32_t gop){
+ if(!ready){ready=true;found=false;if(!attach())return false;
+  for(unsigned i=0;i<8;++i){if(rd(kPipes[i]+0x14)==gop){pipeOff=kPipes[i];pipeBit=kBits[i];gopAddr=gop;
+   gopStride=rd(pipeOff+0x24);found=true;if(&cb_disp[0])cb_disp[123]|=0x10000u;break;}}
+  if(!found)return false;}
+ return found && gopAddr==gop && rd(pipeOff+0x14)==gop;
+}
+static void restore(uint32_t addr,uint32_t stride){
+ wr(pipeOff+0x14,addr);wr(pipeOff+0x24,stride);
+ if(ctl>=0){uint32_t b=0x2000+0x200u*unsigned(ctl);wr(b+0x18,pipeBit|0x40u);wr(b+0x1c,1);}
+}
+static bool commit(uint32_t addr,uint32_t stride){
+ uint32_t mask=pipeBit|0x40u;           // pipe + LM0
+ if(ctl<0){
+  for(int c=0;c<5;++c){uint32_t b=0x2000+0x200u*unsigned(c);
+   wr(pipeOff+0x14,addr);wr(pipeOff+0x24,stride);wr(b+0x18,mask);wr(b+0x1c,1);
+   for(unsigned i=0;i<20;++i){IODelay(1000);if(rd(pipeOff+0xa4)==addr){ctl=c;return true;}}
+  }
+  restore(gopAddr,gopStride);return false;
+ }
+ uint32_t b=0x2000+0x200u*unsigned(ctl);
+ wr(pipeOff+0x14,addr);wr(pipeOff+0x24,stride);wr(b+0x18,mask);wr(b+0x1c,1);
+ for(unsigned i=0;i<20;++i){IODelay(1000);if(rd(pipeOff+0xa4)==addr)return true;}
+ restore(gopAddr,gopStride);return false;
+}
+// Present a contiguous surface without copying; false means "use the copy".
+static bool present(IOMemoryDescriptor *memory,uint64_t stride,uint32_t width,uint32_t height,uint32_t gop){
+ if(!memory||!stride||!width||!height)return false;
+ if(!prepare(gop))return false;
+ if(stride*height>(uint64_t)memory->getLength()||stride>0xffffu)return false;
+ IOByteCount len=0;IOPhysicalAddress pa=memory->getPhysicalSegment(0,&len,kIOMemoryMapperNone);
+ if(!pa||len<stride*(uint64_t)height)return false;
+ if((uint32_t)pa==lastAddr)return true;             // same buffer as last frame
+ if(!commit((uint32_t)pa,(uint32_t)stride))return false;
+ lastAddr=(uint32_t)pa;return true;
+}
+}
 // Swaps retired when the GPU client took the frame (before its copy finished), and copies that then failed after such a retirement.
 extern "C" {volatile uint64_t native_legacy_early_retires,native_legacy_early_failures;}
 // Display refresh tick (boot-arg sheng-vsync=<Hz>, 0 or absent: off). The original family sends the compositor's vsync message (type 5)
@@ -329,6 +396,15 @@ public:
         // as the CPU copy (int-093: accepted swaps were GPU-copied under a page that kept drawing).
         if(!gpuBypass) {
             if(!native_legacy_prepare_scanout()) {native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;}
+        }
+        {
+            static int flipOn=-1;
+            if(flipOn<0){unsigned v=0;PE_parse_boot_argn("cheeseburger-fb-flip",&v,sizeof v);flipOn=(v==1);}
+            if(flipOn && !gpuBypass && flippath::present(memory,sourceStride,width,height,(uint32_t)video.v_baseAddr)) {
+                if(&cb_disp[0])++cb_disp[126];
+                transferred=true;native_legacy_transfer_observed(kIOReturnSuccess,request,length);finishTransfer(request);return;
+            }
+            if(flipOn && &cb_disp[0])++cb_disp[127];
         }
         if(!gpuBypass && native_legacy_gpu_offer(this,memory,sourceStride,width,height)) {
             // The GPU writes the scanout memory behind the CPU's back: the differential copy's picture of it is stale from now on.
