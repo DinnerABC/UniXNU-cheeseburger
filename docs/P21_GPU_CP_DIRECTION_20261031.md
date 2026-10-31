@@ -54,6 +54,19 @@
    `CheeseburgerAutoReset` 线程的关系；关键路径移除 IOLog，仅用 `cb_cp` 行。
 5. 验收：失败分支均可在 host 测试复现；源码中不存在“失败后继续 unhalt/kick”的路径。
 
+### P1 执行状态（2026-10-31 已完成，host-verified）
+
+- 新增 `package/BoardRuntime/CheeseburgerGpuStart.h`：把 `reset/configure/start` 抽成模板（寄存器访问器注入），
+  `CheeseburgerGpuCp.cpp` 改为 `Startup<Mmio>`；失败统一进入 `fail()`：记录原因、标记 abandoned、
+  写 `MEControl=Halt`/`VBIFHalt=15`，**绝不 unhalt 或再次提交**；kick 超时也会重新 halt（相对旧实现的行为变化）。
+- 新增 `tests/gpu_start_model.cpp` + `scripts/run-gpu-start-model-test.py`：host 寄存器模型覆盖 8 个用例
+  （成功路径、VBIF ack 超时、idle 失败、MEControl 非 halt、SW reset 回读失败、CM3 失败、kick 超时、
+  未 reset 直接 start）。结果 **HOST_MODEL_PASS 8/8**，记录
+  `out/p21/gpu-cp/host-tests/20261031T115416Z/result.json`（含源码/头文件/二进制哈希与编译器版本）。
+- 内核已用新模板重编通过（`native/kernel.macho` `fb78e5c4…`，**未打包、未启动**；候选镜像仍为冻结的
+  `aea9a9fa…`，未受影响）。
+- 未做：真机验证（依赖 P2 的独立存活判据）。
+
 ## P2 可观察性：独立存活判据（需用户确认通道与授权）
 
 问题（审计发现 7）：auto-reset 在 SMC 前调用 `IOLog`，console 锁卡住也会阻止复位；

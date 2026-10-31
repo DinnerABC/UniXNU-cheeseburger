@@ -13,6 +13,7 @@
 #include <string.h>
 #if __has_include("CheeseburgerGpuFirmware.h")
 #include "CheeseburgerGpuFirmware.h"
+#include "CheeseburgerGpuStart.h"
 #define CB_GPU_FW 1
 #else
 static const unsigned char gpu_firmware_blob[1]={0};
@@ -99,126 +100,21 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  ++seq;return r==0;
 }
 static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<64;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
-// ---- CP reset/configure/start, ported from the pinned sagit AdrenoStartup.h
-// (Linux v6.12 a5xx_gpu.c). Registers here are DWORD indices in the sagit
-// enum, so each access multiplies by four.
-static constexpr uint32_t kRBBase=0x800*4,kRBControl=0x802*4,kRBRead=0x806*4,kRBWrite=0x807*4,
- kMEControl=0x832*4,kPFPBase=0x835*4,kMEBase=0x838*4,kContextSwitch=0x83b*4,
- kCPInterruptStatus=0xb18*4,kInterruptClear=0x37*4,kInterruptMask=0x38*4,
- kInterruptStatus=0x4e1*4,kStatus=0x4f5*4,kStatus3=0x530*4,
- kTrustControl=0xf400*4,kGPMUReady=0xa8e0*4,kGPMUError=0xa8e1*4,
- kVBIFHalt=0x3080*4,kVBIFHalted=0x3081*4,kRBBMSwReset=0x43*4,kGPMUCM3SysReset=0xa8d8*4;
-static constexpr uint32_t kHalt=0x303u,kRingControl=12u|(2u<<8)|(1u<<27),
- kErrorIRQs=0x7e|(1u<<9)|(1u<<23)|(1u<<24)|(1u<<25)|(1u<<28),
- kOwnedIRQs=(1u<<20)|0x7e|(1u<<9)|(1u<<23)|(1u<<24)|(1u<<25)|(1u<<28);
-static uint32_t packet7(uint32_t op,uint32_t n){return 0x70000000u|n|(parity(n)<<15)|(op<<16)|(parity(op)<<23);}
-static uint32_t protect(uint32_t base,unsigned log2){return 0x60000000u|(uint32_t(log2)<<24)|(base<<2);}
-static bool idleStatus(uint32_t s){return !(s&~0x800001c1u);}
-struct G {
+// The reset/configure/start state machine lives in CheeseburgerGpuStart.h so a
+// host register model can inject every failure point offline.
+struct Mmio {
  volatile uint32_t *v=nullptr;
- uint32_t rd(uint32_t o){uint32_t x=v[o/4];__asm__ volatile("dmb sy":::"memory");return x;}
- void wr(uint32_t o,uint32_t x){__asm__ volatile("dsb sy":::"memory");v[o/4]=x;__asm__ volatile("dsb sy":::"memory");}
+ uint32_t read(uint32_t o){uint32_t x=v[o/4];__asm__ volatile("dmb sy":::"memory");return x;}
+ void write(uint32_t o,uint32_t x){__asm__ volatile("dsb sy":::"memory");v[o/4]=x;__asm__ volatile("dsb sy":::"memory");}
  void delay(unsigned us){IODelay(us);}
  void publish(){__asm__ volatile("dsb oshst":::"memory");}
+ void clean(volatile void *p,unsigned n){flush_dcache((vm_offset_t)p,n,FALSE);}
 };
-static void configure(G &g){
- g.wr(0x3049*4,3);g.wr(0x302a*4,9);                 // VBIF round-robin, gate-off WRREQ
- g.wr(0x46f*4,0xffffffff);g.wr(0x93*4,1);g.wr(0x2f*4,0x4000ffff);
- g.wr(0x464*4,1);g.wr(0xbb0*4,0);g.wr(0x46b*4,6);
- g.wr(0xe96*4,2);
- g.wr(0xe89*4,0xffff0000);g.wr(0xe8a*4,0x1ffff);
- g.wr(0xe87*4,0xffff0000);g.wr(0xe88*4,0x1ffff);
- g.wr(0xe8b*4,0x100000);g.wr(0xe8c*4,0);g.wr(0xe8d*4,0x1fffff);g.wr(0xe8e*4,0);
- g.wr(0x825*4,0x40);g.wr(0x826*4,0x400);
- g.wr(0x820*4,0x80000060);g.wr(0x81f*4,0x40201b16);
- g.wr(0xd00*4,(0x400u<<11)|(0x300u<<22));
- g.wr(0xe81*4,1u<<29);g.wr(0x833*4,0x02000000);g.wr(0x94*4,0xa6ffffff);
- // hardwareClockGating(true) deliberately omitted: it only adds per-block
- // gating; the reset default keeps functional clocks running.
- g.wr(0x95*4,0x3f);g.wr(0xf02*4,2u<<7);g.wr(0xcc6*4,2u<<1);g.wr(0xe8f*4,2);
- g.wr(0x8a0*4,7);
- g.wr(0xe60*4,g.rd(0xe60*4)|(1u<<10)|(1u<<23));
- g.wr(0xe04*4,g.rd(0xe04*4)&~(1u<<18));
- static const struct {uint32_t base;unsigned log2;} cpProtect[]={
-  {0x4,2},{0x8,3},{0x10,4},{0x20,5},{0x40,6},{0x80,6},{0xf800,4},{0xf400,1},{0x800,6},
-  {0x840,3},{0x880,5},{0xaa0,0},{0xcc0,0},{0xcf0,1},{0xe68,3},{0xe70,4},{0xe80,4},{0x10000,15}};
- for(unsigned i=0;i<sizeof cpProtect/sizeof cpProtect[0];++i)
-  g.wr((0x880+i)*4,protect(cpProtect[i].base,cpProtect[i].log2));
- g.wr(0xf803*4,0);g.wr(0xf800*4,0);g.wr(0xf801*4,0);g.wr(0xf802*4,0);
- g.wr(0x860*4,1);g.wr(0xbc1*4,1);g.wr(0xc81*4,1);g.wr(0xcc5*4,1);
- g.wr(0xd01*4,1);g.wr(0xe05*4,1);g.wr(0xe41*4,1);g.wr(0xe61*4,1);
- g.wr(0xe80*4,1);g.wr(0xec1*4,1);g.wr(0xf01*4,1);g.wr(0xf810*4,1);
-}
-static int gpuReset(G &g){
- g.wr(kVBIFHalt,15);
- unsigned waited=0;while((g.rd(kVBIFHalted)&15)!=15){if(waited>=100000)return -1;g.delay(10);waited+=10;}
- cb_cp[40]=g.rd(kVBIFHalted);
- cb_cp[60]=g.rd(kMEControl);
- cb_cp[61]=g.rd(kVBIFHalted);
- // The previous run failed here with no fault interrupt; the drain busy bit
- // can lag the halt ack by microseconds, so sample before declaring failure.
- uint32_t status=g.rd(kStatus);
- unsigned retries=0;
- while(!idleStatus(status)&&retries<20){g.delay(10000);status=g.rd(kStatus);++retries;}
- cb_cp[59]=status;cb_cp[62]=retries;
- if(!idleStatus(status))return -2;
- if((g.rd(kMEControl)&kHalt)!=kHalt)return -3;
- g.wr(kRBBMSwReset,1);(void)g.rd(kRBBMSwReset);g.wr(kRBBMSwReset,0);
- g.wr(kInterruptMask,0);g.wr(kMEControl,kHalt);g.wr(kVBIFHalt,15);
- waited=0;while(((g.rd(kMEControl)&kHalt)!=kHalt)||((g.rd(kVBIFHalted)&15)!=15)){
-  if(waited>=100000)return -4;g.delay(10);waited+=10;}
- if(g.rd(kRBBMSwReset)||g.rd(kRBRead)||g.rd(kRBWrite)||g.rd(kContextSwitch)||g.rd(kTrustControl)>1)return -5;
- g.wr(kGPMUCM3SysReset,1);g.wr(kGPMUReady,0);g.wr(kGPMUError,0);
- if(g.rd(kGPMUCM3SysReset)!=1||g.rd(kGPMUReady)||g.rd(kGPMUError))return -6;
- cb_cp[41]=g.rd(kMEControl);
- // No ZAP/PAS handoff in this kernel, so take Linux a5xx_gpu.c's fallback
- // and leave secure mode by clearing RBBM_SECVID_TRUST_CNTL. sagit's submit
- // path also refuses to run while TrustControl is non-zero.
- g.wr(kTrustControl,0);
- cb_cp[48]=g.rd(kTrustControl);
- cb_cp[49]=g.rd(0x831*4); // CP_CNTL baseline must be zero
- return 0;
-}
-static void captureFaults(G &g){
- cb_cp[50]=g.rd(0xb1a*4); // CP_HW_FAULT
- cb_cp[51]=g.rd(0xb1c*4); // CP_PROTECT_STATUS
- cb_cp[52]=g.rd(0xb1b*4); // CP_AHB_FAULT
+static void captureFaults(Mmio &m){
+ cb_cp[50]=m.read(CheeseburgerGpu::CPHwFault);
+ cb_cp[51]=m.read(CheeseburgerGpu::CPProtectStatus);
+ cb_cp[52]=m.read(CheeseburgerGpu::CPAhbFault);
  W sm;if(mapw(sm,0x5040000,0x10000)){cb_cp[53]=rd(sm,0x8058);cb_cp[54]=rd(sm,0x48);}
-}
-// Loads the CP microcode addresses and submits CP_ME_INIT, so a true result
-// means the CP firmware actually advanced RBRead through the ring.
-static int gpuStart(G &g,volatile uint32_t *ring,unsigned ringDwords,uint64_t ringVA,uint64_t pm4VA,uint64_t pfpVA){
- if(ringDwords!=8192||(ringVA&4095)||(pm4VA&4095)||(pfpVA&4095))return -1;
- for(unsigned i=0;i<ringDwords;++i)ring[i]=0;
- configure(g);
- g.wr(kMEBase,uint32_t(pm4VA));g.wr(kMEBase+4,uint32_t(pm4VA>>32));
- g.wr(kPFPBase,uint32_t(pfpVA));g.wr(kPFPBase+4,uint32_t(pfpVA>>32));
- g.wr(kRBBase,uint32_t(ringVA));g.wr(kRBBase+4,uint32_t(ringVA>>32));
- g.wr(kContextSwitch,0);g.wr(kRBControl,kRingControl);g.wr(kRBWrite,0);
- g.wr(kInterruptMask,0);g.wr(kInterruptClear,kOwnedIRQs);
- if(g.rd(kMEBase)!=uint32_t(pm4VA)||g.rd(kPFPBase)!=uint32_t(pfpVA)||g.rd(kRBBase)!=uint32_t(ringVA)||
-    g.rd(kRBControl)!=kRingControl||g.rd(kRBRead)||g.rd(kRBWrite)||g.rd(kContextSwitch)||
-    g.rd(0x860*4)!=1||g.rd(0x8a0*4)!=7)return -2;
- unsigned cursor=0;
- ring[cursor++]=packet7(0x48,8); // CP_ME_INIT, A540 payload
- static const uint32_t init[]={0x2f,3,0x20000000,0,0,0,0,0};
- for(unsigned i=0;i<sizeof init/sizeof init[0];++i)ring[cursor++]=init[i];
- flush_dcache((vm_offset_t)ring,ringDwords*4,FALSE);
- g.publish();g.wr(kVBIFHalt,0);g.wr(kMEControl,0);
- g.publish();g.wr(kRBWrite,cursor);
- for(unsigned waited=0;waited<300000;waited+=10){
-  const uint32_t irq=g.rd(kInterruptStatus),cpirq=g.rd(kCPInterruptStatus);
-  if((irq&kErrorIRQs)||(cpirq&0x3f)){cb_cp[44]=irq;cb_cp[45]=cpirq;return -3;}
-  const uint32_t read=g.rd(kRBRead);
-  if(read==cursor&&!(g.rd(kStatus)&~1u)&&!(g.rd(kStatus3)&(1u<<24))){
-   cb_cp[42]=read;cb_cp[43]=g.rd(kRBWrite);captureFaults(g);return 0;}
-  g.delay(10);
- }
- cb_cp[42]=g.rd(kRBRead);cb_cp[43]=g.rd(kRBWrite);
- cb_cp[44]=g.rd(kInterruptStatus);cb_cp[45]=g.rd(kCPInterruptStatus);
- cb_cp[46]=g.rd(kStatus3);cb_cp[47]=g.rd(kStatus);
- captureFaults(g);
- return -4;
 }
 }
 extern "C" void cheeseburger_gpu_cp_probe(void){
@@ -282,27 +178,32 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  // starts real firmware DMA, unlike the read-only mapping probe above.
  unsigned start=0;
  if(PE_parse_boot_argn("cheeseburger-gpu-start",&start,sizeof start)&&start&&gp.v){
-  G g;g.v=gp.v;
+  Mmio m;m.v=gp.v;
+  CheeseburgerGpu::Startup<Mmio> engine(m);
+  CheeseburgerGpu::Record rec;
   cb_cp[38]=1;cb_cp[39]=0;
-  // GPUCC power state at start time: GX/CX collapse would explain a register
-  // state drift between the snapshot and the reset.
-  // Reuse the probe's GPUCC snapshot instead of mapping GPUCC again here:
-  // the extra GPUCC mapping coincided with a PMRD power-state transition.
+  // Reuse the probe's GPUCC snapshot; sampling time is the GPU probe, not the
+  // reset. The snapshot is recorded as-is and must not be read as a live value.
   cb_cp[56]=cb_gpu[11];cb_cp[57]=cb_gpu[19];cb_cp[58]=cb_gpu[20];
   IOLog("CB GPU start: begin ring=%llx pm4=%llx pfp=%llx cx=%x gx=%x gfx=%x\n",
    ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);
-  int rc=gpuReset(g);
+  int rc=engine.reset(rec);
   cb_cp[39]=uint64_t(int32_t(rc));
+  cb_cp[40]=rec.vbif;cb_cp[41]=rec.me;
+  cb_cp[48]=rec.trust;cb_cp[49]=rec.cpControl;
+  cb_cp[59]=rec.status;cb_cp[60]=rec.me;cb_cp[61]=rec.vbif;cb_cp[62]=rec.retries;
   IOLog("CB GPU start: reset rc=%d me=%x vbif=%x st=%x ry=%u trust=%x cpcnl=%x\n",rc,
    uint32_t(cb_cp[60]),uint32_t(cb_cp[61]),uint32_t(cb_cp[59]),unsigned(cb_cp[62]),
    uint32_t(cb_cp[48]),uint32_t(cb_cp[49]));
   IOSleep(8000);
   if(rc==0){
    cb_cp[38]=2;
-   rc=gpuStart(g,(volatile uint32_t*)ring.va,ring.bytes/4,ring.gva,pm4.gva,pfp.gva);
+   rc=engine.start((volatile uint32_t*)ring.va,ring.bytes/4,ring.gva,pm4.gva,pfp.gva,rec);
    cb_cp[38]=3;cb_cp[39]=uint64_t(int32_t(rc));
-   cb_cp[46]=g.rd(kStatus3);cb_cp[47]=g.rd(kStatus);
+   cb_cp[42]=rec.read;cb_cp[43]=rec.write;cb_cp[44]=rec.irq;cb_cp[45]=rec.cpIrq;
+   cb_cp[46]=m.read(CheeseburgerGpu::Status3);cb_cp[47]=m.read(CheeseburgerGpu::Status);
+   captureFaults(m);
    IOLog("CB GPU start: kick rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x\n",rc,
     uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
     uint32_t(cb_cp[47]),uint32_t(cb_cp[46]));
