@@ -88,6 +88,20 @@
   其余不变；同时记录心跳、console、auto-reset 状态。每次只改一个变量。
 - 验收：一次故障后能明确回答“98.7 s 之后内核是否仍在运行”，不依赖 console 与 log writer。
 
+### P2 执行状态（2026-10-31，实现完成，A/B 结果待回收）
+
+- **心跳块**：`BootLog.c` 在日志窗口**最后一个空闲块**（`window_blocks-1`，不落在 header/msg/slot 区域）
+  直接用 `native_ufs_log_write`+`sync` 写 `CBHB0001 boot=… seq=… sec=… tag=… state=… rounds=…`，
+  独立线程每 10 s 一次，**不经过 msgbuf/console**。`CheeseburgerAutoReset` 在最终 `IOLog` 之前写 `tag=mark`、
+  在 PSCI SMC 之前写 `tag=smc`。
+- **读取**：`scripts/logging/heartbeat_record.py` 解析；`read-cheeseburger-log.py` 把结果写入
+  `retrieval.json.heartbeat` 与 `decoded/<boot>/heartbeat.json`。codec 自测 `tests/test_heartbeat_codec.py` 7/7。
+- **受控模式**：`cheeseburger-gpu-start=1` 完整启动；`=2` 只打印长 begin 行后返回（无 GPU 写）；
+  `=3` 只打印短 begin 行后返回。A/B 只改行长度、关闭 CP 写。
+- 已构建候选 A（`start=3`，短行）：内核 `dbd69e17…`（native `6133c8d5…`）；本轮结果待回收。
+- **限制**：心跳与日志 writer 共用 UFS 驱动，只能区分“console/msgbuf 路径停住”与“内核/UFS 整体停住”；
+  普通 RAM 标记仍不作为证据；不使用窗口外写入。
+
 ## P3 SMMU 与 CP 前置验证（硬件，待 P2 判据可用）
 
 问题（审计发现 4/5/9）：五映射只证明软件建表/TLB 报告成功；configure 只回读关键子集；

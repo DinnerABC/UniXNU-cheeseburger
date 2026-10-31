@@ -74,6 +74,11 @@ Images, private logs and signing material stay out of Git.
 - Do not repeat CP reset/kick on a shared running system without an independent
   liveness criterion (console, the same UFS log writer and plain RAM counters
   are not independent). Prove the observation channel first.
+- The CBHB block at the last block of the authorized log window is the current
+  console/msgbuf-independent heartbeat (`cheeseburger_bootlog_heartbeat`, 10 s;
+  auto-reset writes `mark`/`smc` before its IOLog and SMC). It still shares the
+  UFS driver: prove its cadence in a healthy boot before reading a fault boot,
+  and keep the console and heartbeat evidence separate.
 - Do not bypass secure-mode/ZAP protections to manufacture a success; confirm
   the real firmware/ZAP premises for this SoC first.
 - Keep the `gfx3d` rate at the proven baseline (rate=0) until CP/GPMU and a
