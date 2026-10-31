@@ -130,6 +130,14 @@
   PTE 查询少下潜一级（已修源码），下一轮验证叶子 PTE。
 - CP 仍 `RBRead=0`、trust=1、无 fault；secure 模式/ZAP/PAS 是下一个决策点。
 
+### 第一轮合并修正结果与下一分支（2026-10-31）
+
+- boot `0x51cd61ff`：TTBR hi=1 由 root PA>4 GiB 解释、S2CR 原始值为 0、叶子 PTE 指向 ring PA；
+  reset/configure/地址/页表/stream 已自洽；`RPTR=0`、无 fault、`trust=1`。
+- 已确认 ZAP/PAS 缺失：DTB 有 `qcom,zap-shader`/`ga540_zap`，sagit 用 PAS-13，本机无装载链路。
+- 下一分支：实现 PAS/ZAP（建议 XNU 端口，sagit 已验证 SCM/PAS 可从 XNU 发出），先离线移植传输层与 ZAP loader
+  并做 host 测试，再一次受控启动验证 `TrustControl` 与 `RPTR`。
+
 ## P3 SMMU 与 CP 前置验证（硬件，待 P2 判据可用）
 
 问题（审计发现 4/5/9）：五映射只证明软件建表/TLB 报告成功；configure 只回读关键子集；

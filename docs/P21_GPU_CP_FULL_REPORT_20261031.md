@@ -48,6 +48,36 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
   旧 `out/p21/fb-qup3/offline-gate.json`（a4af3b18…）与 `pins.json`（f9bafc4d…）已标记失效。
 - 私有输入（不提交）：`out/p21/gpu/firmware/`（a530_pfp/pm4、a540_gpmu.fw2、a540_zap.*）。
 
+### 2.10 第一轮合并修正结果（2026-10-31，boot `0x51cd61ff`）
+
+- 镜像 `1ad823ea…`、内核 `5b488ddb…`、payload `fc2a3198…`、固件 `58a2373f…`，66 rounds，自动复位、无黑屏。
+- 心跳分区生效：step 记录 `cm3/ready/cfg/addr/kick/fail` 与 tick 分槽；读取端 `foreign=1`（旧 boot 槽被正确过滤）、
+  `empty=0`、各 tag 序号缺口为 0。
+- `GCP10 ttbr=204a7000/1 smr=80000000 s2cr=0 pte=6000010a23ce43 root=1204a7000 ringpa=10a23c000 fsr=400 gfsr=0`：
+  - **TTBR hi=1 是正确值**：root PA=`0x1204a7000`（>4 GiB），因此高字应为 1；此前“异常”是推断错误。
+  - **S2CR=0**（`%x` 原始读回）：此前的 `fffffff7…` 是 64 位打印伪影。
+  - 叶子 PTE=`0x6000010a23ce43`，地址部分=`0x10a23c000`=`ringpa`，属性位与既有设置一致。
+- `GCP8` 仍全部正确；`GCP5 rc=-4 r=0 w=9`；`GCP6 trust=1`、CP/SMMU fault 均 0；`KEY` 单页汇总行正常。
+- **结论**：reset/configure/地址/页表/stream 已确认自洽；`RPTR` 仍不前进，且无 fault。
+
+### 2.11 ZAP/PAS 依赖核对（2026-10-31，离线）
+
+- Android DTB 含 `qcom,kgsl-3d0@5000000`、`qcom,zap-shader`、`ga540_zap`；vendor 分区已取得
+  `a540_zap.mdt/.elf/.b00/.b01/.b02`（.mdt/.elf/.b00 均为 ELF；.b01/.b02 为段）。
+- 同 SoC 参考 sagit 在 XNU 内实现 `QcomSCM`（`SCMPAS.h` 的 SMCCC PAS 传输：service 2 cmd 1/2/5/6，
+  service 1 cmd 10 resume，service 6 availability probe）与 `QcomGPUSecure`；其 GPU 启动前置为
+  “platform lease → VBIF 停流 → **PAS/ZAP 认证 resume** → SMMU/CP”。ZAP 的 init/setup/auth 由 pre-XNU EFI loader
+  或 QcomSCM 客户端完成，GPU 只负责 resume。
+- 本机现状：UEFI（sheng）与 XNU 均**没有** PAS/ZAP 装载链路；`TrustControl=1`，强制写该寄存器会卡死。
+  因此“CP 不取 ring”的**首要缺失依赖已明确为 secure world 的 ZAP/PAS 认证**（仍未证明是唯一原因）。
+- 可选实现路线：
+  1. **XNU 内 PAS 端口**（推荐）：移植 sagit `SCMPAS.h`/`SMCCC.h` 的 Transport/PAS，新增最小 ZAP loader
+     （私有固件块），依次 PAS init→setup/auth→resume，再做 CP reset/start。sagit 已证明 XNU 可发 SCM/PAS；
+     需要核准 ZAP 段装载地址/是否可重定位与 carveout 语义。
+  2. **UEFI pre-XNU loader**：更贴近 sagit 架构（EFI 侧完成 ZAP 认证后交给 XNU），但需确认 sheng EFIScm 可用、
+     把 ZAP 纳入 payload/ESP 并做 handoff；改动面更大。
+- 约束：不写 `TRUST_CNTL` 绕过；使用设备原始 ZAP 与 PAS ABI；PAS 失败/超时按 QcomSecure 语义隔离，不伪造成功。
+
 ## 3. 轮次表（全部为实机日志）
 
 | 轮次 | boot ID | 镜像/内核（前 12/12） | 关键配置 | 结果 |
