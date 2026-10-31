@@ -138,24 +138,28 @@ static void powerCore(W &gp, volatile uint64_t *out){
  }
  out[4]=rd(gp,0xa88d*4);out[5]=rd(gp,0xa88b*4);
 }
-static void captureFaults(Mmio &m){
+static void captureGpuFaults(Mmio &m){
  cb_cp[50]=m.read(CheeseburgerGpu::CPHwFault);
  cb_cp[51]=m.read(CheeseburgerGpu::CPProtectStatus);
  cb_cp[52]=m.read(CheeseburgerGpu::CPAhbFault);
+}
+// SMMU registers live behind their own client; keep this callable after a
+// failed kick when GPU MMIO may be unsafe.
+static void captureSmmuFaults(){
  W sm;if(mapw(sm,0x5040000,0x10000)){
   cb_cp[53]=rd(sm,0x8058);cb_cp[54]=rd(sm,0x48);
   // Secure stream (SID 2) and both context banks' fault registers: while
-  // TrustControl=1 the CP may be attributed to the secure stream.
+  // TrustControl=1 the CP may be attributed to the secure stream. Only these
+  // registers (and CB0's own page) have been read safely on this board; the
+  // global NS aliases (0x448+) and secure syndromes (0x50+) are left alone
+  // until their EL1 accessibility is verified — reading them stopped a run
+  // before it could return to Recovery.
   cb_cp[89]=rd(sm,0x808);cb_cp[90]=rd(sm,0xc08);
   cb_cp[91]=rd(sm,0x9058);cb_cp[92]=rd(sm,0xa058);
-  // Global and per-stream fault syndromes: while TrustControl=1 the CP may be
-  // attributed to the secure stream, whose faults are not in CB0.
-  cb_cp[96]=rd(sm,0x448);cb_cp[97]=rd(sm,0x450);cb_cp[98]=rd(sm,0x454);cb_cp[99]=rd(sm,0x458);
-  cb_cp[100]=rd(sm,0x50);cb_cp[101]=rd(sm,0x54);cb_cp[102]=rd(sm,0x58);
   cb_cp[103]=rd(sm,0x805c);cb_cp[104]=rd(sm,0x8060);
  }
 }
-}
+}  // namespace
 extern "C" void cheeseburger_gpu_cp_probe(void){
  reset();
  cb_cp[0]=0;
@@ -269,13 +273,20 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    cb_cp[42]=rec.read;cb_cp[43]=rec.write;cb_cp[44]=rec.irq;cb_cp[45]=rec.cpIrq;
    cb_cp[46]=rec.status3;cb_cp[47]=rec.status;cb_cp[60]=rec.me;cb_cp[61]=rec.vbif;
    if(rc!=0){
-    // A failed kick can leave the GPU AHB stalled. The Record already holds
-    // the live values read by the state machine; do not touch GPU or SMMU
-    // registers here or the diagnosis dies with the bus.
-    IOLog("CB GPU start: kick FAILED rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x me=%x vbif=%x src=%x\n",
+    // A failed kick can leave the GPU MMIO unsafe. The Record already holds
+    // the live values; still take the CPU-only scratch snapshot and the
+    // SMMU-only fault registers, which do not touch the GPU bus.
+    __asm__ volatile("dsb sy":::"memory");
+    flush_dcache((vm_offset_t)fence.va,4096,FALSE);
+    __asm__ volatile("dsb sy":::"memory");
+    cb_cp[93]=*(volatile uint32_t*)fence.va;
+    __asm__ volatile("dmb sy":::"memory");
+    captureSmmuFaults();
+    IOLog("CB GPU start: kick FAILED rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x me=%x vbif=%x scratch=%x gfsr=%x s2smr=%x s2s2cr=%x cb0n=%x/%x\n",
      rc,uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
      uint32_t(cb_cp[47]),uint32_t(cb_cp[46]),uint32_t(cb_cp[60]),uint32_t(cb_cp[61]),
-     uint32_t(cb_cp[82]));
+     uint32_t(cb_cp[93]),uint32_t(cb_cp[54]),uint32_t(cb_cp[89]),uint32_t(cb_cp[90]),
+     uint32_t(cb_cp[103]),uint32_t(cb_cp[104]));
     IOSleep(8000);
     return;
    }
@@ -304,7 +315,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    cb_cp[93]=*(volatile uint32_t*)fence.va;
    __asm__ volatile("dmb sy":::"memory");
    cb_cp[94]=m.read(0x831*4);cb_cp[95]=m.read(0x830*4);
-   captureFaults(m);
+   captureGpuFaults(m);captureSmmuFaults();
    IOLog("CB GPU start: kick rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x\n",rc,
     uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
     uint32_t(cb_cp[47]),uint32_t(cb_cp[46]));

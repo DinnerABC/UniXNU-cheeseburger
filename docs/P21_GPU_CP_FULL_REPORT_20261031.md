@@ -377,3 +377,24 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
   只用 Record 中已捕获的 live 值打印 `kick FAILED rc/r/w/irq/cpirq/st/st3/me/vbif` 并返回；
   宿主模型新增 error-IRQ 用例与 posted-write 断言。这样下轮可直接看到首个明确失败点（错误中断或超时），
   不再在总线上丢证据。
+
+### 11.11 第七轮：首个明确失败点（boot `0x5282ff91`，镜像 `7aef58eb…`）
+
+- `CB GPU start: kick FAILED rc=-4 r=0 w=9 irq=0 cpirq=0 st=c00003c1 st3=0 me=404 vbif=e0000 src=0`：
+  **kick 超时，无 CP 错误中断**；失败后 live `MEControl=0x404`（与 reset 后的 0x303 不同）。
+- posted-write 清理生效：心跳 tick 持续到 328 s，`mark/smc` 327/331，66 rounds 自动回；控制台、
+  UFS、心跳都不再因失败清理停住。`SSETUP st=0`、`SMICRO 178/178 result=0`（未处于 halt）。
+- `GCP12/GCP13` 仍为 deadbeef：该轮失败路径有意跳过 GPU/SMMU 读，以保护总线证据。
+- 第八轮：失败路径补 **CPU-only scratch flush+读取**（不碰 GPU MMIO）与 **SMMU-only** fault 读取，
+  在同一行输出 scratch、nsGFSR/nsGFSYNR、secure GFSYNR、CB0 FSYNR；成功路径的 GPU fault
+  读取保持不变。这样既回答 scratch 同步问题，又保留首个失败点。
+
+### 11.12 第八轮未返回与 SMMU 读回撤（boot 未回收，镜像 `d62f67ee…`）
+
+- 本轮在失败路径新增：CPU-only scratch flush+读取、SMMU fault 读取，并把 **未在本机验证过可访问的**
+  SMMU 全局 NS 别名（0x448/0x450/0x454/0x458）与 secure syndrome（0x50/0x54/0x58）加入读取。
+- 结果：临时启动一次后，900 s 监视器超时 `NO_RECOVERY`，ADB/Fastboot 均无设备，macOS 也看不到 USB；
+  本轮新日志尚未回收。**不能据此判断内核停在哪里**；设备需手动回 Recovery 后才能读窗口。
+- 可能原因（未验证）：读取上述 SMMU 寄存器在 EL1 触发总线错误/panic；`--no-reset` 的 panic 路径不会自动
+  复位。已从代码移除这些未验证读取，只保留本机已安全读过的 CB0/S2CR/0x48/0x8058 与 CB0 FSYNR；
+  在设备返回并完成一次只读验证前不再启动该候选。

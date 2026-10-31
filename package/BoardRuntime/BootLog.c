@@ -383,9 +383,9 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    snprintf(cp,sizeof cp,"GCP12 rptr=%llx cpctl=%llx ucode=%llx bid=%llx",
      cb_cp[93],cb_cp[94],cb_cp[95],cb_boot_id);
    at=put(out,at,cap,cp,sizeof cp);
-   snprintf(cp,sizeof cp,"GCP13 nsg=%llx gsyn=%llx/%llx/%llx ssyn=%llx/%llx/%llx cb0=%llx/%llx rw=%llx/%llx fpte=%llx bid=%llx",
-     cb_cp[96],cb_cp[97],cb_cp[98],cb_cp[99],cb_cp[100],cb_cp[101],cb_cp[102],
-     cb_cp[103],cb_cp[104],cb_cp[106],cb_cp[105],cb_cp[108],cb_boot_id);
+   snprintf(cp,sizeof cp,"GCP13 gfsr=%llx s2smr=%llx s2s2cr=%llx cb1=%llx cb2=%llx cb0n=%llx/%llx rw=%llx/%llx fpte=%llx bid=%llx",
+     cb_cp[54],cb_cp[89],cb_cp[90],cb_cp[91],cb_cp[92],cb_cp[103],cb_cp[104],
+     cb_cp[106],cb_cp[105],cb_cp[108],cb_boot_id);
    at=put(out,at,cap,cp,sizeof cp);
    snprintf(cp,sizeof cp,"KEY bid=%llx clk=%x/%x/%x trust=%x stg=%llu rc=%llx r=%llx w=%llx cpfsr=%llx gfsr=%llx hberr=%u frames=%llu",
      cb_boot_id,(uint32_t)(cb_cp[56]),(uint32_t)(cb_cp[57]),(uint32_t)(cb_cp[58]),(uint32_t)(cb_cp[48]),

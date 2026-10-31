@@ -141,3 +141,6 @@ Images, private logs and signing material stay out of Git.
   writes (no trailing DSB) and must not read GPU/SMMU registers afterwards. The
   Record already carries the live status/IRQ values; log those and return so
   the failure is observable instead of dying on the stalled bus.
+- After a failed kick, capture only CPU-owned memory (the scratch cursor) and
+  the SMMU register file; never read GPU MMIO there. This keeps the failure
+  record complete without risking the bus that just failed.
