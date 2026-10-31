@@ -52,6 +52,38 @@ static bool allocTable(uint64_t &pa,volatile uint64_t *&va){
  pa=p;va=(volatile uint64_t*)v;return true;
 }
 static void cleanTable(volatile uint64_t *v){flush_dcache((vm_offset_t)v,4096,FALSE);}
+struct Tbl {uint64_t pa;volatile uint64_t *va;};
+static Tbl gTables[32];static unsigned gTableCount=0;
+static volatile uint64_t *findTable(uint64_t pa){
+ for(unsigned i=0;i<gTableCount;++i)if(gTables[i].pa==pa)return gTables[i].va;
+ return nullptr;
+}
+static bool ensureTable(uint64_t &pa,volatile uint64_t *&va){
+ if(!allocTable(pa,va))return false;
+ if(gTableCount>=32)return false;
+ gTables[gTableCount++]={pa,va};return true;
+}
+static bool mapPage(uint64_t iova,uint64_t pa){
+ if(!gRootVA||(iova&4095)||(pa&4095))return false;
+ volatile uint64_t *t=gRootVA;
+ for(unsigned level=0;level<3;++level){
+  unsigned shift=39-9*level;
+  unsigned idx=(iova>>shift)&511;
+  uint64_t e=t[idx];
+  if(!e){
+   uint64_t npa=0;volatile uint64_t *nva=nullptr;
+   if(!ensureTable(npa,nva))return false;
+   t[idx]=npa|3;cleanTable(t);
+   t=nva;
+  }else{
+   if((e&0xfffULL)!=3)return false;
+   t=findTable(e&~0xfffULL);
+   if(!t)return false;
+  }
+ }
+ const uint64_t attrs=3ULL|(1ULL<<6)|(2ULL<<8)|(1ULL<<10)|(1ULL<<11)|(3ULL<<53);
+ t[(iova>>12)&511]=pa|attrs;cleanTable(t);return true;
+}
 static void mapTest(W &s,unsigned ctx){
  cb_map[0]=0xdeadbeef;cb_map[1]=cb_map[2]=cb_map[3]=0;
  IOBufferMemoryDescriptor *buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
@@ -62,7 +94,7 @@ static void mapTest(W &s,unsigned ctx){
  if(!pa||(pa&4095)||span<4096||!va||(pa>>36)){cb_map[0]=2;return;}
  memset(va,0x5a,4096);flush_dcache((vm_offset_t)va,4096,FALSE);
  uint64_t p1=0,p2=0,p3=0;volatile uint64_t *t1=nullptr,*t2=nullptr,*t3=nullptr;
- if(!gRootVA||!allocTable(p1,t1)||!allocTable(p2,t2)||!allocTable(p3,t3)){cb_map[0]=3;return;}
+ if(!gRootVA||!ensureTable(p1,t1)||!ensureTable(p2,t2)||!ensureTable(p3,t3)){cb_map[0]=3;return;}
  const uint64_t iova=0x1000000ULL; // 16 MiB, the sagit MinimumVA
  gRootVA[(iova>>39)&511]=p1|3;cleanTable(gRootVA);
  t1[(iova>>30)&511]=p2|3;cleanTable(t1);
@@ -73,6 +105,16 @@ static void mapTest(W &s,unsigned ctx){
  cb_map[0]=0;cb_map[1]=iova;cb_map[2]=pa;cb_map[3]=t3[(iova>>12)&511];
  IOLog("CB GPU SMMU map: va=%llx pa=%llx pte=%llx root0=%llx\n",iova,pa,cb_map[3],gRootVA[0]);
 }
+}
+// Map `pages` contiguous 4 KiB pages at `iova`. The setup must have installed
+// the context and root; each table update is cleaned and one CB TLB sync is
+// issued after the whole range.
+extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned pages){
+ if(!gRootVA||!pages||(iova&4095)||(pa&4095)||iova<0x1000000ULL||
+    iova+uint64_t(pages)*4096>((1ULL<<40))||pa+uint64_t(pages)*4096>(1ULL<<36))return -1;
+ for(unsigned i=0;i<pages;++i)if(!mapPage(iova+uint64_t(i)*4096,pa+uint64_t(i)*4096))return -2;
+ W s;if(!mapw(s,0x5040000,0x10000))return -3;
+ return tlbSync(s,0x8000,true)?0:-4;
 }
 extern "C" void cheeseburger_gpu_smmu_setup(void){
  reset();

@@ -162,6 +162,7 @@ extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
+extern volatile uint64_t cb_cp[32] __attribute__((weak_import));
 extern volatile uint64_t cb_rails[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_dump[24] __attribute__((weak_import));
 extern volatile uint64_t cb_pmic_pages[8] __attribute__((weak_import));
@@ -282,6 +283,17 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    snprintf(sm,sizeof sm,"SMAP st=%llu va=%llx pa=%llx pte=%llx",
      cb_map[0],cb_map[1],cb_map[2],cb_map[3]);at=put(out,at,cap,sm,sizeof sm);
   }
+ }
+ if (&cb_cp[0] && cb_cp[31]==0x0c9) {
+  char cp[240];
+  snprintf(cp,sizeof cp,"GCP0 st=%llu fw=%llu pm4=%llu pfp=%llu gpmu=%llu ring=%llu map=%llx",
+    cb_cp[0],cb_cp[1],cb_cp[2],cb_cp[3],cb_cp[4],cb_cp[5],cb_cp[8]);at=put(out,at,cap,cp,sizeof cp);
+  snprintf(cp,sizeof cp,"GCP1 pa ring=%llx pm4=%llx pfp=%llx gpmu=%llx gbytes=%llu",
+    cb_cp[23],cb_cp[20],cb_cp[21],cb_cp[22],cb_cp[24]);at=put(out,at,cap,cp,sizeof cp);
+  snprintf(cp,sizeof cp,"GCP2 me=%llx vbif=%llx/%llx rb=%llx/%llx/%llx/%llx st=%llx irq=%llx trust=%llx sec=%llx",
+    cb_cp[9],cb_cp[10],cb_cp[11],cb_cp[12],cb_cp[13],cb_cp[14],cb_cp[15],cb_cp[16],cb_cp[17],cb_cp[18],cb_cp[19]);at=put(out,at,cap,cp,sizeof cp);
+  snprintf(cp,sizeof cp,"GCP3 va ring=%llx pm4=%llx pfp=%llx gpmu=%llx fence=%llx",
+    cb_cp[25],cb_cp[26],cb_cp[27],cb_cp[28],cb_cp[29]);at=put(out,at,cap,cp,sizeof cp);
  }
  if (&cb_reset[0] && cb_reset[0]) {
   char rst[160];

@@ -16,6 +16,7 @@
 extern "C" {
 volatile uint64_t cb_gpu[64];
 void cheeseburger_gpu_smmu_setup(void);
+void cheeseburger_gpu_cp_probe(void);
 }
 namespace {
 struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
@@ -74,6 +75,7 @@ static void worker(void*,wait_result_t){
  cb_gpu[62]|=smmu?0x10u:0u;
  unsigned setup=0;PE_parse_boot_argn("cheeseburger-gpu-smmu-setup",&setup,sizeof setup);
  if(smmu&&setup)cheeseburger_gpu_smmu_setup();
+ unsigned cp=0;if(PE_parse_boot_argn("cheeseburger-gpu-cp",&cp,sizeof cp)&&cp&&smmu&&setup)cheeseburger_gpu_cp_probe();
  cb_gpu[63]=3;
 }
 }
