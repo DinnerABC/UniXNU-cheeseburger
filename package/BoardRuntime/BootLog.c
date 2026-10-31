@@ -162,7 +162,7 @@ extern volatile uint64_t cb_gpu[64] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
-extern volatile uint64_t cb_cp[32] __attribute__((weak_import));
+extern volatile uint64_t cb_cp[40] __attribute__((weak_import));
 extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
 extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
 volatile uint64_t cb_boot_id=0;
@@ -297,6 +297,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     cb_cp[9],cb_cp[10],cb_cp[11],cb_cp[12],cb_cp[13],cb_cp[14],cb_cp[15],cb_cp[16],cb_cp[17],cb_cp[18],cb_cp[19]);at=put(out,at,cap,cp,sizeof cp);
   snprintf(cp,sizeof cp,"GCP3 va ring=%llx pm4=%llx pfp=%llx gpmu=%llx fence=%llx",
     cb_cp[25],cb_cp[26],cb_cp[27],cb_cp[28],cb_cp[29]);at=put(out,at,cap,cp,sizeof cp);
+  snprintf(cp,sizeof cp,"GCP4 gready=%llx gerr=%llx cm3rst=%llx prot=%llx swrst=%llx ahb=%llx bid=%llx",
+    cb_cp[32],cb_cp[33],cb_cp[34],cb_cp[35],cb_cp[36],cb_cp[37],cb_boot_id);at=put(out,at,cap,cp,sizeof cp);
  }
  if (&cb_mapret[0] && cb_mapret[2]) {
   char md[200];

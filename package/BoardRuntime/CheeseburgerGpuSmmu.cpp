@@ -39,6 +39,13 @@ static bool tlbSync(W &s,unsigned ctx,bool allASIDs){
  }
  return false;
 }
+// One aperture mapping for the whole boot. The earlier per-map allocation
+// created a new IOMemoryMap on every call and the 4th map never returned.
+static W gSmmuW;static bool gSmmuMapped=false;
+static W *smmuMap(){
+ if(!gSmmuMapped)gSmmuMapped=mapw(gSmmuW,0x5040000,0x10000);
+ return gSmmuMapped?&gSmmuW:nullptr;
+}
 static void reset(){for(unsigned i=0;i<16;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;}
 static IOBufferMemoryDescriptor *gRootBuf=nullptr;
 static uint64_t gRootPA=0;
@@ -123,15 +130,20 @@ extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned page
   IOLog("CB GPU SMMU map fail: page=%u stage=%llu info=%llx iova=%llx pa=%llx\n",
    i,cb_mapdiag[0],cb_mapdiag[1],cb_mapdiag[2],cb_mapdiag[3]);return -2;
  }
- W s;if(!mapw(s,0x5040000,0x10000)){cb_mapret[0]=uint64_t(-3);return -3;}
- bool ok=tlbSync(s,0x8000,true);uint32_t tlb=ok?0:rd(s,0x8000+0x7f4);
+ IOLog("CB GPU SMMU map ptes: iova=%llx pages=%u\n",iova,pages);
+ IOSleep(8000); // persist the page-walk result before the TLB handshake
+ W *sp=smmuMap();if(!sp){cb_mapret[0]=uint64_t(-3);IOLog("CB GPU SMMU map no mmio\n");return -3;}
+ IOLog("CB GPU SMMU map pre-tlb: iova=%llx\n",iova);
+ IOSleep(8000); // persist the MMIO state before a possibly hanging handshake
+ bool ok=tlbSync(*sp,0x8000,true);uint32_t tlb=ok?0:rd(*sp,0x8000+0x7f4);
  IOLog("CB GPU SMMU map ok=%d iova=%llx pages=%u tlb=%x\n",ok?1:0,iova,pages,tlb);
  cb_mapret[0]=ok?0:uint64_t(-4);cb_mapret[1]=tlb;
  return ok?0:-4;
 }
 extern "C" void cheeseburger_gpu_smmu_setup(void){
  reset();
- W s;if(!mapw(s,0x5040000,0x10000)){cb_smmu[0]=1;return;}
+ W *smp=smmuMap();if(!smp){cb_smmu[0]=1;return;}
+ W &s=*smp;
  uint32_t id0=rd(s,0x20),id1=rd(s,0x24),id2=rd(s,0x28);
  cb_smmu[10]=id0;cb_smmu[11]=id1;cb_smmu[12]=id2;
  if(id0==0xffffffffu||id1==0xffffffffu||id2==0xffffffffu){cb_smmu[0]=2;return;}

@@ -20,7 +20,7 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 extern "C" {
-volatile uint64_t cb_cp[32];
+volatile uint64_t cb_cp[40];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 }
@@ -86,13 +86,19 @@ static bool allocBuf(Buf &b,uint32_t bytes){
  memset(b.va,0,rounded);flush_dcache((vm_offset_t)b.va,rounded,FALSE);return true;
 }
 static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
- b.gva=gva;int r=cheeseburger_gpu_smmu_map(gva,b.pa,b.bytes/4096);
+ b.gva=gva;
+ // Log before the call and hold for one BootLog round (5 s plus write time):
+ // the previous run lost the 4th map entirely, so the last committed line must
+ // name the buffer that was being mapped, not the one before it.
+ IOLog("CB GPU CP map begin: iova=%llx pa=%llx pages=%u seq=%u\n",gva,b.pa,b.bytes/4096,seq);
+ IOSleep(8000);
+ int r=cheeseburger_gpu_smmu_map(gva,b.pa,b.bytes/4096);
  IOLog("CB GPU CP map: iova=%llx pa=%llx pages=%u r=%d seq=%u\n",gva,b.pa,b.bytes/4096,r,seq);
  if(r==0)cb_cp[8]|=uint64_t(1)<<seq;
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
-static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
+static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<40;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 }
 extern "C" void cheeseburger_gpu_cp_probe(void){
  reset();
@@ -113,21 +119,40 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  cb_cp[5]=ring.bytes;cb_cp[6]=pm4.bytes;cb_cp[7]=pfp.bytes;
  cb_cp[20]=pm4.pa;cb_cp[21]=pfp.pa;cb_cp[22]=gpmu.pa;cb_cp[23]=ring.pa;cb_cp[24]=gpmu.bytes;
  unsigned seq=0;uint64_t gva=0x2000000ULL;
+ // Read the CP/RBBM/VBIF/secure state before any buffer mapping. Register
+ // reads are proven safe (gpu-probe alone boots to the desktop) and this state
+ // is the input for the CP init sequence, so it must survive a later hang.
+ W gp;if(!mapw(gp,0x5000000,0x40000)){cb_cp[0]=9;return;}
+ cb_cp[9]=rd(gp,0x20c8);cb_cp[10]=rd(gp,0xc200);cb_cp[11]=rd(gp,0xc204);
+ cb_cp[12]=rd(gp,0x2000);cb_cp[13]=rd(gp,0x2008);cb_cp[14]=rd(gp,0x2018);cb_cp[15]=rd(gp,0x201c);
+ cb_cp[16]=rd(gp,0x13d4)|(uint64_t(rd(gp,0x14c0))<<32);
+ cb_cp[17]=rd(gp,0x1384)|(uint64_t(rd(gp,0x2c60))<<32);
+ // TrustControl is DWORD 0xf400, i.e. byte 0x3d000; the trusted TSB base is
+ // DWORD 0xf800 (byte 0x3e000). CP reset needs TrustControl<=1.
+ cb_cp[18]=rd(gp,0xf400*4);cb_cp[19]=rd(gp,0xf800*4);
+ cb_cp[32]=rd(gp,0x2a380);cb_cp[33]=rd(gp,0x2a384); // GPMU ready/error
+ cb_cp[34]=rd(gp,0x2a360);                        // GPMU_CM3_SYSRESET
+ cb_cp[35]=rd(gp,0x2280);cb_cp[36]=rd(gp,0x10c);  // CP_PROTECT_CNTL, RBBM_SW_RESET_CMD
+ cb_cp[37]=rd(gp,0x24c);                          // RBBM_AHB_CNTL0
+ cb_cp[30]=seq;cb_cp[0]=0x10; // state captured; buffer maps still pending
+ IOLog("CB GPU CP state: me=%x vbif=%x/%x rb=%x/%x/%x/%x st=%x irq=%x trust=%x sec=%x\n",
+  uint32_t(cb_cp[9]),uint32_t(cb_cp[10]),uint32_t(cb_cp[11]),uint32_t(cb_cp[12]),
+  uint32_t(cb_cp[13]),uint32_t(cb_cp[14]),uint32_t(cb_cp[15]),uint32_t(cb_cp[16]),
+  uint32_t(cb_cp[17]),uint32_t(cb_cp[18]),uint32_t(cb_cp[19]));
+ IOLog("CB GPU CP gpmu: ready=%x err=%x cm3rst=%x prot=%x swrst=%x ahb=%x\n",
+  uint32_t(cb_cp[32]),uint32_t(cb_cp[33]),uint32_t(cb_cp[34]),uint32_t(cb_cp[35]),
+  uint32_t(cb_cp[36]),uint32_t(cb_cp[37]));
+ IOSleep(8000); // let one BootLog round persist the state before any map
  // Persist each map result before the next step: the panel may black here and
  // the run is often returned manually, so a quick all-at-once map could be lost.
  if(!mapBuf(ring,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=ring.bytes;
  if(!mapBuf(pm4,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=pm4.bytes;
  if(!mapBuf(pfp,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=pfp.bytes;
+ cb_cp[25]=ring.gva;cb_cp[26]=pm4.gva;cb_cp[27]=pfp.gva;
+ cb_cp[30]=seq;
  if(!mapBuf(gpmu,gva,seq)){IOSleep(3000);return;}IOSleep(3000);gva+=gpmu.bytes;
  if(!mapBuf(fence,gva,seq)){IOSleep(3000);return;}
- cb_cp[25]=ring.gva;cb_cp[26]=pm4.gva;cb_cp[27]=pfp.gva;cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
- cb_cp[30]=seq;
- W gp;if(!mapw(gp,0x5000000,0x40000)){cb_cp[0]=10;return;}
- cb_cp[9]=rd(gp,0x20c8);cb_cp[10]=rd(gp,0xc200);cb_cp[11]=rd(gp,0xc204);
- cb_cp[12]=rd(gp,0x2000);cb_cp[13]=rd(gp,0x2008);cb_cp[14]=rd(gp,0x2018);cb_cp[15]=rd(gp,0x201c);
- cb_cp[16]=rd(gp,0x13d4)|(uint64_t(rd(gp,0x14c0))<<32);
- cb_cp[17]=rd(gp,0x1384)|(uint64_t(rd(gp,0x2c60))<<32);
- cb_cp[18]=rd(gp,0xf400);cb_cp[19]=rd(gp,0xf800*4);
+ cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
  cb_cp[30]=seq;cb_cp[0]=0;
  IOLog("CB GPU CP: fw=%u pm4=%u pfp=%u gpmu=%u ring=%u map=%u me=%x vbif=%x/%x trust=%x\n",
   gpu_firmware_size,fw.cpBytes(0),fw.cpBytes(1),fw.gpmuWords(),ring.bytes,seq,
