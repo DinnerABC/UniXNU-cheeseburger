@@ -17,12 +17,16 @@ struct Mock {
     std::vector<uint32_t> reg = std::vector<uint32_t>(0x40000 / 4, 0);
     bool running = false;
     unsigned unhaltWrites = 0, rbWriteWrites = 0, submitWrites = 0, rbControlWrites = 0, delays = 0;
+    char marks[64][16] = {};
+    unsigned markCount = 0;
 
     Mock() { reset(); }
     void reset() {
         std::fill(reg.begin(), reg.end(), 0);
         running = false;
         unhaltWrites = rbWriteWrites = submitWrites = rbControlWrites = delays = 0;
+        markCount = 0;
+        std::memset(marks, 0, sizeof marks);
         reg[MEControl / 4] = Halt;       // cold CP is halted
         reg[TrustControl / 4] = 1;       // secure mode on this SoC
     }
@@ -50,6 +54,14 @@ struct Mock {
         }
     }
     void delay(unsigned) { ++delays; }
+    void mark(const char *tag) {
+        if (markCount < 64) {
+            unsigned i = 0;
+            for (; tag[i] && i < 15; ++i) marks[markCount][i] = tag[i];
+            marks[markCount][i] = 0;
+            ++markCount;
+        }
+    }
     void publish() {}
     void clean(volatile void *, unsigned) {}
 };
@@ -57,6 +69,12 @@ struct Mock {
 static unsigned failures = 0;
 static void check(bool ok, const char *name) {
     if (!ok) { std::printf("FAIL %s\n", name); ++failures; }
+}
+static bool marks_are(Mock &m, const char *const *want, unsigned n) {
+    if (m.markCount != n) return false;
+    for (unsigned i = 0; i < n; ++i)
+        if (std::strcmp(m.marks[i], want[i])) return false;
+    return true;
 }
 
 static void halted_after_failure(Mock &m, const char *name) {
@@ -75,6 +93,8 @@ static void case_reset_failure(Mock::Fail fail, int expected, const char *name) 
     halted_after_failure(m, name);
     check(m.unhaltWrites == 0, name);
     check(m.rbControlWrites == 0 && m.rbWriteWrites == 0, name);
+    check(m.markCount && std::strcmp(m.marks[m.markCount - 1], "fail") == 0, name);
+    check(std::strcmp(m.marks[0], "halt") == 0, name);
 }
 
 int main() {
@@ -95,6 +115,9 @@ int main() {
               ring[3] == 0x20000000, "success/me-init");
         check(m.reg[CPProtectCntl / 4] == 7 && m.reg[CPAddrModeCntl / 4] == 1, "success/configure");
         check(m.reg[RBControl / 4] == RingControl, "success/rb-control");
+        static const char *const want[] = {"halt", "ack", "idle", "swrst", "cm3", "trust",
+                                           "cfg", "addr", "kick", "done"};
+        check(marks_are(m, want, 10), "success/marks");
     }
     // Every reset failure keeps CP/VBIF halted and never submits.
     case_reset_failure(Mock::VbifAck, -1, "vbif-ack");

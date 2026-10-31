@@ -25,6 +25,7 @@ volatile uint64_t cb_cp[64];
 extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
+void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
 namespace {
 struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
@@ -109,6 +110,7 @@ struct Mmio {
  void delay(unsigned us){IODelay(us);}
  void publish(){__asm__ volatile("dsb oshst":::"memory");}
  void clean(volatile void *p,unsigned n){flush_dcache((vm_offset_t)p,n,FALSE);}
+ void mark(const char *tag){if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step(tag);}
 };
 static void captureFaults(Mmio &m){
  cb_cp[50]=m.read(CheeseburgerGpu::CPHwFault);

@@ -64,6 +64,7 @@ template <class R> class Startup {
         wr(VBIFHalt, 15);
     }
     int fail(Record &rec, int rc, unsigned stage) {
+        r.mark("fail");
         rec.rc = rc; rec.stage = stage; rec.abandoned = true;
         abandonedFlag = true; resetDone = false; runningFlag = false;
         haltBestEffort();
@@ -118,6 +119,7 @@ public:
 
     int reset(Record &rec) {
         if (resetDone || abandonedFlag || runningFlag) return fail(rec, -10, 0);
+        r.mark("halt");
         wr(VBIFHalt, 15);
         unsigned waited = 0;
         while ((rd(VBIFHalted) & 15) != 15) {
@@ -125,6 +127,7 @@ public:
             r.delay(10); waited += 10;
         }
         rec.vbif = rd(VBIFHalted);
+        r.mark("ack");
         // The drain busy bit can lag the halt ack; sample before declaring failure.
         uint32_t status = rd(Status);
         unsigned retries = 0;
@@ -132,6 +135,7 @@ public:
         rec.status = status; rec.retries = retries; rec.me = rd(MEControl);
         if (!idleStatus(status)) return fail(rec, -2, 1);
         if ((rec.me & Halt) != Halt) return fail(rec, -3, 1);
+        r.mark("idle");
 
         wr(RBBMSwReset, 1); (void)rd(RBBMSwReset); wr(RBBMSwReset, 0);
         wr(InterruptMask, 0); wr(MEControl, Halt); wr(VBIFHalt, 15);
@@ -141,10 +145,12 @@ public:
             r.delay(10); waited += 10;
         }
         rec.me = rd(MEControl); rec.vbif = rd(VBIFHalted);
+        r.mark("swrst");
         if (rd(RBBMSwReset) || rd(RBRead) || rd(RBWrite) || rd(ContextSwitch) || rd(TrustControl) > 1)
             return fail(rec, -5, 1);
         wr(GPMUCM3SysReset, 1); wr(GPMUReady, 0); wr(GPMUError, 0);
         if (rd(GPMUCM3SysReset) != 1 || rd(GPMUReady) || rd(GPMUError)) return fail(rec, -6, 1);
+        r.mark("cm3");
 
         // No ZAP/PAS handoff in this kernel: take Linux a5xx_gpu.c's fallback
         // and leave secure mode by clearing RBBM_SECVID_TRUST_CNTL. Verified
@@ -152,6 +158,7 @@ public:
         wr(TrustControl, 0);
         rec.trust = rd(TrustControl);
         rec.cpControl = rd(CPControl);
+        r.mark("trust");
         rec.stage = 1; rec.rc = 0;
         resetDone = true;
         return 0;
@@ -166,6 +173,7 @@ public:
             return fail(rec, -12, 0);
         for (unsigned i = 0; i < ringDwords; ++i) ring[i] = 0;
         configure();
+        r.mark("cfg");
         wr(MEBase, uint32_t(pm4VA)); wr(MEBase + 4, uint32_t(pm4VA >> 32));
         wr(PFPBase, uint32_t(pfpVA)); wr(PFPBase + 4, uint32_t(pfpVA >> 32));
         wr(RBBase, uint32_t(ringVA)); wr(RBBase + 4, uint32_t(ringVA >> 32));
@@ -175,6 +183,7 @@ public:
             rd(RBBase) != uint32_t(ringVA) || rd(RBControl) != RingControl || rd(RBRead) ||
             rd(RBWrite) || rd(ContextSwitch) || rd(CPAddrModeCntl) != 1 || rd(CPProtectCntl) != 7)
             return fail(rec, -2, 2);
+        r.mark("addr");
         rec.stage = 2;
 
         unsigned cursor = 0;
@@ -182,6 +191,7 @@ public:
         static const uint32_t init[] = {0x2f, 3, 0x20000000, 0, 0, 0, 0, 0};
         for (unsigned i = 0; i < sizeof init / sizeof init[0]; ++i) ring[cursor++] = init[i];
         r.clean((volatile void *)ring, ringDwords * 4);
+        r.mark("kick");
         r.publish(); wr(VBIFHalt, 0); wr(MEControl, 0);
         r.publish(); wr(RBWrite, cursor);
 
@@ -194,6 +204,7 @@ public:
             const uint32_t read = rd(RBRead);
             if (read == cursor && !(rd(Status) & ~1u) && !(rd(Status3) & (1u << 24))) {
                 rec.read = read; rec.write = rd(RBWrite); rec.stage = 4; rec.rc = 0;
+                r.mark("done");
                 runningFlag = true; resetDone = false;
                 return 0;
             }

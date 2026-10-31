@@ -10,7 +10,7 @@ import re
 
 MAGIC = b'CBHB0001'
 _LINE = re.compile(
-    rb'^CBHB0001 boot=([0-9a-f]{16}) seq=(\d+) sec=(\d+) tag=([a-z]+) state=(\d+) rounds=(\d+)$')
+    rb'^CBHB0001 boot=([0-9a-f]{16}) seq=(\d+) sec=(\d+) tag=([a-z0-9]+) state=(\d+) rounds=(\d+)$')
 
 
 def parse(block):

@@ -119,7 +119,7 @@ volatile uint32_t boot_log_state, boot_log_rounds, boot_log_errors;
 volatile uint64_t boot_log_first_lba;
 static int boot_log_started;
 static uint8_t *boot_log_buffer;   // LogMsgBlocks blocks: the message buffer, then reused for a slot and the header
-static uint8_t *boot_log_heartbeat_buffer, *boot_log_autoreset_buffer;
+static uint8_t *boot_log_heartbeat_buffer, *boot_log_autoreset_buffer, *boot_log_step_buffer;
 volatile uint64_t boot_log_blocks, boot_log_hb_first;
 volatile uint32_t boot_log_hb_count;
 static uint64_t boot_log_ticks_start, boot_log_freq;
@@ -196,6 +196,12 @@ void cheeseburger_bootlog_heartbeat(void) {
 void cheeseburger_bootlog_autoreset(const char *tag) {
   static uint64_t seq;
   heartbeat_record(boot_log_autoreset_buffer, tag ? tag : "mark", ++seq);
+}
+// Reset/start step markers: the probe calls this around each GPU register step
+// so a stall leaves the last reached step in the heartbeat ring.
+void cheeseburger_bootlog_step(const char *tag) {
+  static uint64_t seq;
+  heartbeat_record(boot_log_step_buffer, tag ? tag : "step", ++seq);
 }
 static void heartbeat_worker(void *arg, wait_result_t result) {
   (void)arg; (void)result;
@@ -479,6 +485,7 @@ void boot_log_tick(unsigned now) {
   if (!boot_log_buffer) return;
   boot_log_heartbeat_buffer = (uint8_t *)IOMallocAligned(LogBlock, LogBlock);
   boot_log_autoreset_buffer = (uint8_t *)IOMallocAligned(LogBlock, LogBlock);
+  boot_log_step_buffer = (uint8_t *)IOMallocAligned(LogBlock, LogBlock);
 
   thread_t thread;
   if (kernel_thread_start(writer, 0, &thread) == KERN_SUCCESS) thread_deallocate(thread);

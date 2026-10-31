@@ -122,6 +122,22 @@
   - (b) **控制台/日志路径卡住**：auto-reset 卡在 IOLog、userland 日志被同一锁阻塞，内核其余部分可能仍活。
   - 下一轮必须加“不依赖 console 与 UFS writer 的存活标记”才能区分；同时把关键路径的 IOLog 缩短/移出。
 
+### 2.6 P2 可观察性与控制 A/B（2026-10-31，已回收）
+
+- **心跳通道**：日志窗口最后一个空闲区（31 个块）作为 `CBHB` 心跳环，独立线程每 10 s 直写
+  （不经 console/msgbuf）；auto-reset 在最终 `IOLog` 前写 `mark`、在 PSCI SMC 前写 `smc`；
+  CP reset/start 的每一步写 `halt/ack/idle/swrst/cm3/trust/cfg/addr/kick/done/fail`。
+  读取端输出 `retrieval.json.heartbeat.records` 与 `decoded/<boot>/heartbeat.json`；codec 测试 8/8。
+- **受控 A/B（只改 begin 行长度，关闭 CP 写）**：
+  - A 短行、无环：日志 `20261031T122149Z`，boot `0x52b799d2`，66 rounds，自动复位，`smc` 心跳 ~398 s。
+  - B 短行 + 环：日志 `20261031T123537Z`，boot `0x512997ee`，66 rounds，`tick` sec 28–308 每 10 s，
+    `mark` 329、`smc` 333（writer 相对）。
+  - C 长行 + 环：日志 `20261031T124642Z`，boot `0x511b5457`，66 rounds，心跳记录与 B **完全同型**。
+- **结论**：长/短 begin 行都健康到 400 s；五映射 + console + 8 s 等待本身不触发停住。
+  此前两轮“begin 后日志中断”更可能发生在 **full-start 的 reset 写入阶段**（begin 后 8 s），
+  而不是睡眠中或长行本身；早期轮次用户态日志稀少，最后时间戳不能精确代表停住时刻。
+- 下一步（P3）：full-start 时用上述逐步心跳定位具体停在哪条 GPU 寄存器写；设备侧仍需单变量。
+
 ## 3. 遇到的问题与解决方式
 
 | # | 问题 | 解决/结论 | 状态 |

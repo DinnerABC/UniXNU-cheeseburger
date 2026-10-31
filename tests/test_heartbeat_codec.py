@@ -24,8 +24,9 @@ check(hb.parse(b'') is None, 'empty')
 check(hb.parse(b'XXXX' + b'\0' * 100) is None, 'wrong-magic')
 check(hb.parse(block[:32]) is None, 'truncated')
 check(hb.parse(hb.encode(1, 2, 3, 'smc', 2, 4))['tag'] == 'smc', 'smc-tag')
+check(hb.parse(hb.encode(1, 2, 3, 'cm3', 2, 4))['tag'] == 'cm3', 'digit-tag')
 
 if failures:
     print('RESULT FAIL', len(failures))
     sys.exit(1)
-print('RESULT PASS 7/7')
+print('RESULT PASS 8/8')
