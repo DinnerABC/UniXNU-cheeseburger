@@ -11,7 +11,13 @@
   - 第一轮镜像 `49ee82a2…`（UEFI 上电后直接读 GPUCC）：上电步骤全部成功（`VDD_GPU_CX/GX`、`gpucc_cxo/rbcpr/rbbmtimer/isense`、`gfx3d` 257 MHz、`VDD_HLOS1/2_GPU_SMMU` 均返回 0），但 capture 在 SMMU 域后没有 `G:` 行，固件停住、内核未启动，屏幕黑；用户手动回 Recovery。
   - 第二轮去掉 UEFI 的 GPU/GPUCC MMIO 读取，并临时 `cheeseburger-gpu-probe=0`（不让 XNU 读 GPU），只保留上电与 `P:done`：镜像 `96fc9e20…`（固件 `1d2bb5f2…`、payload `9dc9027c…`、内核仍 `c2f78d8b…`，args 568）。设备正常启动并在 400 s 自动回 Recovery（日志 `20261031T060552Z`，boot `0x4f100452`，`AUTORESET issued=1`），capture 行以 `P:done` 结束。
   - 结论：EFIClock 上电序列与启动兼容；黑屏来自上电后的 GPUCC MMIO 读取。下一步在 UEFI 里先读 GCC AHB、必要时用 EFIClock 重新使能 `gcc_gpu_cfg_ahb_clk`，仅在 AHB 在线时才读 GPUCC/GPU，并保持每步写 capture。
-- **下一步**：GPU 第 2 步续——带 GCC AHB gating 的 GPU ID/状态读取；之后再进入 SMMU/CP/GPMU 固件与提交路径。
+- **UEFI 直接读 GPU 的异常**：在 UEFI 里加 GCC AHB 门控后，`C:gcc_gpu_cfg_ahb_clk=…,On=1` 已写入，但随后的 GCC/GPUCC `MmioRead32` 触发 `Synchronous Exception at 0x00000001B048BE030`（UEFI 自身对这些物理地址的映射不可用），不是上电失败；该读取已从 UEFI 移除。
+- **XNU 读取成功（里程碑）**：UEFI 只做 EFIClock 上电（capture 以 `P:done` 结束），XNU GPU 探针用自己的映射读取；镜像 `d11f9305…`（内核 `52099388…`、payload `b859aa5b…`、固件 `91925275…`，args 569），日志 `20261031T062615Z`（boot `0x5048a3db`，400 s 自动回 Recovery）：
+  - `GPU0 gcc ahb=20008001 bimc=00000001 misc=00010000 stage=3 flags=f`：AHB/CX/GX/gfx3d 全部在线；
+  - GPUCC：`0x1008=80001fe0`（CX GDSC on）、`0x1094=a0222000`（GX on）、`0x1098=00000621`（gfx3d branch on）、rbcpr/rbbmtimer/isense 分支均 on；
+  - GPU：`RBBM_ID=0x00010042`、第二个 ID/rev `0xb5f00000`、Status `0x1`、MEControl `0x303`（CP halted）、GPMUReady/Error=0（固件未加载）、RB ring 基址/读写指针=0；
+  - GSMMU 按 `cheeseburger-gpu-smmu=0` 跳过（全 `deadbeef`），因为 SMMU 时钟尚未使能。
+- **下一步**：用 EFIClock 使能 `gcc_hlos1_gpu_smmu_clk`/`gcc_hlos2_gpu_smmu_clk`（SMMU 域已开），再打开 `cheeseburger-gpu-smmu=1` 读 SMMU；随后 SMMU 上下文、a530_pfp/pm4 + a540_gpmu 固件、CP ring/PM4 提交。
 
 ## 2026-10-31：GPU 第 1–2 步——A540 固件/寄存器取证与只读探针（GPU 未上电）
 

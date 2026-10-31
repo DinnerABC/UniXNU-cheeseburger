@@ -227,21 +227,31 @@ PowerRate (
   return Set;
 }
 
-// Kept for the next step (a gated read after the bus/NoC path is qualified);
-// the first UEFI read after power-up stopped the boot, so this build does not
-// call it.
+// Gated read: GCC is always clocked, so read the GPU AHB branch first. The
+// previous experiment read GPUCC at base+0x8/0x94/0x98 instead of the CX/GX
+// status offsets (base+0x1008/0x1094/0x1098) and the boot stopped; the correct
+// addresses and the AHB gate are both required. GPU registers are read only
+// when GX is powered and gfx3d is running.
 STATIC VOID __attribute__((unused))
 PowerReadGpu (
   GPU_POWER_LOG *Log
   )
 {
+  UINT32 Ahb;
   UINT32 Cx;
   UINT32 Gx;
   UINT32 Gfx;
 
-  Cx  = MmioRead32 (0x05065008);
-  Gx  = MmioRead32 (0x05065094);
-  Gfx = MmioRead32 (0x05065098);
+  Ahb = MmioRead32 (0x00081004);   // GCC_GPU_CFG_AHB_CBCR
+  PowerAdd (Log, AsciiSPrint (
+                   Log->Line + Log->Len, sizeof (Log->Line) - Log->Len,
+                   " | A:%x", Ahb));
+  if (((Ahb & 1U) == 0) || ((Ahb & 0x80000000U) != 0)) {
+    return;
+  }
+  Cx  = MmioRead32 (0x05066008);   // GPUCC CX GDSC status
+  Gx  = MmioRead32 (0x05066094);   // GPUCC GX status
+  Gfx = MmioRead32 (0x05066098);   // GPUCC gfx3d branch
   PowerAdd (Log, AsciiSPrint (
                    Log->Line + Log->Len, sizeof (Log->Line) - Log->Len,
                    " | G:%x,%x,%x", Cx, Gx, Gfx));
@@ -300,9 +310,10 @@ UniXnuGpuPowerEnable (
   }
   PowerDomain (&Log, "VDD_HLOS1_GPU_SMMU");
   PowerDomain (&Log, "VDD_HLOS2_GPU_SMMU");
-  // Do not read GPU/GPUCC/SMMU MMIO here: after the clock driver powers the
-  // domains, the first UEFI read stopped the boot (black screen, no kernel).
-  // Report completion and let a later, explicitly gated probe read registers.
+  // Keep a client vote on the GCC GPU AHB branch. Do not read GPUCC/GPU here:
+  // UEFI's own MMIO map for GCC/GPUCC is not valid for this driver and a
+  // direct read raises a synchronous exception. XNU has the mappings.
+  PowerClock (&Log, "gcc_gpu_cfg_ahb_clk");
   PowerAdd (&Log, AsciiSPrint (Log.Line + Log.Len, sizeof (Log.Line) - Log.Len, " | P:done"));
 #endif
 }

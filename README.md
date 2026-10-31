@@ -50,7 +50,7 @@ belongs to the reusable framework:
 | Phone-style UI | Not working | Phone identity with an iPadOS root reached a system screen but still showed a tablet layout |
 | Touch | Working | Synaptics S3320 over BLSP1 QUP5 (`qcom,i2c-qup-v2.2.1`): v2 byte tags, repeated-start register reads, F01/F12 discovery, 10-finger 80-byte F12 packets read through the IN block handshake, HID digitizer on the combined keyboard+digitizer device, 25 ms polling (attention IRQ not enabled). Confirmed by the device owner |
 | Buttons | Partial | Power and volume adapter, with a volume-key Home chord; full physical interaction is not qualified |
-| GPU / Metal | Not working | No qualified Adreno 540 acceleration |
+| GPU / Metal | Not working | A540 powered through the firmware clock protocol and its registers read (`RBBM_ID=0x00010042`, CP halted, no GPMU firmware); no acceleration or Metal yet |
 | KeyStore | Partial | Development compatibility; no SEP-backed security claim |
 | Logs | Working | Bounded persistent log window, 2 s host monitor and Recovery retrieval; there is no live channel yet (USB CDC-ACM is only a read-only stage-0 probe) |
 | Wi-Fi / Bluetooth / cellular / audio / camera / sensors | Not tested | No hardware support claim |

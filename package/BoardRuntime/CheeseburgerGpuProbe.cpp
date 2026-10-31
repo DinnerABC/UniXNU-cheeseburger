@@ -65,8 +65,12 @@ static void worker(void*,wait_result_t){
  fill(28,45,0xdeadbeef);
  W gp;if(!mapw(gp,0x5000000,0x40000)){cb_gpu[61]=0xfffffffd;cb_gpu[63]=2;return;}
  for(unsigned i=0;i<sizeof gpuRegs/sizeof gpuRegs[0];++i)cb_gpu[28+i]=rd(gp,gpuRegs[i]);
+ // The GPU SMMU clocks are not enabled by the current firmware power step; a
+ // read can fault. Keep it opt-in until those clocks are part of the sequence.
  fill(45,60,0xdeadbeef);
- W sm;if(mapw(sm,0x5040000,0x10000))for(unsigned i=0;i<sizeof smmuRegs/sizeof smmuRegs[0];++i)cb_gpu[45+i]=rd(sm,smmuRegs[i]);
+ unsigned smmu=0;PE_parse_boot_argn("cheeseburger-gpu-smmu",&smmu,sizeof smmu);
+ if(smmu){W sm;if(mapw(sm,0x5040000,0x10000))for(unsigned i=0;i<sizeof smmuRegs/sizeof smmuRegs[0];++i)cb_gpu[45+i]=rd(sm,smmuRegs[i]);}
+ cb_gpu[62]|=smmu?0x10u:0u;
  cb_gpu[63]=3;
 }
 }
