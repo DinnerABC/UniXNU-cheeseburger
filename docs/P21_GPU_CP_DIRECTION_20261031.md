@@ -1,5 +1,7 @@
 # P21 GPU/CP 最新修改方向（依据 2026-10-31 审计）
 
+> 完整现状、A–F 轮证据与审计决策选项（A/B/C/D）见 `docs/P21_GPU_CP_FULL_REPORT_20261031.md`。
+
 - 依据：`docs/P21_ADRENO540_REVIEW_20261031.md`（审计提交 `340d8c8`）、`docs/P21_GPU_CP_STATUS_REPORT.md`（状态报告）
 - 原则：先证据与可观察性，后硬件动作；单变量；不伪造成功；未验证前不重复 CP reset。
 - 当前：设备已由用户手动返回 Recovery；**暂停中，不再启动**。

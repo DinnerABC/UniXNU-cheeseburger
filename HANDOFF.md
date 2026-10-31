@@ -1,5 +1,6 @@
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
+**完整现状/证据/决策选项见 `docs/P21_GPU_CP_FULL_REPORT_20261031.md`（2026-10-31，供审计决定）。**
 GPU 只读审计见 `docs/P21_ADRENO540_REVIEW_20261031.md`；依据审计确定的最新修改方向见 `docs/P21_GPU_CP_DIRECTION_20261031.md`（P0 证据冻结 → P1 reset 失败路径 → P2 独立存活判据 → P3 SMMU/CP 验证 → P4 分阶段）。当前候选门禁及 pins 为旧轮记录，不能证明最新镜像通过。
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
