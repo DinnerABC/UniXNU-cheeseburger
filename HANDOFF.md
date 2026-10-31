@@ -2,6 +2,10 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+**当前 GPU/CP 阶段的完整现状、问题与解决记录、审计清单见 `docs/P21_GPU_CP_STATUS_REPORT.md`（2026-10-31，供另一 agent 审计）。**
+本轮（镜像 `aea9a9fa…`、内核 `6ccfb681…`，GPU 工作提前到 ~75–120 s）启动后未自动回 Recovery，
+报告写作时 ADB/Fastboot 均未枚举，日志待设备回 Recovery 后回收。
+
 ## 2026-10-31：CP/GPMU 状态读取 + 五个 buffer 全部映射，整机稳定；进入 CP reset/start
 
 - **CP 状态与五映射成功**（镜像 `570365647142d94573d8943f477ebe5913dc9cd72dea3e2d0376f0e3fe4b5df2`，内核 `aeb7b438…`、payload `1641aa56…`、固件 `7db06b9b…`，args 670；日志 `out/p21/persistent-logs/20261031T103113Z/`，boot `0x50b0c185`，67 rounds，0 写入错误，400 s 自动回 Recovery）：
