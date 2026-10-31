@@ -167,7 +167,7 @@ extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[16] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
 extern volatile uint64_t cb_cp[96] __attribute__((weak_import));
-extern volatile uint64_t cb_pas[16] __attribute__((weak_import));
+extern volatile uint64_t cb_zap[32] __attribute__((weak_import));
 extern volatile uint64_t cb_mapdiag[4] __attribute__((weak_import));
 extern volatile uint64_t cb_mapret[4] __attribute__((weak_import));
 volatile uint64_t cb_boot_id=0;
@@ -381,11 +381,12 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    at=put(out,at,cap,cp,sizeof cp);
   }
  }
- if (&cb_pas[0] && cb_pas[0]!=0xdeadbeef) {
-  char pas[240];
-  snprintf(pas,sizeof pas,"PAS0 st=%llu smc64=%llu scm=%llu resume=%llu init=%llu setup=%llu auth=%llu down=%llu sup7=%llu sup=%llx bid=%llx",
-    cb_pas[0],cb_pas[1],cb_pas[2],cb_pas[3],cb_pas[4],cb_pas[5],cb_pas[6],cb_pas[7],cb_pas[8],cb_pas[9],cb_boot_id);
-  at=put(out,at,cap,pas,sizeof pas);
+ if (&cb_zap[0] && cb_zap[0]!=0xdeadbeef) {
+  char zap[240];
+  snprintf(zap,sizeof zap,"ZAP0 rc=%llx md=%llx img=%llx al=%llx m=%llu i=%llx/%llx s=%llx/%llx a=%llx/%llx t=%llx->%llx sup=%llx bid=%llx",
+    cb_zap[0],cb_zap[9],cb_zap[10],cb_zap[6],cb_zap[11],cb_zap[19],cb_zap[20],
+    cb_zap[22],cb_zap[23],cb_zap[25],cb_zap[26],cb_zap[30],cb_zap[31],cb_zap[17],cb_boot_id);
+  at=put(out,at,cap,zap,sizeof zap);
  }
  if (&cb_mapret[0] && cb_mapret[2]) {
   char md[200];

@@ -22,12 +22,13 @@ static const unsigned gpu_firmware_size=0;
 #endif
 extern "C" {
 volatile uint64_t cb_cp[96];
+extern volatile uint64_t cb_zap[32];
 extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
-void cheeseburger_gpu_pas_probe(void);
+int cheeseburger_gpu_zap_load(volatile uint32_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
 namespace {
@@ -199,6 +200,12 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     ring.gva,pm4.gva,pfp.gva,uint32_t(cb_cp[56]),uint32_t(cb_cp[57]),uint32_t(cb_cp[58]));
   IOSleep(8000);
   if(start>=2){cb_cp[38]=9;IOSleep(8000);return;}  // log-only: no GPU write
+  // Formal secure-world premise: authenticated ZAP (PAS-13) must succeed before
+  // any CP reset or CP_ME_INIT submission. Failure leaves the GPU halted.
+  int zrc=cheeseburger_gpu_zap_load(gp.v);
+  cb_cp[82]=uint64_t(int32_t(zrc));
+  if(zrc){cb_cp[38]=8;cb_cp[39]=uint64_t(int32_t(zrc));IOSleep(8000);return;}
+  IOSleep(8000); // let BootLog persist the ZAP result before the reset writes
   unsigned clearTrust=0;
   PE_parse_boot_argn("cheeseburger-gpu-trust-clear",&clearTrust,sizeof clearTrust);
   int rc=engine.reset(rec,clearTrust!=0);
@@ -237,6 +244,4 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   }
   IOSleep(8000);
  }
- // Read-only SCM/PAS availability check alongside a full start attempt.
- if(start==1) cheeseburger_gpu_pas_probe();
 }

@@ -247,3 +247,52 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
 6. 分区写入边界与 misc/userdata 授权是否逐项符合 AGENTS.md。
 7. secure/ZAP 路线是否在获得授权前被实施（当前未实施）。
 8. 证据冻结、门禁落盘、AGENTS 纪律同步是否完整。
+
+## 11. ZAP loader 实现与布局更正（2026-10-31 晚）
+
+本节补充并**更正** 2.12/2.13 的装载布局；以实际固件 program header 与本机上游实现为准。
+
+### 11.1 实际布局（由 `a540_zap.mdt` ELF 动态解析）
+
+- 磁盘文件：`a540_zap.mdt` 6684 字节，`.elf/.b00` 同头，`.b01` 6536 字节，`.b02` 4916 字节。
+- 3 个 program header（0x94 = 52 + 3×32）：
+  - ph0：`p_type=0`、`p_offset=0`、`p_filesz=0x94`（ELF 头 + phdrs，元数据头）；
+  - ph1：`p_type=0`、`p_flags=0x2200000`（bits 24..26 = 2，hash 段）、`p_offset=0x1000`、
+    `p_filesz=0x1988`、`p_paddr=0x7000`、`p_memsz=0x2000`；
+  - ph2：`p_type=1`、`p_flags=0x8000007`（bit 27 可重定位）、`p_offset=0x3000`、
+    `p_filesz=p_memsz=0x1334`、`p_paddr=0x5000`、`p_align=0x100000`。
+- 元数据 = ph0 头（0x94）紧跟 hash 段（0x1988）= **0x1A1C**；`mdt[0x94:]` 与 `.b01` 逐字节相同。
+- 唯一可装载段是 ph2（`PT_LOAD`、非 hash）；因 `p_offset+p_filesz > mdt.size`，其数据来自
+  `.b02`，装入 region 的 **+0**（`p_paddr - min = 0x5000 - 0x5000`）。
+- 因此 Linux `qcom_mdt_get_size()` 给出的 region = `ALIGN(0x5000+0x1334) - 0x5000` = **0x2000**
+  （不是此前 2.12 写的 0x4000；0x4000 把 hash 段的 `p_memsz` 误算进了可装载范围）。
+  `PAS mem_setup(region_pa, 0x2000)`；可重定位目标按 `p_align=1 MiB` 对齐。
+- `.b00/.b01` 不按代码装载；hash 段只作为元数据的一部分交给 `PAS init`。
+
+### 11.2 调用顺序与依据
+
+- Android `drm/msm` `zap_shader_load_mdt()`：`qcom_mdt_load()`（内部 `PAS init` → 可重定位时
+  `mem_setup` → 装载段）→ `qcom_scm_pas_auth_and_reset(13)`；首次装载后**不**调用
+  `BOOT_SET_REMOTE_STATE`。`qcom_scm_set_remote_state(0, 13)` 只在映像已加载、GPU 再次初始化时使用
+  （`a5xx_zap_shader_resume`，A506 除外）。本轮因此不额外 resume。
+- `IS_SUPPORTED`（service 2 cmd 7）在本机返回 0，但逐命令 availability（init/setup/auth）均为 1；
+  sagit loader 明确记录并注明“IS_SUPPORTED 不是授权结果”，本轮同样记录、不用它做门禁。
+- 只有 `init`、`mem_setup`、`authenticate` 均返回成功才继续 CP reset/start；失败即停用 GPU，
+  保留 CPU 显示路径。认证后 metadata/image 页不再读、清、释放或做 cache 操作。
+
+### 11.3 实现与诊断
+
+- 新文件：`package/BoardRuntime/CheeseburgerZap.h`（QZAP 容器 + ELF32 MDT 解析，纯宿主可测）、
+  `scripts/p21-zap-firmware-header.py`（私有固件打包为生成头，不入库）、
+  `tests/qcom_zap_model.cpp`（59 项：合法/非法布局、段重叠、溢出、对齐、split 段、真实固件）。
+- `CheeseburgerGpuPas.cpp`：分配 4 KiB 对齐 metadata 与 1 MiB 对齐 region（优先 32 位物理地址掩码，
+  40 位回退并记录），依次 `init(metadata_pa)` → `setup(region_pa, 0x2000)` → 拷贝 `.b02` →
+  `dsb`/cache clean → `authenticate()`；每步记录 `Status`、原始 `x0`、`x1`。
+- 心跳阶段：`zapinit / zapsetup / zapauth / zapdone / zapfail`；BootLog 新行
+  `ZAP0 rc md img al m i s a t sup bid`。`cheeseburger-gpu-start=1` 时 ZAP 为强制前置，无绕过开关。
+- 认证后只读记录 `TrustControl`（before/after）以及既有 CP/SMMU/RPTR 诊断；仍不写 `TRUST_CNTL`。
+
+### 11.4 未验证
+
+- 本机安全监视器是否接受该元数据/物理区域（签名、PAS-13 平台依赖、GPU 电源租约）；
+- 认证成功是否足以让 CP 取 ring（`RPTR` 前进）；GPMU/fence 尚未开始。

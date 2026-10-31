@@ -18,11 +18,13 @@ OUT = R / 'out/p21/gpu-cp/host-tests'
 TESTS = [
     ('gpu_start_model', 'tests/gpu_start_model.cpp'),
     ('qcom_pas_model', 'tests/qcom_pas_model.cpp'),
+    ('qcom_zap_model', 'tests/qcom_zap_model.cpp'),
 ]
 HEADERS = [
     'package/BoardRuntime/CheeseburgerGpuStart.h',
     'package/BoardRuntime/CheeseburgerGpuWalk.h',
     'package/BoardRuntime/QcomPAS.h',
+    'package/BoardRuntime/CheeseburgerZap.h',
 ]
 
 

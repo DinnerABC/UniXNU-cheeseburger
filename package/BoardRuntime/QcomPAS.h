@@ -11,7 +11,7 @@ namespace QcomSecure {
 enum class Status { OK, Invalid, Unsupported, NoMemory, Busy, Denied, Ambiguous };
 enum class Phase : uint32_t { Empty, Metadata, Region, Authenticated, Warm, Faulted };
 struct Registers { uint64_t x[8]{}; };
-struct Reply { Status status = Status::Ambiguous; uint64_t value = 0; int32_t monitor = INT32_MIN; };
+struct Reply { Status status = Status::Ambiguous; uint64_t value = 0; int32_t monitor = INT32_MIN; int32_t raw = INT32_MIN; };
 
 constexpr uint32_t sip(uint32_t service, uint32_t command) {
     return 0x02000000u | (service << 8) | command;
@@ -41,17 +41,23 @@ template <class Backend> class Transport {
                 function = 1;
                 continuation = result.x[6];
             }
+            const auto outcome = [&](Status status, uint64_t value = 0) {
+                Reply reply;
+                reply.status = status; reply.value = value;
+                reply.monitor = reply.raw = int32_t(result.x[0]);
+                return reply;
+            };
             switch (int32_t(result.x[0])) {
-            case 0: return {Status::OK, result.x[1]};
+            case 0: return outcome(Status::OK, result.x[1]);
             case -2:
-            case -3: return {Status::Invalid, 0};
-            case -4: return {Status::Unsupported, 0};
-            case -5: return {Status::NoMemory, 0};
+            case -3: return outcome(Status::Invalid);
+            case -4: return outcome(Status::Unsupported);
+            case -5: return outcome(Status::NoMemory);
             case -12:
-                if (busy == 20) return {Status::Busy, 0};
+                if (busy == 20) return outcome(Status::Busy);
                 io.sleep(30);
                 break;
-            default: return {Status::Ambiguous, 0, int32_t(result.x[0])};
+            default: return outcome(Status::Ambiguous);
             }
         }
         return {};
@@ -93,7 +99,9 @@ public:
 template <class TransportType> class PAS {
     TransportType &transport;
     Phase fPhase = Phase::Empty;
+    Reply fLast{};
     Status finish(Reply reply, Phase next) {
+        fLast = reply;
         if (reply.status == Status::Ambiguous) fPhase = Phase::Faulted;
         if (reply.status != Status::OK) return reply.status;
         if (reply.value) return Status::Denied;
@@ -104,6 +112,7 @@ template <class TransportType> class PAS {
 public:
     explicit PAS(TransportType &t) : transport(t) {}
     Phase phase() const { return fPhase; }
+    const Reply &last() const { return fLast; }
     void fault() { fPhase = Phase::Faulted; }
     Status resume() {
         if (fPhase != Phase::Empty && fPhase != Phase::Warm) return Status::Invalid;

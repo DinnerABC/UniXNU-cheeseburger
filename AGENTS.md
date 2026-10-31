@@ -87,3 +87,23 @@ Images, private logs and signing material stay out of Git.
   (`qcom,zap-shader`/`ga540_zap` in the DTB; sagit uses PAS-13). Use the
   vendor ZAP and the PAS ABI, probe SCM read-only before any state change, and
   never bypass secure mode by writing `RBBM_SECVID_TRUST_CNTL`.
+
+## ZAP loader rules (A540)
+
+- Derive the MDT layout from the actual ELF program headers at build/test time.
+  On the A540 ZAP only the relocatable `PT_LOAD` segment (0x5000, 0x1334 bytes)
+  is loadable: metadata = header 0x94 + hash 0x1988 = 0x1A1C, region extent =
+  0x2000 with 1 MiB alignment, code from `.b02`. The earlier 0x4000 estimate
+  wrongly counted the hash segment's `p_memsz`; do not hard-code it.
+- `PAS IS_SUPPORTED` (service 2 command 7) returns 0 on this GPU firmware while
+  init/setup/auth availability is 1. Record it; never treat it as an
+  authorization result or as proof of failure.
+- Flow: `init(metadata_pa)` -> `setup(region_pa, extent)` -> copy image ->
+  `dsb`/cache clean -> `authenticate()`. Fail closed before any CP reset/start.
+  A fresh load does not call `BOOT_SET_REMOTE_STATE`; Android calls it only to
+  re-initialize an image that is already loaded.
+- After authentication the metadata and image pages stay owned and untouched:
+  no CPU read, clear, free or cache operation, and no reuse for other buffers.
+- `cheeseburger-gpu-start=1` always requires this ZAP chain; there is no bypass
+  switch. Record the raw SMC `x0/x1` for every step, plus TrustControl before
+  and after (read only).
