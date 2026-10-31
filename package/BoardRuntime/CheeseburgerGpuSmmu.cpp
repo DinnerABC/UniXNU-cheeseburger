@@ -131,10 +131,8 @@ extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned page
    i,cb_mapdiag[0],cb_mapdiag[1],cb_mapdiag[2],cb_mapdiag[3]);return -2;
  }
  IOLog("CB GPU SMMU map ptes: iova=%llx pages=%u\n",iova,pages);
- IOSleep(8000); // persist the page-walk result before the TLB handshake
  W *sp=smmuMap();if(!sp){cb_mapret[0]=uint64_t(-3);IOLog("CB GPU SMMU map no mmio\n");return -3;}
  IOLog("CB GPU SMMU map pre-tlb: iova=%llx\n",iova);
- IOSleep(8000); // persist the MMIO state before a possibly hanging handshake
  bool ok=tlbSync(*sp,0x8000,true);uint32_t tlb=ok?0:rd(*sp,0x8000+0x7f4);
  IOLog("CB GPU SMMU map ok=%d iova=%llx pages=%u tlb=%x\n",ok?1:0,iova,pages,tlb);
  cb_mapret[0]=ok?0:uint64_t(-4);cb_mapret[1]=tlb;

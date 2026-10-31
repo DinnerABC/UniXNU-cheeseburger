@@ -2,6 +2,17 @@
 
 下一步首帧前黑屏排查流程见 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`；其中返回码勘误覆盖下方旧分析。
 
+## 2026-10-31：CP/GPMU 状态读取 + 五个 buffer 全部映射，整机稳定；进入 CP reset/start
+
+- **CP 状态与五映射成功**（镜像 `570365647142d94573d8943f477ebe5913dc9cd72dea3e2d0376f0e3fe4b5df2`，内核 `aeb7b438…`、payload `1641aa56…`、固件 `7db06b9b…`，args 670；日志 `out/p21/persistent-logs/20261031T103113Z/`，boot `0x50b0c185`，67 rounds，0 写入错误，400 s 自动回 Recovery）：
+  - `GCP0 map=deadbeff r=5`；ring/PM4/PFP/gpmu(3 页)/fence 全部 `r=0`、`MAPD ret=0 tlb=0`，`GCP3` 五个 GPU VA = `0x2000000/0x2008000/0x200d000/0x2012000/0x2015000`。
+  - `GCP2 me=303 vbif=0/f0000 rb=0/0/0/0 st=800001c1 irq=0 trust=1 sec=0`：CP 已 halt；`Status=0x800001c1` 与 sagit `haltedPipelineIdle` 掩码完全一致；TrustControl=1、SECVID base=0。
+  - `GCP4 gready=0 gerr=0 cm3rst=1 prot=0 swrst=0 ahb=1`：GPMU 固件未加载、CM3 处于复位，符合冷启动。
+  - 同轮显示正常（`DISPLAY clients=129 frames=6`、`SWAP transfer=6`），说明 SMMU 映射探针不再造成整屏黑/停住。
+- **上一个“第 4 个映射后停住”的归因修正**：未再复现；本轮差异是 SMMU 寄存器窗口整轮**只映射一次**（此前每个 buffer 映射都新建 IOMemoryMap）并把 CP 状态读取提到映射之前。8 s 落盘间隔仍保留在每步之前，便于再次停住时定位。
+- **本轮（未验证）**：按 `docs/upstream/reference/sagit/QcomGPU/AdrenoStartup.h` 移植 CP `reset() → configure() → start()`（VBIF halt/drain、RBBM SW reset、完整 configure 寄存器表、ME/PFP/RB 基址、`CP_ME_INIT`、RBRead 前进验证），开关 `cheeseburger-gpu-start=1`，只用已有的 GPU 窗口映射，不新增缓冲映射。`HWC G(true)` 表暂未移植（仅省电，默认不复位功能时钟）。诊断行 `GCP5 stage/rc/vbif/me/r/w/irq/cp irq/st/st3`。
+- 判读：`GCP5 rc=0 r=9 w=9` 表示 CP 固件已执行 ME_INIT（真正的 CP 启动里程碑）；`rc<0` 时按 stage/rc 定位是 VBIF 停流、SW reset、configure 回读还是 kick 超时。之后才做 GPMU（0xbabeface）。
+
 ## 2026-10-31：A540 时钟清点、400 s 自动回 Recovery、触摸方向修正
 
 - **GPU 时钟清点（UEFI EFIClock，只读）**：镜像 `eaa7eb87…`（内核 `dd0e4ad9…`、payload `24e72e75…`、固件 `00642106…`），日志 `20261031T051621Z`（boot `0x53b3ffcc`）。窗口尾部块 8161 的 `UP1GPU1` 行：`clock=0 ver=10005`；`VDD_GPU_CX/GX`、`VDD_HLOS1/2_GPU_SMMU` 域 ID 全部解析成功；`gcc_gpu_cfg_ahb_clk` 75 MHz 在跑；`gpucc_gfx3d_clk`/`rbcpr`/`rbbmtimer`/`isense` 关闭、19.2 MHz。同轮 XNU GPU 探针仍 `stage=2`（GPUCC 可读、CX/GX 关闭）。
