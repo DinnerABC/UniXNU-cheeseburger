@@ -23,7 +23,8 @@
 - **SMMU 上下文已建立（空根表）**：新增 `package/BoardRuntime/CheeseburgerGpuSmmu.cpp`，按 sagit 非安全 bank0/SID0 序列分配 4 KiB 物理连续、清洗过的空 AArch64 根表，配置 global SCTLR、CB0（0x1167）、TCR 0x802018、SMR0=0x80000000、S2CR0=0，并做两次 CBn TLB 同步。镜像 `a2ddc42f…`（内核 `502516eb…`、payload `2428a813…`、固件 `9d6ab661…`，args 623），日志 `20261031T065735Z`（boot `0x4e2f3574`，自动回 Recovery）：
   - `SSETUP st=0 root=1606cf000 sctlr=201e36 smr=80000000 s2cr=0 cb=1167 tcr=802018 fsr=400`，无 fault；FSR 0x400 是 AArch64 格式位，符合 sagit 对安静 bank 的说明。
   - 该根表尚未映射任何 buffer，GPU 仍无 DMA；CP 仍 halted。
-- **下一步（核心后端）**：给固件/ring 分配物理连续 buffer 并写入叶子页表（每项清洗），嵌入 a530_pfp/pm4 + a540_gpmu，完成 CP `ME_INIT` 与 GPMU（目标 0xbabeface），再进入 CP ring/PM4 提交与 XNU 用户客户端；sagit 的 `QcomGPU/AdrenoStartup.h`、`AdrenoFirmware.h`、`gpu_smmu.h`/`PageTables.h` 是同一 SoC 的可移植参考。
+- **叶子页表映射已验证**：在 SMMU 上下文中加一级/二级/三级表，把 4 KiB 测试 buffer 映射到 GPU VA `0x1000000`；每页写后 clean，CBn_TLBIALL+TLBSYNC 通过。镜像 `b2404510…`（内核 `c6653ea2…`、payload `d6f7db2f…`、固件 `2c91e9ac…`，args 623），日志 `20261031T071612Z`（boot `0x4fc90115`）：`SMAP st=0 va=1000000 pa=15fad9000 pte=6000015fad9e43`，root0=`15fb3a003`；自动回 Recovery。
+- **下一步（综合探针）**：把 a530_pm4/pfp + a540_gpmu 打成 QGFW 容器并嵌入内核（私有头，不提交），一次启动里完成：固件解析（PFP/PM4 字节数、GPMU words）、ring/固件/GPMU 命令 buffer 的物理分配与 SMMU 多 VA 映射、CP/RBBM/VBIF/TrustControl/SECVID/GPMU 状态读取；确认 halt/非安全状态后再做 CP configure/reset/ME_INIT/GPMU 0xbabeface。sagit 的 `AdrenoStartup.h`、`AdrenoFirmware.h`、`PageTables.h` 是同一 SoC 参考。
 
 ## 2026-10-31：GPU 第 1–2 步——A540 固件/寄存器取证与只读探针（GPU 未上电）
 

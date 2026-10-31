@@ -12,6 +12,7 @@
 #include <string.h>
 extern "C" {
 volatile uint64_t cb_smmu[16];
+volatile uint64_t cb_map[4];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 }
 namespace {
@@ -37,6 +38,41 @@ static bool tlbSync(W &s,unsigned ctx,bool allASIDs){
  return false;
 }
 static void reset(){for(unsigned i=0;i<16;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;}
+static IOBufferMemoryDescriptor *gRootBuf=nullptr;
+static uint64_t gRootPA=0;
+static volatile uint64_t *gRootVA=nullptr;
+static bool allocTable(uint64_t &pa,volatile uint64_t *&va){
+ IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
+ if(!b)return false;
+ IOByteCount span=0;uint64_t p=b->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ void *v=b->getBytesNoCopy();
+ if(!p||(p&4095)||span<4096||!v||(p>>36))return false;
+ memset(v,0,4096);flush_dcache((vm_offset_t)v,4096,FALSE);
+ pa=p;va=(volatile uint64_t*)v;return true;
+}
+static void cleanTable(volatile uint64_t *v){flush_dcache((vm_offset_t)v,4096,FALSE);}
+static void mapTest(W &s,unsigned ctx){
+ cb_map[0]=0xdeadbeef;cb_map[1]=cb_map[2]=cb_map[3]=0;
+ IOBufferMemoryDescriptor *buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
+ if(!buf){cb_map[0]=1;return;}
+ IOByteCount span=0;uint64_t pa=buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ void *va=buf->getBytesNoCopy();
+ if(!pa||(pa&4095)||span<4096||!va||(pa>>36)){cb_map[0]=2;return;}
+ memset(va,0x5a,4096);flush_dcache((vm_offset_t)va,4096,FALSE);
+ uint64_t p1=0,p2=0,p3=0;volatile uint64_t *t1=nullptr,*t2=nullptr,*t3=nullptr;
+ if(!gRootVA||!allocTable(p1,t1)||!allocTable(p2,t2)||!allocTable(p3,t3)){cb_map[0]=3;return;}
+ const uint64_t iova=0x1000000ULL; // 16 MiB, the sagit MinimumVA
+ gRootVA[(iova>>39)&511]=p1|3;cleanTable(gRootVA);
+ t1[(iova>>30)&511]=p2|3;cleanTable(t1);
+ t2[(iova>>21)&511]=p3|3;cleanTable(t2);
+ const uint64_t attrs=3ULL|(1ULL<<6)|(2ULL<<8)|(1ULL<<10)|(1ULL<<11)|(3ULL<<53);
+ t3[(iova>>12)&511]=pa|attrs;cleanTable(t3);
+ if(!tlbSync(s,ctx,true)){cb_map[0]=4;cb_map[1]=iova;cb_map[2]=pa;return;}
+ cb_map[0]=0;cb_map[1]=iova;cb_map[2]=pa;cb_map[3]=t3[(iova>>12)&511];
+ IOLog("CB GPU SMMU map: va=%llx pa=%llx pte=%llx root0=%llx\n",iova,pa,cb_map[3],gRootVA[0]);
+}
 }
 extern "C" void cheeseburger_gpu_smmu_setup(void){
  reset();
@@ -62,21 +98,20 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  if(rd(s,0x800)||rd(s,0xc00)!=0x000200ffu){cb_smmu[0]=5;return;}
  // One physically contiguous, cache-cleaned, zero root table. Keep it for the
  // boot; the mapper that adds leaf entries will reuse it.
- static IOBufferMemoryDescriptor *root=nullptr;
- root=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+ gRootBuf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
    kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
- if(!root){cb_smmu[0]=6;return;}
- IOByteCount span=0;uint64_t pa=root->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
- void *va=root->getBytesNoCopy();
- if(!pa||(pa&4095)||span<4096||!va||(pa>>36)){cb_smmu[0]=7;return;}
- memset(va,0,4096);flush_dcache((vm_offset_t)va,4096,FALSE);
- cb_smmu[1]=pa;cb_smmu[13]=(outBits<<8)|inBits;
+ if(!gRootBuf){cb_smmu[0]=6;return;}
+ IOByteCount span=0;gRootPA=gRootBuf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ gRootVA=(volatile uint64_t*)gRootBuf->getBytesNoCopy();
+ if(!gRootPA||(gRootPA&4095)||span<4096||!gRootVA||(gRootPA>>36)){cb_smmu[0]=7;return;}
+ memset((void*)gRootVA,0,4096);flush_dcache((vm_offset_t)gRootVA,4096,FALSE);
+ cb_smmu[1]=gRootPA;cb_smmu[13]=(outBits<<8)|inBits;
  // Global setup, then bank 0, exactly as the sagit non-secure sequence.
  wr(s,0,(rd(s,0)&~(1u|(3u<<14)|(1u<<13)))|0x1c36);
  wr(s,0x800,0);wr(s,ctx,0);wr(s,0x1800,1);wr(s,0x1000,0x1f300);
  wr(s,ctx+0x10,(7u<<15)|(1u<<4)|(outBits==40?2u:outBits==36?1u:0u));
  wr(s,ctx+0x30,(1u<<23)|(2u<<12)|(64-inBits));
- wr(s,ctx+0x20,(uint32_t)pa);wr(s,ctx+0x24,(uint32_t)(pa>>32));
+ wr(s,ctx+0x20,(uint32_t)gRootPA);wr(s,ctx+0x24,(uint32_t)(gRootPA>>32));
  wr(s,ctx+0x28,0);wr(s,ctx+0x2c,0);wr(s,ctx+0x34,0);wr(s,ctx+0x38,0x44);wr(s,ctx+0x3c,0);
  if(!tlbSync(s,ctx,true)){cb_smmu[0]=8;cb_smmu[5]=rd(s,ctx);return;}
  wr(s,ctx,0x1167);wr(s,0xc00,0);wr(s,0x800,0x80000000u);
@@ -86,5 +121,6 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  cb_smmu[5]=rd(s,ctx);cb_smmu[6]=rd(s,ctx+0x20);cb_smmu[7]=rd(s,ctx+0x24);
  cb_smmu[8]=rd(s,ctx+0x30);cb_smmu[9]=rd(s,ctx+0x58);
  IOLog("CB GPU SMMU: root=%llx sctlr=%x smr=%x s2cr=%x cb=%x tcr=%x fsr=%x ids=%x/%x/%x\n",
-  pa,cb_smmu[2],cb_smmu[3],cb_smmu[4],cb_smmu[5],cb_smmu[8],cb_smmu[9],id0,id1,id2);
+  gRootPA,cb_smmu[2],cb_smmu[3],cb_smmu[4],cb_smmu[5],cb_smmu[8],cb_smmu[9],id0,id1,id2);
+ mapTest(s,ctx);
 }
