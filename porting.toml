@@ -3,11 +3,11 @@ schema_version = 1
 name = "cheeseburger"
 soc = "MSM8998"
 os_profile = "ipados-17.7.11-21H461"
-summary = "Original iPadOS interface with time visible on hardware (UP1, user-confirmed); touch pending, guarded build migration in progress."
+summary = "iPadOS 17.7.11 desktop on hardware with working touch (543 HID reports, user-confirmed), 8 CPUs and 2 GiB; display first frame is intermittent and its CPU scanout is being optimised; GPU, network, audio and power are not started."
 
 [[area]]
 id = "configuration"
-status = "planned"
+status = "partial"
 components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink"]
 paths = ["board.toml", "feeds.toml", "configs/**", "soc/**", "AGENTS.md", "scripts/p21-*"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
@@ -21,7 +21,7 @@ evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result=
 
 [[area]]
 id = "firmware"
-status = "planned"
+status = "partial"
 components = ["DarwinBoot"]
 paths = ["firmware/**", "config/**"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
@@ -35,72 +35,72 @@ evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result=
 
 [[area]]
 id = "cpu"
-status = "planned"
+status = "done"
 components = []
 paths = ["drivers/CheeseburgerArmCpu/**", "soc/msm8998/dts/**"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
 configuration = ["见board.toml及docs/P21_OFFICIAL_ADAPTATION.md；未通过的配置保留guard。"]
 procedure = ["按官方对应porting子系统文档，先来源与接口核对，再编译/打包门禁，最后实机验证。"]
-findings = ["八核拓扑与19.2MHz timer来自捕获FDT，运行基线cpus=1；不能沿用SM8550 GIC传输假设。"]
+findings = ["八核全部上线：持久日志 CPU0-3/CPU4-7 行 online=8，mpidr 0,1,2,3,0x100..0x103，PSCI SMC，SGI/timer 计数持续增长。"]
 completion = ["所选实现及全部板级依赖具有可重复构建记录与明确硬件证据等级。"]
 limits = ["本记录描述迁移目标；planned不否认历史阶段已有实现，也不把历史结果冒充新源码验证。"]
-next_action = ["导出已验证P8适配并解决CPU compatible匹配。"]
+next_action = ["电源/频率策略与热调优未做。"]
 evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result="当前适配与待办记录，非新镜像实机成功声明"}]
 
 [[area]]
 id = "memory"
-status = "planned"
+status = "done"
 components = []
 paths = ["dts/**", "soc/msm8998/dts/**"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
 configuration = ["见board.toml及docs/P21_OFFICIAL_ADAPTATION.md；未通过的配置保留guard。"]
 procedure = ["按官方对应porting子系统文档，先来源与接口核对，再编译/打包门禁，最后实机验证。"]
-findings = ["捕获库存含两段RAM和保留区，common converter要求连续交接范围。"]
+findings = ["2 GiB 管理内存来自 ADT darwinboot 范围（P23 高内存窗口），实机 CPU/内存行与用户态可用。"]
 completion = ["所选实现及全部板级依赖具有可重复构建记录与明确硬件证据等级。"]
 limits = ["本记录描述迁移目标；planned不否认历史阶段已有实现，也不把历史结果冒充新源码验证。"]
-next_action = ["明确库存与交接范围关系，验证所有loader分配及保留区。"]
+next_action = ["更大内存窗口与持久 swap 未验证。"]
 evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result="当前适配与待办记录，非新镜像实机成功声明"}]
 
 [[area]]
 id = "storage"
-status = "planned"
+status = "partial"
 components = ["VerifiedRoot", "RamBlock"]
 paths = ["drivers/CheeseburgerUfs/**", "drivers/VerifiedRoot/**", "patches/**"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
 configuration = ["见board.toml及docs/P21_OFFICIAL_ADAPTATION.md；未通过的配置保留guard。"]
 procedure = ["按官方对应porting子系统文档，先来源与接口核对，再编译/打包门禁，最后实机验证。"]
-findings = ["历史root/SystemOS/owner验证与RAM Data存在，持久化未启用。"]
+findings = ["UFS 读路径可用：分区发布、根卷/SystemOS 挂载、launchd 与桌面均从根卷启动。"]
 completion = ["所选实现及全部板级依赖具有可重复构建记录与明确硬件证据等级。"]
 limits = ["本记录描述迁移目标；planned不否认历史阶段已有实现，也不把历史结果冒充新源码验证。"]
-next_action = ["将warm-link UFS、只读边界和验证根recipe纳入新构建。"]
+next_action = ["持久 Data 未建立（RAM seed），写路径与掉电一致性未验证。"]
 evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result="当前适配与待办记录，非新镜像实机成功声明"}]
 
 [[area]]
 id = "display"
-status = "planned"
+status = "partial"
 components = ["GopFramebuffer"]
 paths = ["drivers/CheeseburgerDisplay/**", "tools/scale/**"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
 configuration = ["见board.toml及docs/P21_OFFICIAL_ADAPTATION.md；未通过的配置保留guard。"]
 procedure = ["按官方对应porting子系统文档，先来源与接口核对，再编译/打包门禁，最后实机验证。"]
-findings = ["R4曾显示UI且有实际缩放拷贝；这不证明当前候选提交链已完成。"]
+findings = ["GOP 扫描可用（桌面可达，frames 15-71）；iOS 渲染 surface 为 1242x2208/stride 5120，驱动 CPU 缩放到 1080x1920；首帧在 sel6 (n,0x80000001) 与 (0,0x80000003) 间间歇；扫描缓冲已改为可缓存写 + 每帧 flush_dcache（待实机确认）。"]
 completion = ["所选实现及全部板级依赖具有可重复构建记录与明确硬件证据等级。"]
 limits = ["本记录描述迁移目标；planned不否认历史阶段已有实现，也不把历史结果冒充新源码验证。"]
-next_action = ["保持依赖加载/构造/注册顺序与swap retirement，完成新构建ABI门禁。"]
+next_action = ["验证缓存写后的帧耗时；仍需 MDP QSEED3 硬件缩放与首帧稳定化；亮度未验证。"]
 evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result="当前适配与待办记录，非新镜像实机成功声明"}]
 
 [[area]]
 id = "input"
-status = "planned"
+status = "partial"
 components = []
 paths = ["drivers/CheeseburgerInput/**"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
 configuration = ["见board.toml及docs/P21_OFFICIAL_ADAPTATION.md；未通过的配置保留guard。"]
 procedure = ["按官方对应porting子系统文档，先来源与接口核对，再编译/打包门禁，最后实机验证。"]
-findings = ["当前仅power/volume和合成Home chord有历史响应；不是完整触屏或原生Home。"]
+findings = ["触摸可用：S3320 over QUP v2.2.1，F01/F12 发现，10 指 80 字节包，HID 合并设备发布；实机 543 条报告、用户确认可点按滑动。"]
 completion = ["所选实现及全部板级依赖具有可重复构建记录与明确硬件证据等级。"]
 limits = ["本记录描述迁移目标；planned不否认历史阶段已有实现，也不把历史结果冒充新源码验证。"]
-next_action = ["将官方HID ABI及实际PMIC读适配纳入设备recipe。"]
+next_action = ["按键仅电源/音量 + Home 组合；多点/边缘手势与 GPIO125 中断模式未验证。"]
 evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result="当前适配与待办记录，非新镜像实机成功声明"}]
 
 [[area]]
@@ -161,28 +161,28 @@ evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result=
 
 [[area]]
 id = "packaging"
-status = "planned"
+status = "done"
 components = []
 paths = ["tools/ram_payload/**", "package/**"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
 configuration = ["见board.toml及docs/P21_OFFICIAL_ADAPTATION.md；未通过的配置保留guard。"]
 procedure = ["按官方对应porting子系统文档，先来源与接口核对，再编译/打包门禁，最后实机验证。"]
-findings = ["历史compressed RAM payload有门禁；官方payload/FAT入口与板卡loader需明确适配。"]
+findings = ["每轮 payload/UEFI/pins/门禁可重复通过，镜像 SHA 与 kernel/payload/ADT 三处 pin 命中。"]
 completion = ["所选实现及全部板级依赖具有可重复构建记录与明确硬件证据等级。"]
 limits = ["本记录描述迁移目标；planned不否认历史阶段已有实现，也不把历史结果冒充新源码验证。"]
-next_action = ["保持已验证解码/边界和Android header，完成新candidate门禁。"]
+next_action = ["构建 guard 仍开启，一键官方 recipe 未完成。"]
 evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result="当前适配与待办记录，非新镜像实机成功声明"}]
 
 [[area]]
 id = "diagnostics"
-status = "planned"
+status = "partial"
 components = []
 paths = ["tools/**", "docs/**", ".github/**", "README.md"]
 inputs = ["捕获FDT及R7/P20历史证据；官方固定提交16e592abee8a550dec8154ed1f38b5ebc4f16213。"]
 configuration = ["见board.toml及docs/P21_OFFICIAL_ADAPTATION.md；未通过的配置保留guard。"]
 procedure = ["按官方对应porting子系统文档，先来源与接口核对，再编译/打包门禁，最后实机验证。"]
-findings = ["R7观察器与新官方审计独立保留，USB及持久日志当前不启用。"]
+findings = ["持久日志窗口 + Recovery 回收可用（2s 轮询、多轮日志已归档）；UEFI 侧 NPA 探针写入窗口尾部。"]
 completion = ["所选实现及全部板级依赖具有可重复构建记录与明确硬件证据等级。"]
 limits = ["本记录描述迁移目标；planned不否认历史阶段已有实现，也不把历史结果冒充新源码验证。"]
-next_action = ["新镜像离线检查全过后才进入身份固定的单次临时启动。"]
+next_action = ["无实时通道：USB CDC-ACM 仅完成阶段 0 只读探针，按用户要求暂停。"]
 evidence = [{kind="source", reference="docs/P21_OFFICIAL_ADAPTATION.md", result="当前适配与待办记录，非新镜像实机成功声明"}]
