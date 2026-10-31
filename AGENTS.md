@@ -83,3 +83,7 @@ Images, private logs and signing material stay out of Git.
   the real firmware/ZAP premises for this SoC first.
 - Keep the `gfx3d` rate at the proven baseline (rate=0) until CP/GPMU and a
   minimal DMA path are verified.
+- ZAP/PAS is a required premise for CP execution on this secure-boot device
+  (`qcom,zap-shader`/`ga540_zap` in the DTB; sagit uses PAS-13). Use the
+  vendor ZAP and the PAS ABI, probe SCM read-only before any state change, and
+  never bypass secure mode by writing `RBBM_SECVID_TRUST_CNTL`.

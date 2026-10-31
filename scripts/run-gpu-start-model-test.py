@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Compile and run the host register model for CheeseburgerGpu::Startup.
+"""Compile and run the host models for the CP startup, SMMU walker and PAS.
 
-Offline only: no IOKit, no device. The result is written under
-out/p21/gpu-cp/host-tests/<UTC>/ together with the source/binary hashes so the
-failure-cleanup design can be audited.
+Offline only: no IOKit, no device. Results are written under
+out/p21/gpu-cp/host-tests/<UTC>/ with source/header/binary hashes so the
+failure-cleanup, walker and PAS state machines can be audited.
 """
 import hashlib
 import json
@@ -14,9 +14,16 @@ import time
 from pathlib import Path
 
 R = Path(__file__).resolve().parents[1]
-SRC = R / 'tests/gpu_start_model.cpp'
-HEADER = R / 'package/BoardRuntime/CheeseburgerGpuStart.h'
 OUT = R / 'out/p21/gpu-cp/host-tests'
+TESTS = [
+    ('gpu_start_model', 'tests/gpu_start_model.cpp'),
+    ('qcom_pas_model', 'tests/qcom_pas_model.cpp'),
+]
+HEADERS = [
+    'package/BoardRuntime/CheeseburgerGpuStart.h',
+    'package/BoardRuntime/CheeseburgerGpuWalk.h',
+    'package/BoardRuntime/QcomPAS.h',
+]
 
 
 def sha(p):
@@ -34,37 +41,39 @@ def main():
     dst = OUT / time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
     dst.mkdir(parents=True)
     cc = compiler()
-    binary = dst / 'gpu_start_model'
-    build = subprocess.run([cc, '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror',
-                            str(SRC), '-o', str(binary)],
-                           capture_output=True, text=True)
+    version = subprocess.run([cc, '--version'], capture_output=True, text=True).stdout.splitlines()[0]
     record = {
-        'result': 'HOST_MODEL_COMPILE_FAIL' if build.returncode else None,
         'compiler': cc,
-        'compiler_version': subprocess.run([cc, '--version'], capture_output=True, text=True).stdout.splitlines()[0],
-        'source': str(SRC.relative_to(R)),
-        'source_sha256': sha(SRC),
-        'header': str(HEADER.relative_to(R)),
-        'header_sha256': sha(HEADER),
-        'build_stdout': build.stdout,
-        'build_stderr': build.stderr,
-        'run_stdout': '',
-        'run_returncode': None,
+        'compiler_version': version,
+        'headers': {h: sha(R / h) for h in HEADERS},
+        'tests': {},
     }
-    if build.returncode:
-        (dst / 'result.json').write_text(json.dumps(record, indent=2) + '\n')
-        print(json.dumps(record))
-        return 2
-    run = subprocess.run([str(binary)], capture_output=True, text=True)
-    record['run_stdout'] = run.stdout
-    record['run_stderr'] = run.stderr
-    record['run_returncode'] = run.returncode
-    record['binary_sha256'] = sha(binary)
-    record['result'] = 'HOST_MODEL_PASS' if run.returncode == 0 else 'HOST_MODEL_FAIL'
+    ok = True
+    for name, src in TESTS:
+        binary = dst / name
+        build = subprocess.run([cc, '-std=c++17', '-O1', '-Wall', '-Wextra', '-Werror',
+                                str(R / src), '-o', str(binary)], capture_output=True, text=True)
+        entry = {
+            'source': src,
+            'source_sha256': sha(R / src),
+            'build_stderr': build.stderr,
+            'result': 'COMPILE_FAIL' if build.returncode else None,
+            'stdout': '', 'stderr': '', 'returncode': None,
+        }
+        if build.returncode:
+            ok = False
+        else:
+            run = subprocess.run([str(binary)], capture_output=True, text=True)
+            entry.update(stdout=run.stdout, stderr=run.stderr, returncode=run.returncode,
+                         binary_sha256=sha(binary),
+                         result='PASS' if run.returncode == 0 else 'FAIL')
+            ok = ok and run.returncode == 0
+        record['tests'][name] = entry
+    record['result'] = 'HOST_MODELS_PASS' if ok else 'HOST_MODELS_FAIL'
     (dst / 'result.json').write_text(json.dumps(record, indent=2) + '\n')
-    print(json.dumps({'result': record['result'], 'dir': str(dst.relative_to(R)),
-                      'stdout': run.stdout.strip(), 'returncode': run.returncode}))
-    return run.returncode
+    summary = {n: {'result': e['result'], 'stdout': e['stdout'].strip()} for n, e in record['tests'].items()}
+    print(json.dumps({'result': record['result'], 'dir': str(dst.relative_to(R)), 'tests': summary}))
+    return 0 if ok else 1
 
 
 if __name__ == '__main__':
