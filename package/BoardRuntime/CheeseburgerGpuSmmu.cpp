@@ -138,6 +138,21 @@ extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned page
  cb_mapret[0]=ok?0:uint64_t(-4);cb_mapret[1]=tlb;
  return ok?0:-4;
 }
+// Read-only software walk of the live tables for diagnostics; no MMIO.
+extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
+ if(!gRootVA||!pte||(iova&4095))return -1;
+ *pte=0;
+ volatile uint64_t *t=gRootVA;
+ for(unsigned level=0;level<3;++level){
+  const uint64_t e=t[(iova>>(39-9*level))&511];
+  if(!e)return -2;
+  if(level==2){*pte=e;return (e&3)==3?0:-3;}
+  if((e&0xfffULL)!=3)return -4;
+  t=findTable(e&~0xfffULL);
+  if(!t)return -5;
+ }
+ return -6;
+}
 extern "C" void cheeseburger_gpu_smmu_setup(void){
  reset();
  W *smp=smmuMap();if(!smp){cb_smmu[0]=1;return;}

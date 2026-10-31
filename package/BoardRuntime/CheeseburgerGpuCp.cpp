@@ -21,10 +21,11 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 extern "C" {
-volatile uint64_t cb_cp[64];
+volatile uint64_t cb_cp[80];
 extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
+int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
 namespace {
@@ -100,7 +101,7 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
-static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<64;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
+static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<80;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 // The reset/configure/start state machine lives in CheeseburgerGpuStart.h so a
 // host register model can inject every failure point offline.
 struct Mmio {
@@ -213,6 +214,16 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    cb_cp[38]=3;cb_cp[39]=uint64_t(int32_t(rc));
    cb_cp[42]=rec.read;cb_cp[43]=rec.write;cb_cp[44]=rec.irq;cb_cp[45]=rec.cpIrq;
    cb_cp[46]=m.read(CheeseburgerGpu::Status3);cb_cp[47]=m.read(CheeseburgerGpu::Status);
+   cb_cp[64]=m.read(CheeseburgerGpu::MEBase);cb_cp[65]=m.read(CheeseburgerGpu::MEBase+4);
+   cb_cp[66]=m.read(CheeseburgerGpu::PFPBase);cb_cp[67]=m.read(CheeseburgerGpu::PFPBase+4);
+   cb_cp[68]=m.read(CheeseburgerGpu::RBBase);cb_cp[69]=m.read(CheeseburgerGpu::RBBase+4);
+   cb_cp[70]=m.read(CheeseburgerGpu::RBControl);
+   cb_cp[71]=m.read(CheeseburgerGpu::CPAddrModeCntl);cb_cp[72]=m.read(CheeseburgerGpu::CPProtectCntl);
+   W sm;if(mapw(sm,0x5040000,0x10000)){
+    cb_cp[73]=rd(sm,0x8000);cb_cp[74]=rd(sm,0x8030);
+    cb_cp[75]=rd(sm,0x8020);cb_cp[76]=rd(sm,0x8024);
+    cb_cp[77]=rd(sm,0x800);cb_cp[78]=rd(sm,0xc00);}
+   {uint64_t pte=0;if(cheeseburger_gpu_smmu_lookup(ring.gva,&pte)==0)cb_cp[79]=pte;}
    captureFaults(m);
    IOLog("CB GPU start: kick rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x\n",rc,
     uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
