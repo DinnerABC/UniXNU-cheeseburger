@@ -137,3 +137,7 @@ Images, private logs and signing material stay out of Git.
   and barrier before reading it, and report register RPTR/WPTR, scratch value,
   the fence leaf PTE and the global/secure/CB0 fault syndromes together; a
   cached zero is not evidence that the CP did not write.
+- A failed kick can leave the GPU AHB stalled: failure cleanup must use posted
+  writes (no trailing DSB) and must not read GPU/SMMU registers afterwards. The
+  Record already carries the live status/IRQ values; log those and return so
+  the failure is observable instead of dying on the stalled bus.

@@ -64,9 +64,12 @@ template <class R> class Startup {
     uint32_t rd(uint32_t off) { return r.read(off); }
 
     void haltBestEffort() {
-        // Only writes; a dead bus must not turn cleanup into an unbounded wait.
-        wr(MEControl, Halt);
-        wr(VBIFHalt, 15);
+        // Posted writes only: a failed kick can leave the GPU AHB stalled, and
+        // the trailing DSB of a normal write is what turns cleanup into an
+        // unbounded wait. The halt still takes effect; the caller observes it
+        // from the Record rather than by reading the stalled bus.
+        r.writePosted(MEControl, Halt);
+        r.writePosted(VBIFHalt, 15);
     }
     int fail(Record &rec, int rc, unsigned stage) {
         r.mark("fail");

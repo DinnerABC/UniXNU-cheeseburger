@@ -365,3 +365,15 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
   - scratch RPTR 读取前先 `dsb`、按 VA flush（clean+invalidate）再 `dsb`，读后 `dmb`；同时记录
     寄存器 RPTR/WPTR、scratch 值、fence 叶子 PTE、nsGFSR/nsGFSYNR、secure GFSYNR 与 CB0 FSYNR，
     避免把 CPU 缓存的旧 0 当成“GPU 未写回”。
+
+### 11.10 第六轮：kick 失败与总线停住（boot `0x51da9190`，镜像 `0e98003f…`）
+
+- 心跳（boot 过滤）：`halt/ack/idle/swrst/cm3/ready` → `cfg/addr/kick` → `fail`，之后 tick 停止；
+  控制台最后一行是 reset（115.5 s），`kick rc` 未打印；11 rounds、frames=0；设备仍在约 400 s 自动回 Recovery。
+- 说明 start 已经进入 kick 并在失败路径中停住；`fail` 标记先于 `haltBestEffort()` 的 `MEControl/VBIFHalt`
+  写，随后 UFS/console/心跳一起停止——失败清理里的 `dsb sy` 等在可能已停住的 GPU AHB 上。
+- `SMICRO before=178 after=178 impl0=0 result=0`：micro-MMU 未处于 halt；`SSETUP st=0`。
+- 第七轮修正：失败清理改为 **posted write（无尾部 DSB）**，失败后不再读 GPU/SMMU 寄存器，
+  只用 Record 中已捕获的 live 值打印 `kick FAILED rc/r/w/irq/cpirq/st/st3/me/vbif` 并返回；
+  宿主模型新增 error-IRQ 用例与 posted-write 断言。这样下轮可直接看到首个明确失败点（错误中断或超时），
+  不再在总线上丢证据。

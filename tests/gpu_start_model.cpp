@@ -14,11 +14,11 @@
 using namespace CheeseburgerGpu;
 
 struct Mock {
-    enum Fail { None, VbifAck, Idle, MeNotHalt, SwReset, Cm3, Kick };
+    enum Fail { None, VbifAck, Idle, MeNotHalt, SwReset, Cm3, Kick, ErrorIrq };
     Fail fail = None;
     std::vector<uint32_t> reg = std::vector<uint32_t>(0x40000 / 4, 0);
     bool running = false;
-    unsigned unhaltWrites = 0, rbWriteWrites = 0, submitWrites = 0, rbControlWrites = 0, delays = 0;
+    unsigned unhaltWrites = 0, rbWriteWrites = 0, submitWrites = 0, rbControlWrites = 0, delays = 0, posted = 0;
     char marks[64][16] = {};
     unsigned markCount = 0;
 
@@ -26,7 +26,7 @@ struct Mock {
     void reset() {
         std::fill(reg.begin(), reg.end(), 0);
         running = false;
-        unhaltWrites = rbWriteWrites = submitWrites = rbControlWrites = delays = 0;
+        unhaltWrites = rbWriteWrites = submitWrites = rbControlWrites = delays = posted = 0;
         markCount = 0;
         std::memset(marks, 0, sizeof marks);
         reg[MEControl / 4] = Halt;       // cold CP is halted
@@ -40,6 +40,7 @@ struct Mock {
         if (o == RBBMSwReset) return fail == SwReset ? 1 : 0;
         if (o == GPMUCM3SysReset) return fail == Cm3 ? 0 : 1;
         if (o == GPMUReady || o == GPMUError) return 0;
+        if (o == InterruptStatus && fail == ErrorIrq) return ErrorIRQs;
         return reg[o / 4];
     }
     void write(uint32_t o, uint32_t value) {
@@ -55,6 +56,7 @@ struct Mock {
             }
         }
     }
+    void writePosted(uint32_t o, uint32_t value) { ++posted; write(o, value); }
     void delay(unsigned) { ++delays; }
     void mark(const char *tag) {
         if (markCount < 64) {
@@ -188,6 +190,20 @@ int main() {
         halted_after_failure(m, "kick/halted");
         // The first doorbell may be lost while the CP leaves reset; the retry is bounded.
         check(m.submitWrites == 2 && m.unhaltWrites == 1, "kick/bounded-retry");
+        check(m.posted == 2, "kick/posted-halt");
+    }
+    // An error interrupt fails the kick immediately; cleanup must not block.
+    {
+        Mock m; m.fail = Mock::ErrorIrq;
+        Startup<Mock> engine(m);
+        Record rec;
+        check(engine.reset(rec) == 0, "errirq/reset");
+        volatile uint32_t ring[RingDwords] = {0};
+        int rc = engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec);
+        check(rc == -3, "errirq/rc");
+        check(rec.abandoned && (rec.irq & ErrorIRQs), "errirq/record");
+        check(m.posted == 2, "errirq/posted-halt");
+        halted_after_failure(m, "errirq/halted");
     }
     // start() without reset must not touch the ring registers.
     {

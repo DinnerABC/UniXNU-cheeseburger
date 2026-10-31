@@ -112,6 +112,7 @@ struct Mmio {
  volatile uint32_t *v=nullptr;
  uint32_t read(uint32_t o){uint32_t x=v[o/4];__asm__ volatile("dmb sy":::"memory");return x;}
  void write(uint32_t o,uint32_t x){__asm__ volatile("dsb sy":::"memory");v[o/4]=x;__asm__ volatile("dsb sy":::"memory");}
+ void writePosted(uint32_t o,uint32_t x){__asm__ volatile("dsb sy":::"memory");v[o/4]=x;}
  void delay(unsigned us){IODelay(us);}
  void publish(){__asm__ volatile("dsb oshst":::"memory");}
  void clean(volatile void *p,unsigned n){flush_dcache((vm_offset_t)p,n,FALSE);}
@@ -266,7 +267,18 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    rc=engine.start((volatile uint32_t*)ring.va,ring.bytes/4,ring.gva,pm4.gva,pfp.gva,fence.gva,rec);
    cb_cp[38]=3;cb_cp[39]=uint64_t(int32_t(rc));
    cb_cp[42]=rec.read;cb_cp[43]=rec.write;cb_cp[44]=rec.irq;cb_cp[45]=rec.cpIrq;
-   cb_cp[46]=m.read(CheeseburgerGpu::Status3);cb_cp[47]=m.read(CheeseburgerGpu::Status);
+   cb_cp[46]=rec.status3;cb_cp[47]=rec.status;cb_cp[60]=rec.me;cb_cp[61]=rec.vbif;
+   if(rc!=0){
+    // A failed kick can leave the GPU AHB stalled. The Record already holds
+    // the live values read by the state machine; do not touch GPU or SMMU
+    // registers here or the diagnosis dies with the bus.
+    IOLog("CB GPU start: kick FAILED rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x me=%x vbif=%x src=%x\n",
+     rc,uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
+     uint32_t(cb_cp[47]),uint32_t(cb_cp[46]),uint32_t(cb_cp[60]),uint32_t(cb_cp[61]),
+     uint32_t(cb_cp[82]));
+    IOSleep(8000);
+    return;
+   }
    cb_cp[64]=m.read(CheeseburgerGpu::MEBase);cb_cp[65]=m.read(CheeseburgerGpu::MEBase+4);
    cb_cp[66]=m.read(CheeseburgerGpu::PFPBase);cb_cp[67]=m.read(CheeseburgerGpu::PFPBase+4);
    cb_cp[68]=m.read(CheeseburgerGpu::RBBase);cb_cp[69]=m.read(CheeseburgerGpu::RBBase+4);
