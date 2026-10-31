@@ -10,8 +10,9 @@
   - `GCP4 gready=0 gerr=0 cm3rst=1 prot=0 swrst=0 ahb=1`：GPMU 固件未加载、CM3 处于复位，符合冷启动。
   - 同轮显示正常（`DISPLAY clients=129 frames=6`、`SWAP transfer=6`），说明 SMMU 映射探针不再造成整屏黑/停住。
 - **上一个“第 4 个映射后停住”的归因修正**：未再复现；本轮差异是 SMMU 寄存器窗口整轮**只映射一次**（此前每个 buffer 映射都新建 IOMemoryMap）并把 CP 状态读取提到映射之前。8 s 落盘间隔仍保留在每步之前，便于再次停住时定位。
-- **本轮（未验证）**：按 `docs/upstream/reference/sagit/QcomGPU/AdrenoStartup.h` 移植 CP `reset() → configure() → start()`（VBIF halt/drain、RBBM SW reset、完整 configure 寄存器表、ME/PFP/RB 基址、`CP_ME_INIT`、RBRead 前进验证），开关 `cheeseburger-gpu-start=1`，只用已有的 GPU 窗口映射，不新增缓冲映射。`HWC G(true)` 表暂未移植（仅省电，默认不复位功能时钟）。诊断行 `GCP5 stage/rc/vbif/me/r/w/irq/cp irq/st/st3`。
-- 判读：`GCP5 rc=0 r=9 w=9` 表示 CP 固件已执行 ME_INIT（真正的 CP 启动里程碑）；`rc<0` 时按 stage/rc 定位是 VBIF 停流、SW reset、configure 回读还是 kick 超时。之后才做 GPMU（0xbabeface）。
+- **CP reset/start 第一轮结果**（镜像 `64fdf3d6…`，内核 `e2e767c0…`、payload `1103ba35…`、固件 `b7840be3…`，args 670；日志 `out/p21/persistent-logs/20261031T104613Z/`，boot `0x5121380b`，66 rounds，400 s 自动回 Recovery）：`GCP5 stage=3 rc=-4 vbif=f000f me=303 r=0 w=9 irq=0 cpirq=0 st=c00003c1 st3=100000`。即 reset 与 configure 全部通过（否则 rc 为 -1..-2）、`VBIFHalted&15=0xf`、`CP_ME_INIT` 已写入 ring（WPTR=9），但 **CP 从未推进 RBRead（=0）**，且 `InterruptStatus`/`CPInterruptStatus` 全 0；`Status` 只多出 bit30（GPU_BUSY_IGN_AHB_CP），说明 CP 已唤醒但不取 ring。结论：CP 微码没有执行，不是 reset/configure 失败。
+- **下一轮假设与改动（未验证）**：冷状态 `TrustControl=1`（secure 模式），sagit 的提交前提要求 `TrustControl==0`，Linux a5xx 在无 ZAP 时用 `RBBM_SECVID_TRUST_CNTL=0` 手动退出安全模式；同时把 CB0 SCTLR 从 `0x1167` 改为 sagit 实测的 `0x1027`（M|EAE|CFCFG|CFRE，无 CFIE/HUPCF；`0x1167` 会在意外 context fault 时 halt SMMU，可能静默卡住 CP 取指）。并捕获 `CP_HW_FAULT/CP_PROTECT_STATUS/CP_AHB_FAULT` 与 SMMU `CB0_FSR/GFSR`，kick 等待延长到约 3 s。诊断行 `GCP6 trust/cpcnl/cphw/cpprot/cphb/smfsr/smg`。
+- 判读：若 `GCP6 trust=0` 且 `GCP5 r=9` → secure 模式是根因；若仍 r=0，则看 `smfsr/smg`（SMMU 取指 fault）或 `cphw/cpprot`（CP 内部 fault）决定是修页表/stream 还是 CP 配置。
 
 ## 2026-10-31：A540 时钟清点、400 s 自动回 Recovery、触摸方向修正
 

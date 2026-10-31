@@ -20,7 +20,7 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 extern "C" {
-volatile uint64_t cb_cp[48];
+volatile uint64_t cb_cp[56];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 }
@@ -98,7 +98,7 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
-static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<48;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
+static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<56;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 // ---- CP reset/configure/start, ported from the pinned sagit AdrenoStartup.h
 // (Linux v6.12 a5xx_gpu.c). Registers here are DWORD indices in the sagit
 // enum, so each access multiplies by four.
@@ -163,7 +163,19 @@ static int gpuReset(G &g){
  g.wr(kGPMUCM3SysReset,1);g.wr(kGPMUReady,0);g.wr(kGPMUError,0);
  if(g.rd(kGPMUCM3SysReset)!=1||g.rd(kGPMUReady)||g.rd(kGPMUError))return -6;
  cb_cp[41]=g.rd(kMEControl);
+ // No ZAP/PAS handoff in this kernel, so take Linux a5xx_gpu.c's fallback
+ // and leave secure mode by clearing RBBM_SECVID_TRUST_CNTL. sagit's submit
+ // path also refuses to run while TrustControl is non-zero.
+ g.wr(kTrustControl,0);
+ cb_cp[48]=g.rd(kTrustControl);
+ cb_cp[49]=g.rd(0x831*4); // CP_CNTL baseline must be zero
  return 0;
+}
+static void captureFaults(G &g){
+ cb_cp[50]=g.rd(0xb1a*4); // CP_HW_FAULT
+ cb_cp[51]=g.rd(0xb1c*4); // CP_PROTECT_STATUS
+ cb_cp[52]=g.rd(0xb1b*4); // CP_AHB_FAULT
+ W sm;if(mapw(sm,0x5040000,0x10000)){cb_cp[53]=rd(sm,0x8058);cb_cp[54]=rd(sm,0x48);}
 }
 // Loads the CP microcode addresses and submits CP_ME_INIT, so a true result
 // means the CP firmware actually advanced RBRead through the ring.
@@ -186,17 +198,18 @@ static int gpuStart(G &g,volatile uint32_t *ring,unsigned ringDwords,uint64_t ri
  flush_dcache((vm_offset_t)ring,ringDwords*4,FALSE);
  g.publish();g.wr(kVBIFHalt,0);g.wr(kMEControl,0);
  g.publish();g.wr(kRBWrite,cursor);
- for(unsigned waited=0;waited<100000;waited+=10){
+ for(unsigned waited=0;waited<300000;waited+=10){
   const uint32_t irq=g.rd(kInterruptStatus),cpirq=g.rd(kCPInterruptStatus);
   if((irq&kErrorIRQs)||(cpirq&0x3f)){cb_cp[44]=irq;cb_cp[45]=cpirq;return -3;}
   const uint32_t read=g.rd(kRBRead);
   if(read==cursor&&!(g.rd(kStatus)&~1u)&&!(g.rd(kStatus3)&(1u<<24))){
-   cb_cp[42]=read;cb_cp[43]=g.rd(kRBWrite);return 0;}
+   cb_cp[42]=read;cb_cp[43]=g.rd(kRBWrite);captureFaults(g);return 0;}
   g.delay(10);
  }
  cb_cp[42]=g.rd(kRBRead);cb_cp[43]=g.rd(kRBWrite);
  cb_cp[44]=g.rd(kInterruptStatus);cb_cp[45]=g.rd(kCPInterruptStatus);
  cb_cp[46]=g.rd(kStatus3);cb_cp[47]=g.rd(kStatus);
+ captureFaults(g);
  return -4;
 }
 }
@@ -268,7 +281,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   IOSleep(8000);
   int rc=gpuReset(g);
   cb_cp[39]=uint64_t(int32_t(rc));
-  IOLog("CB GPU start: reset rc=%d me=%x vbif=%x\n",rc,uint32_t(cb_cp[41]),uint32_t(cb_cp[40]));
+  IOLog("CB GPU start: reset rc=%d me=%x vbif=%x trust=%x cpcnl=%x\n",rc,
+   uint32_t(cb_cp[41]),uint32_t(cb_cp[40]),uint32_t(cb_cp[48]),uint32_t(cb_cp[49]));
   IOSleep(8000);
   if(rc==0){
    cb_cp[38]=2;
@@ -278,6 +292,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    IOLog("CB GPU start: kick rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x\n",rc,
     uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
     uint32_t(cb_cp[47]),uint32_t(cb_cp[46]));
+   IOLog("CB GPU start: faults cp=%x/%x/%x smfsr=%x smg=%x\n",
+    uint32_t(cb_cp[50]),uint32_t(cb_cp[51]),uint32_t(cb_cp[52]),
+    uint32_t(cb_cp[53]),uint32_t(cb_cp[54]));
   }
   IOSleep(8000);
  }
