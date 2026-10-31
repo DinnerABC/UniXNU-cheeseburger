@@ -5,7 +5,8 @@
 **第二次 GPU 审计勘误：D 轮后续 tick 属于旧 boot，不能证明 D 仍活跃；详情与决策见 `docs/P21_GPU_CP_SECOND_REVIEW_20261031.md`。**
 
 
-**第一轮合并修正结果（boot `0x51cd61ff`）**：TTBR hi=1 因 root PA `0x1204a7000`>4 GiB（非异常）、S2CR 原始值 0、叶子 PTE 指向 ring PA；reset/configure/地址/页表/stream 自洽；心跳分区/过滤/gaps 正常；`RPTR=0`、无 fault、`trust=1`。已确认 **ZAP/PAS 缺失**（DTB `qcom,zap-shader`/`ga540_zap`，sagit 用 PAS-13，本机 UEFI/XNU 均无链路）；下一分支为实现 PAS/ZAP（建议移植 sagit SCMPAS/SMCCC 到 XNU，先 host 测试，再一次受控启动）。
+
+**SIP/PAS availability 探针（boot `0x52c594dc`）**：镜像 `8061ebaf…`、内核 `4b1fa291…`，66 rounds 自动回；`PAS0 st=0 smc64=1 scm=1 resume=1 init=1 setup=1 auth=1 down=1 sup7=1 sup=0` → **XNU EL1 可直达 PAS，可直接实现 ZAP 装载**（不需 UEFI loader）。ZAP 设计：metadata=`.mdt` 原样 0x1A1C、region 0x4000、ph2→+0/ph1→+0x2000，PAS init→setup→auth，之后只读确认 TrustControl 再 CP start。**第一轮合并修正结果（boot `0x51cd61ff`）**：TTBR hi=1 因 root PA `0x1204a7000`>4 GiB（非异常）、S2CR 原始值 0、叶子 PTE 指向 ring PA；reset/configure/地址/页表/stream 自洽；心跳分区/过滤/gaps 正常；`RPTR=0`、无 fault、`trust=1`。已确认 **ZAP/PAS 缺失**（DTB `qcom,zap-shader`/`ga540_zap`，sagit 用 PAS-13，本机 UEFI/XNU 均无链路）；下一分支为实现 PAS/ZAP（建议移植 sagit SCMPAS/SMCCC 到 XNU，先 host 测试，再一次受控启动）。
 **完整现状/证据/决策选项见 `docs/P21_GPU_CP_FULL_REPORT_20261031.md`（2026-10-31，供审计决定）。**
 GPU 只读审计见 `docs/P21_ADRENO540_REVIEW_20261031.md`；依据审计确定的最新修改方向见 `docs/P21_GPU_CP_DIRECTION_20261031.md`（P0 证据冻结 → P1 reset 失败路径 → P2 独立存活判据 → P3 SMMU/CP 验证 → P4 分阶段）。当前候选门禁及 pins 为旧轮记录，不能证明最新镜像通过。
 

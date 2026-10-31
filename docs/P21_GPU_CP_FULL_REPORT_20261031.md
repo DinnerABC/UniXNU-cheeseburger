@@ -78,6 +78,34 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
      把 ZAP 纳入 payload/ESP 并做 handoff；改动面更大。
 - 约束：不写 `TRUST_CNTL` 绕过；使用设备原始 ZAP 与 PAS ABI；PAS 失败/超时按 QcomSecure 语义隔离，不伪造成功。
 
+### 2.12 ZAP 固件格式与 PAS 装载设计（2026-10-31，离线）
+
+- `a540_zap.mdt` / `.elf` / `.b00` 共享 ELF32 头与 3 个 program header（0x94 = 52 + 3×32）：
+  - ph1：`p_flags=0x2200000`（type hash 0x2000000）、`p_paddr=0x7000`、filesz `0x1988`、memsz `0x2000`；
+  - ph2：`p_flags=0x8000007`（含 RELOCATABLE 0x8000000）、`p_paddr=0x5000`、filesz/memsz `0x1334`。
+- 按 Linux `mdt_loader.c`：镜像可重定位 → `PAS init`（metadata = ELF 头 + hash 段）→
+  `PAS mem_setup(region_pa, max-min = 0x4000)` → 把段相对 `min_addr(0x5000)` 装入 region
+  （ph2 在 +0，ph1 在 +0x2000）→ `PAS auth_and_reset(5)`；ZAP 执行后 GPU 应离开 secure 模式。
+- 计划：私有嵌入 `.mdt/.elf`，分配 16 KiB 物理连续非缓存区，按上述顺序调用 PAS，随后只读确认
+  `TrustControl==0` 再恢复 CP start。先运行**只读 availability 探针**（本轮），不改 PAS 状态。
+
+### 2.13 SIP/PAS availability 探针结果（2026-10-31，boot `0x52c594dc`）
+
+- 镜像 `8061ebaf…`、内核 `4b1fa291…`，66 rounds，自动复位、无黑屏。
+- `PAS0 st=0 smc64=1 scm=1 resume=1 init=1 setup=1 auth=1 down=1 sup7=1 sup=0`：
+  - EL1 的 64-bit SMCCC 可用；SCM availability、PAS resume/init/setup/auth/shutdown 全部存在；
+  - `sup`（service 2 cmd 7 的返回值）为 0，但逐命令 availability 均为 1，按可用处理。
+- 其余状态不变：`GCP5 rc=-4 r=0 w=9`、`trust=1`、CP/SMMU fault 0；`GCP10` 同前（TTBR hi=1 由 root>4 GiB 解释）。
+- **结论：本机 XNU 可以直接实现 PAS/ZAP 装载**，不需要 UEFI pre-XNU loader。
+- ZAP 装载设计（已按 Linux `mdt_loader` 核对）：
+  - metadata = `a540_zap.mdt` 原样（ELF 头/phdrs 0x94 + hash 段 0x1988 = **0x1A1C = 6684 字节**），
+    物理连续、4 KiB 对齐缓冲；
+  - 区域大小 `0x4000`（16 KiB）；装载：ph2（file off `0x3000`, len `0x1334`）→ region+0；
+    ph1（off `0x1000`, len `0x1988`）→ region+`0x2000`；
+  - 顺序：PAS init(metadata_pa) → mem_setup(region_pa, 0x4000) → auth_and_reset(5)；
+    之后只读检查 `TrustControl` 是否变为 0，再执行 CP reset/start；
+  - 缓冲在 auth 后保持存活（TZ 引用），失败时不启动 CP、保持 halt 并记录阶段。
+
 ## 3. 轮次表（全部为实机日志）
 
 | 轮次 | boot ID | 镜像/内核（前 12/12） | 关键配置 | 结果 |
