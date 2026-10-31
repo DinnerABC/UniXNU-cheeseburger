@@ -421,3 +421,25 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
   `PAR` 故障或超时 → 已定位为 CPU 配置的 SMMU 上下文问题。该诊断不改变任何安全状态。
 - 本轮候选（顺序修正 + 安全读集 + ATOS）已在设备缺席时离线构建、门禁通过；设备返回并回收
   round 8 窗口后再单次启动。
+
+### 11.15 round 8 窗口与失败路径收紧（boot `0x53b77b78`）
+
+- 回收 `out/p21/persistent-logs/20261031T210524Z/`：心跳 `halt/ack/idle/swrst/cm3/ready → cfg/addr/kick → fail`
+  后停止（11 rounds），控制台最后一行是 `reset rc=0`，`kick FAILED` 未打印；设备黑屏、手动回 Recovery。
+- 与 round 7（posted 清理、无失败路径 scratch/SMMU 读）对比，停机发生在 round 8 新增的失败路径
+  scratch flush/读取或 SMMU fault 读取中；其中 SMMU NS 别名/secure syndrome 是此前从未在本机读过的寄存器。
+- 收紧：失败路径**不读任何 SMMU 寄存器**，只做 `dsb` → 读取已分配时 clean+invalidate 的 fence scratch →
+  `dmb`，然后打印 Record 的 rc/irq/status/me/vbif 与 scratch；SMMU fault 只在健康成功路径记录。
+- 顺序修正（reset → ME_INIT → ZAP auth）与 ATOS 探针保留；候选需重编后再单次启动。
+
+### 11.16 round 9c：ATOS 硬件 walk 超时；补 vendor ACTLR 与 halt 路径
+
+- boot `0x508514bc`（镜像 `aad7bbaa…`）：`CB GPU SMMU atos: ring par=ffffffffffffffff rc=-2 pm4=… rc2=-2
+  expect=10a244000/10a24c000` —— **no-halt ATOS 超时**；`kick FAILED rc=-4 r=0 w=9 irq=0 st=c00003c1
+  me=404 scratch=0`，系统正常、66 rounds 自动回。顺序改为 reset→ME_INIT→auth 后仍不取 ring。
+- 对照 vendor `arm-smmu-msm8998.c`：context init 在 SCTLR 前写 CB ACTLR =
+  OSH(28)|ISH(29)|NSH(30) = **0x70000000**（本机此前从未写）；hard `iova_to_phys_hard`
+  会先 halt micro-MMU（LOCAL_HALT_REQ bit2，等 IDLE bit3）再写 ATS1PR。
+- 本轮适配：设置 CB ACTLR；ATOS 先 no-halt，超时则按 vendor hard 路径 halt→ATOS→resume，并记录
+  原始 micro 控制/ATSR/PAR；halt/resume 失败（rc -3/-4）时 CP 门禁直接停用（`cb_cp[38]=6`）。
+- ZAP0 行增加 fw-size 哨兵，未执行 ZAP 的轮次不再打印伪零行。

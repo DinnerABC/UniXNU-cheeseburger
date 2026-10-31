@@ -155,3 +155,13 @@ Images, private logs and signing material stay out of Git.
   and record the raw PAR plus the expected PA. A software PTE lookup does not
   prove the hardware walk; the ATOS result localizes a fetch stall to the
   context or away from it.
+- Failure-path SMMU reads are unsafe on this board: a failed kick followed by
+  reading the SMMU fault registers black-screened the device and stopped UFS
+  and the heartbeat. Read only the CPU-owned scratch page on failure; record
+  the SMMU faults on the healthy success path instead.
+- Program the Qualcomm SMMU-v2 CB ACTLR (bits 28..30 set = 0x70000000,
+  vendor ACTLR_QCOM_OSH/ISH/NSH) before SCTLR; the vendor context init does
+  this and it affects TLB/page-walk coherency. A no-halt ATOS that times
+  out falls back to the vendor hard path: set LOCAL_HALT_REQ, wait IDLE, write
+  ATS1PR, read PAR, then clear the request and verify it; a halt/resume failure
+  gates the CP start.

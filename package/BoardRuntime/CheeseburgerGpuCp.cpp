@@ -21,7 +21,7 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 extern "C" {
-volatile uint64_t cb_cp[112];
+volatile uint64_t cb_cp[128];
 extern volatile uint64_t cb_smmu[24];
 extern volatile uint64_t cb_zap[32];
 extern volatile uint64_t cb_gpu[64];
@@ -29,7 +29,7 @@ void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
-int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *);
+int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
@@ -106,7 +106,7 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
 }
-static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<112;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
+static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<128;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 // The reset/configure/start state machine lives in CheeseburgerGpuStart.h so a
 // host register model can inject every failure point offline.
 struct Mmio {
@@ -218,11 +218,11 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  // Hardware walk of the installed tables before any CP write. A matching PAR
  // proves the SMMU can translate the ring/firmware; a fault localizes the
  // fetch stall to the CPU-programmed context instead of the CP itself.
- {uint64_t par=0,par2=0;int ar=cheeseburger_gpu_smmu_atos(ring.gva,&par);
-  int ar2=cheeseburger_gpu_smmu_atos(pm4.gva,&par2);
-  cb_cp[109]=par;cb_cp[110]=uint64_t(int32_t(ar));cb_cp[111]=par2;
-  IOLog("CB GPU SMMU atos: ring par=%llx rc=%d pm4=%llx rc2=%d expect=%llx/%llx\n",
-   par,ar,par2,ar2,ring.pa,pm4.pa);}
+ {uint64_t par=0;int ar=cheeseburger_gpu_smmu_atos(ring.gva,&par,&cb_cp[112]);
+  cb_cp[109]=par;cb_cp[110]=uint64_t(int32_t(ar));cb_cp[111]=ring.pa;
+  IOLog("CB GPU SMMU atos: iova=%llx par=%llx rc=%d expect=%llx ctl=%llx atsr=%llx/%llx halt=%llx rc2=%lld resume=%llx atsr2=%llx\n",
+   ring.gva,par,ar,ring.pa,cb_cp[112],cb_cp[113],cb_cp[114],cb_cp[115],
+   (long long)cb_cp[117],cb_cp[118],cb_cp[119]);}
  IOLog("CB GPU CP: fw=%u pm4=%u pfp=%u gpmu=%u ring=%u map=%u me=%x vbif=%x/%x trust=%x\n",
   gpu_firmware_size,fw.cpBytes(0),fw.cpBytes(1),fw.gpmuWords(),ring.bytes,seq,
   uint32_t(cb_cp[9]),uint32_t(cb_cp[10]),uint32_t(cb_cp[11]),uint32_t(cb_cp[18]));
@@ -247,8 +247,10 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   IOSleep(8000);
   if(start>=2){cb_cp[38]=9;IOSleep(8000);return;}  // log-only: no GPU write
   // A failed micro-MMU resume leaves the translation pipeline halted; never
-  // reach a CP kick in that state.
+  // reach a CP kick in that state. The same applies when the ATOS fallback
+  // could not halt or resume the micro-MMU.
   if((int64_t)cb_smmu[19]<0){cb_cp[38]=7;cb_cp[39]=uint64_t(int64_t(cb_smmu[19]));IOSleep(8000);return;}
+  if((int64_t)cb_cp[110]<=-3){cb_cp[38]=6;cb_cp[39]=cb_cp[110];IOSleep(8000);return;}
   // Android a5xx_pm_resume cores first; without them the CP cannot execute
   // even though every RBBM read succeeds. Log before the first write.
   powerCore(gp,&cb_cp[83]);
@@ -274,20 +276,18 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    cb_cp[42]=rec.read;cb_cp[43]=rec.write;cb_cp[44]=rec.irq;cb_cp[45]=rec.cpIrq;
    cb_cp[46]=rec.status3;cb_cp[47]=rec.status;cb_cp[60]=rec.me;cb_cp[61]=rec.vbif;
    if(rc!=0){
-    // A failed kick can leave the GPU MMIO unsafe. The Record already holds
-    // the live values; still take the CPU-only scratch snapshot and the
-    // SMMU-only fault registers, which do not touch the GPU bus.
-    __asm__ volatile("dsb sy":::"memory");
-    flush_dcache((vm_offset_t)fence.va,4096,FALSE);
+    // A failed kick can leave the GPU/SMMU bus unsafe. The Record holds the
+    // live values; read only our own scratch page (already clean+invalidated
+    // at allocation, so a plain load sees DRAM) and touch no SMMU register —
+    // the previous failure-path SMMU reads black-screened the device. The
+    // success path still records the full SMMU fault set.
     __asm__ volatile("dsb sy":::"memory");
     cb_cp[93]=*(volatile uint32_t*)fence.va;
     __asm__ volatile("dmb sy":::"memory");
-    captureSmmuFaults();
-    IOLog("CB GPU start: kick FAILED rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x me=%x vbif=%x scratch=%x gfsr=%x s2smr=%x s2s2cr=%x cb0n=%x/%x\n",
+    IOLog("CB GPU start: kick FAILED rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x me=%x vbif=%x scratch=%x\n",
      rc,uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
      uint32_t(cb_cp[47]),uint32_t(cb_cp[46]),uint32_t(cb_cp[60]),uint32_t(cb_cp[61]),
-     uint32_t(cb_cp[93]),uint32_t(cb_cp[54]),uint32_t(cb_cp[89]),uint32_t(cb_cp[90]),
-     uint32_t(cb_cp[103]),uint32_t(cb_cp[104]));
+     uint32_t(cb_cp[93]));
     IOSleep(8000);
     return;
    }

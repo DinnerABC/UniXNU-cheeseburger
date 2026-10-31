@@ -159,15 +159,44 @@ struct KernelTables {
 // mismatched PA is a concrete SMMU failure, unlike a software PTE lookup.
 // No memory is written and the micro-MMU stays running (vendor
 // iova_to_phys_hard_no_halt path). Returns 0 with the raw PAR in *par.
-extern "C" int cheeseburger_gpu_smmu_atos(uint64_t iova,uint64_t *par){
+// Hardware translation probe (ATOS). The no-halt attempt is tried first; the
+// vendor's hard ioctl path halts the micro-MMU before writing ATS1PR, so a
+// timeout falls back to that sequence and always resumes/verifies the halt
+// request. diag[0..7] records the raw control/ATSR values; *par is the raw PAR
+// (bit0 = fault). Returns 0 translated, -2 timeout, -3 halt timeout, -4 resume
+// failure; the caller must not start the CP on -3/-4.
+extern "C" int cheeseburger_gpu_smmu_atos(uint64_t iova,uint64_t *par,volatile uint64_t *diag){
  W *sp=smmuMap();if(!sp||!par)return -1;
- W &s=*sp;const unsigned cb=0x8000;const uint64_t va=iova&~0xfffull;
- wr(s,cb+0x800,uint32_t(va));wr(s,cb+0x804,uint32_t(va>>32));
- uint32_t st=0;unsigned waited=0;
- for(;waited<1000;++waited){st=rd(s,cb+0x8f0);if(!(st&1))break;IODelay(1);}
- if(st&1){*par=0xffffffffffffffffull;return -2;}
- *par=uint64_t(rd(s,cb+0x50))|(uint64_t(rd(s,cb+0x54))<<32);
- return 0;
+ W &s=*sp;const uint64_t va=iova&~0xfffull;
+ if(diag){diag[0]=rd(s,0x6000);diag[1]=rd(s,0x88f0);}
+ auto probe=[&]()->int{
+  wr(s,0x8800,uint32_t(va));wr(s,0x8804,uint32_t(va>>32));
+  uint32_t st=0;unsigned i=0;
+  for(;i<1000;++i){st=rd(s,0x88f0);if(!(st&1))break;IODelay(1);}
+  if(diag)diag[2]=st;
+  if(st&1){*par=0xffffffffffffffffull;return -2;}
+  *par=uint64_t(rd(s,0x8050))|(uint64_t(rd(s,0x8054))<<32);return 0;
+ };
+ int rc=probe();
+ if(rc!=-2)return rc;
+ uint32_t ctl=rd(s,0x6000);
+ wr(s,0x6000,ctl|(1u<<2));
+ uint32_t idle=0;unsigned i=0;
+ for(;i<30000;++i){idle=rd(s,0x6000);if(idle&(1u<<3))break;IODelay(1);}
+ if(diag)diag[3]=idle;
+ if(!(idle&(1u<<3))){
+  wr(s,0x6000,ctl&~(1u<<2));
+  if(diag){diag[4]=rd(s,0x6000);}
+  return -3;
+ }
+ rc=probe();
+ if(diag){diag[5]=uint32_t(rc<0?uint32_t(-rc):0);diag[7]=rd(s,0x88f0);}
+ uint32_t now=rd(s,0x6000);
+ wr(s,0x6000,now&~(1u<<2));
+ uint32_t after=rd(s,0x6000);
+ if(diag)diag[6]=after;
+ if(after&(1u<<2))return -4;
+ return rc;
 }
 extern "C" uint64_t cheeseburger_gpu_smmu_root(void){return gRootPA;}
 extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
@@ -220,6 +249,10 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  // 0x1027 = M(0)|TRE(1)|AFE(2)|CFRE(5)|S1_ASIDPNE(12); 0x1167 adds
  // CFIE(6)|HUPCF(8) (delta 0x140). Do not assert per-bit fault semantics
  // until they are confirmed against this SoC's SMMU implementation.
+ // Qualcomm SMMU-v2 ACTLR: inner/outer/non-shareable hazard flags
+ // (vendor ACTLR_QCOM_OSH/ISH/NSH, bits 28..30). They are part of the
+ // vendor context init and affect TLB/page-walk coherency on this SoC.
+ wr(s,ctx+0x04,0x70000000u);
  wr(s,ctx,0x1027);wr(s,0xc00,0);wr(s,0x800,0x80000000u);
  if(!tlbSync(s,ctx,false)){cb_smmu[0]=9;cb_smmu[5]=rd(s,ctx);return;}
  // Vendor arm-smmu IMPL_DEF1 micro-MMU control (DTB qcom,micro-mmu-control
