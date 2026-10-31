@@ -138,6 +138,35 @@
   而不是睡眠中或长行本身；早期轮次用户态日志稀少，最后时间戳不能精确代表停住时刻。
 - 下一步（P3）：full-start 时用上述逐步心跳定位具体停在哪条 GPU 寄存器写；设备侧仍需单变量。
 
+### 2.7 逐步心跳定位 full-start 卡点（2026-10-31，D 轮）
+
+- 镜像 `27d3bea3…`、内核 `520659f6…`，日志 `20261031T130216Z`，boot `0x51e9e4e1`，8 rounds；
+  用户确认整屏黑、手动回 Recovery。
+- 心跳环（31 条）：
+  - `halt, ack, idle, swrst, cm3` 全部在 sec=35 写入；
+  - **没有 `trust`**（下一步标记）；
+  - `tick` 继续每 10 s 到 sec=298（约内核 370 s），说明内核与 UFS 仍活着；
+  - 没有 `mark`/`smc`，400 s auto-reset 未到达（用户在此之前手动返回）。
+- 控制台 msgbuf 最后一行是 begin（99.47 s），此前 B/C 的 msgbuf 可到 ~400 s；即本轮 console/msgbuf
+  路径在 begin 后停止，而心跳通道继续。**结论：reset 卡在 `RBBM_SECVID_TRUST_CNTL` 写/回读**
+  （`cm3` 之后、`trust` 之前）；这不是整机停住，而是 GPU 访问路径卡住 + console 路径受阻。
+- 本轮改动（未验证）：secure-mode 清除改为**默认关闭**，只有 `cheeseburger-gpu-trust-clear=1`
+  才写 `TRUST_CNTL`；并把写/读拆成 `trustw/trustwr/trust` 三个标记，reset 成功加 `ready`。
+  host 模型新增 opt-in 用例，9/9 通过。
+- 下一轮 E：full-start 且不写 `TRUST_CNTL`，看 reset 是否走到 `ready/cfg/addr/kick`，以及 kick 后 `RBRead`。
+
+### 2.8 E 轮：不写 TRUST_CNTL 的 full-start（2026-10-31）
+
+- 镜像 `8e159f8d…`、内核 `8f5453bb…`，日志 `20261031T131811Z`，boot `0x50edef20`，**67 rounds**，
+  自动复位（mark 329 / smc 333），console 到 402.6 s——**没有黑屏/停住**。
+- `GCP5 stage=3 rc=-4 vbif=f000f me=303 r=0 w=9 irq=0 cpirq=0 st=c00003c1 st3=100000`：
+  reset/configure/addresses/kick 全部执行，kick 超时（与首轮相同）。
+- `GCP6 trust=1 cpcnl=0 cp faults=0 smfsr=400 smg=0`；`GCP7 st=1 me=303 vbif=f000f ry=0`。
+- 结论：
+  1. **D 轮的卡死由 `RBBM_SECVID_TRUST_CNTL` 写/回读造成**；去掉后 full-start 稳定，系统可正常跑到 400 s。
+  2. secure 模式未被清除（trust=1），CP 仍不取 ring；无 SMMU/CP fault。
+  3. 下一步不再是“避免卡死”，而是“用安全路径查明 CP 为什么不取 ring”，并核对 ZAP/PAS 前提。
+
 ## 3. 遇到的问题与解决方式
 
 | # | 问题 | 解决/结论 | 状态 |

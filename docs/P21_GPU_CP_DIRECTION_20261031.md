@@ -102,6 +102,24 @@
 - **限制**：心跳与日志 writer 共用 UFS 驱动，只能区分“console/msgbuf 路径停住”与“内核/UFS 整体停住”；
   普通 RAM 标记仍不作为证据；不使用窗口外写入。
 
+### P2 结果与后续（2026-10-31）
+
+- A/B：长/短 begin 行、五映射、console、8 s 睡眠均健康到 400 s（A `0x52b799d2`、B `0x512997ee`、C `0x511b5457`）。
+- D（full-start + 逐步心跳，boot `0x51e9e4e1`）：reset 到 `cm3` 后**卡在 `RBBM_SECVID_TRUST_CNTL`**，
+  心跳继续到 ~370 s，说明内核/UFS 活着、console 路径受阻。**强制退出 secure 模式在本机会卡死 GPU 访问，
+  已改为默认关闭（需显式 `cheeseburger-gpu-trust-clear=1`）。**
+- E（下一步）：full-start、不写 TRUST_CNTL，观察 `ready/cfg/addr/kick` 与 `RBRead`；
+  若 kick 仍不前进，再回到 SMMU/取指与 secure 世界（ZAP/PAS）的前提核查。
+
+### E 轮结果（2026-10-31）
+
+- full-start 不写 `TRUST_CNTL`：boot `0x50edef20`，67 rounds，自动复位，无黑屏；
+  `GCP5 rc=-4 r=0 w=9`（kick 超时），`GCP6 trust=1`，无 SMMU/CP fault。
+- **卡死源已定位并规避**：`RBBM_SECVID_TRUST_CNTL` 的写/回读在 D 轮卡住 GPU 访问路径；
+  现在默认不写、仅显式 opt-in。
+- 下一步：在安全路径下补 GCP8/GCP9 只读回读（ME/PFP/RB 高低字、CP_PROTECT/ADDR_MODE、TCR/TTBR/SMR/S2CR、
+  PTE 抽样），并核对 ZAP/PAS 前提；之后再评估 SCTLR/secure 世界对 CP 取指的影响。
+
 ## P3 SMMU 与 CP 前置验证（硬件，待 P2 判据可用）
 
 问题（审计发现 4/5/9）：五映射只证明软件建表/TLB 报告成功；configure 只回读关键子集；
