@@ -61,6 +61,11 @@ if SEED.is_dir():
     print('seeded DriverKit headers from', SEED)
 
 start = time.time()
+# The board series is regenerated with the source tree; keep the local P8
+# console switch in its own stable series so a tree refresh cannot drop it.
+extra = C / 'patches/xnu/series'
+if extra.is_file():
+    c.board.setdefault('kernel', {}).setdefault('patch_series', []).append(str(extra))
 kernel.build(c, m)
 built = c.tree / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837'
 assert built.is_file(), built

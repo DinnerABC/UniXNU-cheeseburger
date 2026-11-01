@@ -24,6 +24,17 @@
   （与上一轮相同）。boot args 已去掉 `-v`、`debug=0x8`、`-enable_kprintf_spam`，
   auto-reset 改为 600 s，保留 `sheng-log=1`、CBHB、panic-screen。
 
+## P1 首轮结果（2026-11-01，boot `0x51875b27`）
+
+- 10 GiB Data 生效：`pages=2621440`、`first=11261615`、`state=3`、`err=0`；ENOSPC 为 0。
+- 触摸正常：`TOUCH stage=4 error=0 publish/sink/send/rep=31`，用户确认触摸可用。
+- 显示出帧 7 次（第一帧约 188 s）；但日志仍覆盖 UI。
+- 根因是板级 P8 framebuffer console 直接把每个 kprintf 写进同一 GOP 扫描缓冲，
+  与 `-v/debug` 无关。已新增 `patches/xnu/0008-cheeseburger-fb-console-switch.patch`
+  和 `p8-fb-console=0`：保留日志环/持久日志，不画屏；auto-reset 恢复 400 s。
+- 该候选已重编中，尚未启动；不能把本轮当作 UI 干净或自动返回的验证。
+- 本轮是用户手动回 Recovery（`AUTORESET requested=600 elapsed=69 issued=0`，uptime 408 s）。
+
 ## 计划表
 
 | 顺序 | 阶段 | 目标 | 具体改动 | 通过判据 | 风险/边界 |
