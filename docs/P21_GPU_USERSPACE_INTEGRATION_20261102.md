@@ -55,7 +55,7 @@ launchd.log 在 Data 卷 `/private/var/log/com.apple.xpc.launchd/launchd.log`。
 
 | 步骤 | 内容 | 验证 |
 | --- | --- | --- |
-| 1 | prelink 加入 `com.apple.iokit.IOGPUFamily`（及其依赖 IOSurface/IOKit），核对 load 顺序在 owner GPU 服务发布之前 | 启动日志出现该组件加载；无 panic |
+| 1 | prelink 加入 `com.apple.iokit.IOGPUFamily`（官方 `profiles/os/ipados-17.7.11-21H461/profile.toml` 的 roots 本来就含它，我们的 `prelink.py` 漏了）；核对 load 顺序在 owner GPU 服务发布之前 | **宿主已验证**：同一 native 内核加该 root 后 prelink 成功（32 个组件，`IOGPUFamily` 有 entrypoint，输出 `/tmp/prelink-iogpu/kernel.macho`，仅“runtime unqualified”提示）；设备加载未验证 |
 | 2 | 把现有 `CheeseburgerGpuService` 改造成 `AGXAccelerator : IOAcceleratorES`（参照 `NativeAdrenoAccelerator.cpp`），发布 `MetalPluginName=NativeAdrenoMetal`、`MetalPluginClassName`、`NativeSandboxGrantProcess=backboardd`；保留我们的 A540 CP/GPMU/ZAP/SMMU/fence 后端与单客户端/BO 策略 | 注册表中出现 IOAcceleratorES 节点及属性 |
 | 3 | 把官方 `zzw-native-adreno-sandbox-grant.patch` 纳入 XNU series（目标 `IOUserClient.cpp` 的 `is_io_service_open_extended`） | 宿主编译通过；打开路径仅在命名进程放行 |
 | 4 | 构建最小 owner 插件 bundle（`NativeAdrenoMetal`，`NSPrincipalClass` + `initWithAcceleratorPort:`），在 backboardd 内跑 P1：Query → BoAlloc → BoMap → 填 IB → Submit → WaitFence → CPU 回读；stage 到 Data `/private/var/ngpu/addons`，由现有 Extensions union 挂载呈现；bundle cdhash 加入 owner trust module | 发现加载、open、BO/submit/fence 计数、回读值 |
