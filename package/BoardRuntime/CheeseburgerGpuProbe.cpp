@@ -17,6 +17,7 @@ extern "C" {
 volatile uint64_t cb_gpu[80];
 void cheeseburger_gpu_smmu_setup(void);
 void cheeseburger_gpu_cp_probe(void);
+int cheeseburger_gpu_accelerator_publish(void);
 }
 namespace {
 struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
@@ -49,6 +50,9 @@ static void worker(void*,wait_result_t){
  if(delay>600)delay=600;
  if(delay<1)delay=1;
  for(unsigned i=0;i<delay;++i)IOSleep(1000);
+ // Publish the Metal accelerator before backboardd's discovery runs. Its user
+ // client stays gated until the service is ready, and the plugin retries.
+ cheeseburger_gpu_accelerator_publish();
  fill(0,80,0xdeadbeef);
  cb_gpu[61]=0;cb_gpu[62]=0;cb_gpu[63]=0;
  W gcc;if(!mapw(gcc,0x100000,0xb0000)){cb_gpu[61]=0xffffffff;cb_gpu[63]=0xffff;return;}

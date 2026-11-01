@@ -1,0 +1,6 @@
+.globl __ZN15IOAcceleratorESC2EPK11OSMetaClass
+.set __ZN15IOAcceleratorESC2EPK11OSMetaClass, 0xfffffff004fa6b20
+.globl __ZN15IOAcceleratorESD2Ev
+.set __ZN15IOAcceleratorESD2Ev, 0xfffffff004fa6b64
+.globl __ZN15IOAcceleratorES10gMetaClassE
+.set __ZN15IOAcceleratorES10gMetaClassE, 0xfffffff006ebe688

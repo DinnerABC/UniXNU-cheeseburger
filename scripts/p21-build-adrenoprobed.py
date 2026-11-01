@@ -12,6 +12,7 @@ import hashlib
 import json
 import plistlib
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -86,6 +87,39 @@ def main():
     if 'Page size=4096' not in detail:
         sys.exit('the signature must use 4 KiB pages')
 
+    # Owner Metal plugin: the original discovery loads this bundle inside
+    # backboardd (IOAcceleratorES -> MetalPluginName -> NSBundle -> principal
+    # class -> initWithAcceleratorPort:). It needs its own trusted CDHash.
+    plugin_bundle = OUT / 'NativeAdrenoMetal.bundle'
+    shutil.rmtree(plugin_bundle, ignore_errors=True)
+    plugin_bundle.mkdir(parents=True)
+    plugin_exe = plugin_bundle / 'NativeAdrenoMetal'
+    subprocess.run(['xcrun', 'clang++', '-target', 'arm64-apple-ios17.0',
+                    '-isysroot', sdk(), '-std=c++17', '-fobjc-arc', '-O2', '-fno-exceptions',
+                    '-fno-rtti', '-I', str(R / 'package/BoardRuntime'),
+                    '-bundle', str(R / 'package/Userland/native_adreno_metal_plugin.mm'),
+                    '-framework', 'Foundation', '-framework', 'IOKit', '-framework', 'Metal', '-o', str(plugin_exe)],
+                   check=True, env=ENV)
+    subprocess.run(['strip', '-x', str(plugin_exe)], check=True, env=ENV)
+    (plugin_bundle / 'Info.plist').write_bytes(plistlib.dumps(dict(
+        CFBundleIdentifier='org.cheeseburger.NativeAdrenoMetal', CFBundleExecutable='NativeAdrenoMetal',
+        CFBundlePackageType='BNDL', CFBundleVersion='1', MinimumOSVersion='17.0',
+        NSPrincipalClass='NativeAdrenoMetalDevice'), fmt=plistlib.FMT_XML))
+    subprocess.run(['codesign', '--force', '--sign', '-', '--pagesize', '4096',
+                    '--identifier', 'org.cheeseburger.NativeAdrenoMetal', str(plugin_bundle)],
+                   check=True, env=ENV)
+    subprocess.run(['codesign', '--verify', '--strict', str(plugin_bundle)], check=True)
+    plugin_detail = subprocess.run(['codesign', '--display', '--verbose=4', str(plugin_bundle)],
+                                   capture_output=True, text=True, check=True, env=ENV).stderr
+    plugin_cdhash = None
+    for line in plugin_detail.splitlines():
+        if line.startswith('CDHash='):
+            plugin_cdhash = line.split('=', 1)[1]
+    if not plugin_cdhash or len(plugin_cdhash) != 40:
+        sys.exit('no plugin CDHash')
+    if 'Page size=4096' not in plugin_detail:
+        sys.exit('the plugin signature must use 4 KiB pages')
+
     jobs = {
         DAEMON_ID: dict(Label=DAEMON_ID, ProgramArguments=['/private/var/mobile/ngpu/bin/adrenoprobed'],
                         RunAtLoad=True, KeepAlive=False, UserName='root', ThrottleInterval=30,
@@ -117,7 +151,7 @@ def main():
     if count != 2:
         sys.exit('the pinned bundle must carry exactly two Apple modules')
     originals = [original[offsets[0]:offsets[1]], original[offsets[1]:]]
-    hashes = sorted([bytes.fromhex(cdhash)])
+    hashes = sorted([bytes.fromhex(cdhash), bytes.fromhex(plugin_cdhash)])
     own = struct.pack('<I16sI', 2,
                       uuid.uuid5(uuid.NAMESPACE_URL, 'org.cheeseburger.adreno:' + cdhash).bytes,
                       len(hashes)) + b''.join(h + bytes([2, 0, 0, 0]) for h in hashes)
@@ -139,7 +173,9 @@ def main():
                   daemon_cdhash=cdhash, entitlements=sha(entitlements.read_bytes()),
                   addon_bytes=len(addon), addon_sha256=sha(addon), addon_files=[f[0] for f in files],
                   trustcache_bytes=len(bundle), trustcache_sha256=sha(bundle),
-                  trust_own_cdhashes=[cdhash], trust_original_modules_unchanged=True,
+                  plugin_sha256=sha(plugin_exe.read_bytes()), plugin_cdhash=plugin_cdhash,
+                  plugin_bundle='NativeAdrenoMetal.bundle', plugin_class='NativeAdrenoMetalDevice',
+                  trust_own_cdhashes=[cdhash, plugin_cdhash], trust_original_modules_unchanged=True,
                   hardware_executed=False)
     (OUT / 'build.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))

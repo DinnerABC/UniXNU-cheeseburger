@@ -16,6 +16,7 @@
 
 1. 内核发布一个 `IOAcceleratorES` 服务（官方实现 `drivers/Adreno740/NativeAdrenoAccelerator.cpp`，类名 `AGXAccelerator`，无额外字段、无操作型 override），提供 `MetalPluginName` / `MetalPluginClassName` 等属性，并用 `NativeSandboxGrantProcess` 指明唯一被放行的进程名（渲染服务器 backboardd）。
 2. 系统 Metal 发现按 `IOServiceMatching("IOAcceleratorES")` 找到该节点，读取 `MetalPluginName`，加载 `/System/Library/Extensions/<name>.bundle`，实例化 `NSPrincipalClass` 并调用 `initWithAcceleratorPort:`。
+   - 目标 OS 的 `_MTLRegisterDevices` / `_getMetalPluginClassForService` 还会检查插件类 **必须是 `_MTLDevice` 的子类**（`isSubclassOfClass:`，Metal 私有基类）；普通 `NSObject` 子类即使选择子存在也会被跳过，表现是属性被读、accelerator 被 open/close，但插件代码从不执行。官方插件用本地 `@interface _MTLDevice : NSObject @end` 声明该祖先并链接 Metal 框架。
 3. 插件是 owner 构建、owner trust cache 认可的 4 KiB CodeDirectory 签名 bundle。它在 backboardd 内打开用户客户端；`patches/xnu/zzw-native-adreno-sandbox-grant.patch` 让服务按其属性放行该进程的 `mac_iokit_check_open(_service)`，其它进程与其它服务不受影响。
 4. 插件默认（stage 1）执行共享的用户态 GPU 测试（官方 `NativeAdrenoUserTest.h`）后返回 nil，**不注册设备**，原有软件渲染保持不变；放入 `NativeAdrenoMetal.publish` 标记后，backboardd 接受原生设备，CARenderServer 用 GPU 合成系统 UI；`NativeAdrenoMetal.clients` 列出可获得各自设备的进程（`*` 表示全部）。
 5. 数据侧 staging：`scripts/add-gpu-plugin-data.py --publish [--clients ...] BASE.dbr OUT.dbr`，把 `NativeAdrenoMetal.bundle`、`adrenoprobed`、`daemons/*.plist`、标记文件写进 Data seed 的 `/private/var/ngpu/addons`；内核启动时的 addon union mount 把它以只读 union 呈现到 `/System/Library/Extensions`。
@@ -63,7 +64,25 @@ launchd.log 在 Data 卷 `/private/var/log/com.apple.xpc.launchd/launchd.log`。
 
 风险与未决：IOGPUFamily 能否在本机 prelink/加载；加速器基类 ABI 与 vtable 审计必须针对 21H392；backboardd 沙箱与 grant 的进程名匹配；插件签名/信任与加载路径；A540 无 Turnip/metal2vulkan 等价物，P1 阶段只用我们的 ABI 测试，不声称 Metal。
 
-## 5. 本轮不建议继续的方向
+## 5. 本机实机进展（2026-11-02 晚）
+
+按上游方式已完成到“插件在 backboardd 内执行并尝试连接”：
+
+| boot | 结果 |
+| --- | --- |
+| `0x4089ad44` | `load IOGPUFamily rc=0`、`IOAcceleratorES class=1 size=136`、`modload rc=0`、`accelerator publish rc=0`；`GPLUG mpn=3 cls=3`（发现已读属性）；`GPSVC open=1 close=1 uid=1f5`；插件未执行（无 marker/无标记文件）。 |
+| `0x3eddc234` | `GOPEN name=backboardd uid=1f5` 确认发现进程是 backboardd；`GPLUG 3/3`；插件仍未执行。 |
+| `0x3ee780a4` | 修正插件祖先为 `_MTLDevice` 后：**插件开始执行**，`GPSV2 markers=442 last=3`（进入并反复尝试 open），但 `open=1 close=0`——发现的 type-1 客户端一直占着单客户端 ABI 门，插件的 0x4147 open 得到 Busy（`refused=439`）。 |
+
+关键修正与经验：
+
+- IOGPUFamily 只是被 prelink 并不会注册 `IOAcceleratorES`；必须像上游 `GpuPowerProbe` 一样调用 `OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily")`，再用 `OSMetaClass::preModLoad` + 本类 `__GLOBAL__sub_I` + `postModLoad` 注册 owner 类，最后 attach 到 `IOService::getPlatform()` 并 `registerService()`。
+- 加速器构造/析构/元类地址按本机 prelink 布局静态审计：`accelerator-original-bindings.S` 里的三个地址在多次重编 prelink 后保持不变（Apple 组件按 donor+slide 放置）。
+- 发现**会自己 open 一次** accelerator（原始 `IOGPUDeviceCreateWithAPIProperty`，open type 1，API 值在 type 高 16 位），该连接可能一直保持；它不属于我们的 ABI。
+- 金属发现要求 principal class 是 `_MTLDevice` 子类（私有基类），否则属性被读、accelerator 被 open/close，但 `initWithAcceleratorPort:` 从不调用。
+- 单客户端门改为只约束 0x4147 ABI 客户端：其它类型的连接作为 observer 创建，但 `externalMethod` 与 `clientMemoryForType` 一律拒绝，环/SMMU/BO 仍只属于一个 ABI 客户端。
+
+## 6. 本轮不建议继续的方向
 
 - 不再尝试新的 launchd plist/路径/缓存覆盖；同样会被导入规则或 launch constraint 拒绝。
 - 不启用 `sgac` / `launchd_unsecure_cache`，不替换 bluetoothd 或系统 plist。

@@ -49,6 +49,13 @@ extern volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak_import)
 extern volatile uint64_t native_adreno_service_stats[20] __attribute__((weak_import));
 /* Effective uid of the last task that reached the GPU user client's open. */
 extern volatile uint64_t native_adreno_client_uid __attribute__((weak_import));
+/* Reads of the accelerator's discovery properties by the original Metal path. */
+extern volatile uint64_t native_gpu_plugin_reads[3] __attribute__((weak_import));
+/* Latest process name that reached the GPU user client's open. */
+extern char native_adreno_client_name[17] __attribute__((weak_import));
+/* Last refused open stage (1 not ready, 2 busy, 3 memory, 4 init, 5 attach, 6 start). */
+extern volatile int native_adreno_open_stage __attribute__((weak_import));
+extern volatile uint64_t native_adreno_abi_opens __attribute__((weak_import));
 extern volatile uint64_t cb_gpu_paths[8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_probe_exec __attribute__((weak_import));
 extern volatile uint64_t native_gpu_addon_mount_flags __attribute__((weak_import));
@@ -528,6 +535,22 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    snprintf(dev,sizeof dev,"GCRYPT stage=%d status=%d bid=%llx",
      (int)native_gpu_addon4_stage,(int)native_gpu_addon4_status,cb_boot_id);
    at=put(out,at,cap,dev,sizeof dev);
+  }
+  if (&native_gpu_plugin_reads[0]) {
+   /* The original discovery reads MetalPluginName, then the plugin class and
+    * the sandbox grant name. All zero means it never looked at this accelerator. */
+   char plug[120];
+   snprintf(plug,sizeof plug,"GPLUG mpn=%llu cls=%llu grant=%llu bid=%llx",
+     native_gpu_plugin_reads[0],native_gpu_plugin_reads[1],native_gpu_plugin_reads[2],cb_boot_id);
+   at=put(out,at,cap,plug,sizeof plug);
+  }
+  if (&native_adreno_client_name[0]) {
+   char opener[96];
+   snprintf(opener,sizeof opener,"GOPEN name=%s uid=%llx ostg=%d abi=%llu bid=%llx",
+     native_adreno_client_name,&native_adreno_client_uid?native_adreno_client_uid:~0ull,
+     &native_adreno_open_stage?native_adreno_open_stage:-1,
+     &native_adreno_abi_opens?native_adreno_abi_opens:~0ull,cb_boot_id);
+   at=put(out,at,cap,opener,sizeof opener);
   }
   if (&native_gpu_addon_cache_stage) {
    /* The system domain's daemons come from the sealed service cache; this row

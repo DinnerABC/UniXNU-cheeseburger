@@ -18,6 +18,9 @@
 #include <kern/clock.h>
 #include <sys/proc.h>
 #include <sys/kauth.h>
+#include <mach/kmod.h>
+#include <libkern/c++/OSMetaClass.h>
+#include <libkern/c++/OSSymbol.h>
 #include <string.h>
 #include "NativeAdrenoABI.h"
 #include "CheeseburgerGpuBoPolicy.h"
@@ -25,6 +28,10 @@
 extern "C" {
 volatile uint64_t native_adreno_service_stats[20];
 volatile uint64_t native_adreno_client_uid=~0ull;
+char native_adreno_client_name[17];
+volatile int native_adreno_open_stage;
+volatile uint64_t native_adreno_abi_opens;
+extern "C" void proc_selfname(char *, int);
 char native_adreno_service_text[64];
 volatile int native_adreno_service_ready;
 int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
@@ -56,6 +63,7 @@ class AGXDeviceUserClient : public IOUserClient {
     IOLock *lock_=nullptr;
     bool live_=false;
     bool ownsClient_=false;
+    bool abi_=false;
     uint64_t generation_=0;
     task_t task_=TASK_NULL;
     static IOReturn action(OSObject *,void *,IOExternalMethodArguments *);
@@ -74,6 +82,7 @@ class AGXDeviceUserClient : public IOUserClient {
     bool freeBo(Bo &);
 public:
     void setGeneration(uint64_t generation) { generation_=generation; ownsClient_=true; }
+    void setAbi(bool abi) { abi_=abi; }
     bool initWithTask(task_t,void *,UInt32,OSDictionary *) override;
     bool start(IOService *) override;
     void stop(IOService *) override;
@@ -92,61 +101,87 @@ public:
 OSDefineMetaClassAndStructors(NativeAdrenoGpuService,IOService)
 OSDefineMetaClassAndStructors(AGXDeviceUserClient,IOUserClient)
 
+extern "C" IOReturn cheeseburger_gpu_open_client(IOService *,task_t,void *,UInt32,OSDictionary *,
+    IOUserClient **);
+
 IOReturn NativeAdrenoGpuService::newUserClient(task_t owningTask,void *securityID,UInt32 type,
     OSDictionary *properties,IOUserClient **handler) {
+    return cheeseburger_gpu_open_client(this,owningTask,securityID,type,properties,handler);
+}
+
+// Shared by the board service and the registry-visible accelerator: the client
+// binds to whichever provider the discovery opened, while the ring, gate and
+// statistics stay global to this driver.
+extern "C" IOReturn cheeseburger_gpu_open_client(IOService *provider,task_t owningTask,void *securityID,
+    UInt32 type,OSDictionary *properties,IOUserClient **handler) {
     if(handler)*handler=nullptr;
     if(!handler)return kIOReturnBadArgument;
-    // Progress markers: an open type of 0x4147xxxx with a nonzero low half is
-    // not a connection. It lets the userland probe record "service found" and
-    // "open path reached" even when the real open would be refused, without a
-    // SetMetadata connection.
+    // Record who reaches the driver, for markers and connections alike; the
+    // discovery and the plugin can live in different processes.
+    proc_selfname(native_adreno_client_name,sizeof native_adreno_client_name);
+    // Only 0x4147xxxx with a nonzero low half is a progress marker. Every
+    // other type is a connection: the original IOGPU library opens type 1 and
+    // the owner plugin opens 0x4147, and the fixed record ABI does not depend
+    // on it (the upstream client accepts any type the same way).
     if((type>>16)==OpenType&&(type&0xffff)){
         native_adreno_service_stats[16]=native_adreno_service_stats[16]+1;
         native_adreno_service_stats[17]=type&0xffff;
         return kIOReturnUnsupported;
     }
-    // Only the native driver's open type is served. The original IOGPU
-    // library uses type 1 for an IOGPUDeviceUserClient, which this is not.
-    if(type!=OpenType){
-        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
-        return kIOReturnUnsupported;
-    }
     if(!native_adreno_service_ready){
+        native_adreno_open_stage=1;
         native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
         return kIOReturnNotReady;
     }
-    // One client at a time: the ring, the SMMU mappings and the CPU views are
-    // shared, so a second connection could overwrite an IOVA or race a submit
-    // with a teardown. Fail closed instead. The generation makes a late close
-    // of an older client harmless to a newer one.
+    // The original IOGPU device client (the discovery's type-1 open) may stay
+    // connected while the Metal plugin runs; it must not take the ABI gate,
+    // because the ring/SMMU/BOs belong to the one 0x4147 client. Such a client
+    // is created but every ABI method and memory view is refused.
+    bool abi=(type==OpenType);
     uint64_t generation=0;
-    if(!gGateLock){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNotReady;}
-    IOLockLock(gGateLock);
-    bool acquired=gGate.acquire(generation);
-    IOLockUnlock(gGateLock);
-    if(!acquired){
-        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
-        return kIOReturnBusy;
+    if(abi) {
+        // One ABI client at a time: the ring, the SMMU mappings and the CPU
+        // views are shared, so a second connection could overwrite an IOVA or
+        // race a submit with a teardown. Fail closed instead. The generation
+        // makes a late close of an older client harmless to a newer one.
+        if(!gGateLock){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNotReady;}
+        IOLockLock(gGateLock);
+        bool acquired=gGate.acquire(generation);
+        IOLockUnlock(gGateLock);
+        if(!acquired){
+            native_adreno_open_stage=2;
+            native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
+            return kIOReturnBusy;
+        }
     }
     AGXDeviceUserClient *client=new AGXDeviceUserClient;
     if(!client){
-        IOLockLock(gGateLock);gGate.release(generation);IOLockUnlock(gGateLock);
+        native_adreno_open_stage=3;
+        if(abi){IOLockLock(gGateLock);gGate.release(generation);IOLockUnlock(gGateLock);}
         return kIOReturnNoMemory;
     }
-    client->setGeneration(generation);
-    if(!client->initWithTask(owningTask,securityID,type,properties) ||
-       !client->attach(this) || !client->start(this)) {
-        client->release();
-        IOLockLock(gGateLock);gGate.release(generation);IOLockUnlock(gGateLock);
-        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
-        return kIOReturnNoResources;
+    if(abi) client->setGeneration(generation);
+    client->setAbi(abi);
+    if(!client->initWithTask(owningTask,securityID,type,properties)) {
+        native_adreno_open_stage=4;
+    } else if(!client->attach(provider)) {
+        native_adreno_open_stage=5;
+    } else if(!client->start(provider)) {
+        native_adreno_open_stage=6;
+    } else {
+        native_adreno_open_stage=0;
+        if(abi) native_adreno_abi_opens=native_adreno_abi_opens+1;
+        *handler=client;
+        return kIOReturnSuccess;
     }
-    *handler=client;
-    return kIOReturnSuccess;
+    client->release();
+    if(abi){IOLockLock(gGateLock);gGate.release(generation);IOLockUnlock(gGateLock);}
+    native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
+    return kIOReturnNoResources;
 }
 
 bool AGXDeviceUserClient::initWithTask(task_t ownerTask,void *security,UInt32 type,OSDictionary *properties) {
-    if(!ownerTask||type!=OpenType)return false;
+    if(!ownerTask)return false;
     // The factory job that starts the owner probe runs as mobile (501), while
     // the original policy only accepted the administrator token. Keep root as
     // the general rule and admit exactly that device user; the single-client
@@ -164,6 +199,13 @@ bool AGXDeviceUserClient::initWithTask(task_t ownerTask,void *security,UInt32 ty
 }
 bool AGXDeviceUserClient::start(IOService *provider) {
     if(!IOUserClient::start(provider))return false;
+    if(!abi_) {
+        // The discovery's own IOGPU device client: connected, no ring state.
+        live_=true;
+        native_adreno_service_stats[0]=native_adreno_service_stats[0]+1;
+        IOLog("CB GPU service: observer client open task=%p\n",(void *)task_);
+        return true;
+    }
     lock_=IOLockAlloc();
     bos_=IONewZero(Bo,MaxBo);
     if(!lock_||!bos_)return false;
@@ -224,6 +266,7 @@ IOReturn AGXDeviceUserClient::clientClose() {
 }
 IOReturn AGXDeviceUserClient::clientMemoryForType(UInt32 type,IOOptionBits *options,IOMemoryDescriptor **memory) {
     if(memory)*memory=nullptr;
+    if(!abi_)return kIOReturnUnsupported;
     if(!memory||!options||!lock_)return kIOReturnBadArgument;
     IOLockLock(lock_);
     Bo *bo=nullptr;
@@ -499,6 +542,9 @@ IOReturn AGXDeviceUserClient::action(OSObject *target,void *,IOExternalMethodArg
 }
 IOReturn AGXDeviceUserClient::externalMethod(uint32_t selector,IOExternalMethodArguments *arguments,
     IOExternalMethodDispatch *,OSObject *target,void *reference) {
+    // Only the 0x4147 client owns the ring, the BOs and the mappings; the
+    // discovery's other-type device client stays connected but sees no ABI.
+    if(!abi_)return kIOReturnUnsupported;
     static const IOExternalMethodDispatch table[]={
         {&action,0,0,0,sizeof(NativeAdrenoAbiParams)},
         {&action,0,sizeof(NativeAdrenoAbiBoAlloc),0,sizeof(NativeAdrenoAbiBoAllocReply)},
@@ -526,6 +572,61 @@ IOReturn AGXDeviceUserClient::externalMethod(uint32_t selector,IOExternalMethodA
 // persistent log writer existed. It runs here, when the service is published.
 extern "C" void cheeseburger_gpu_service_static_init(void)
     __asm__("__GLOBAL__sub_I_CheeseburgerGpuService.cpp");
+extern "C" void cheeseburger_gpu_accelerator_static_init(void)
+    __asm__("__GLOBAL__sub_I_CheeseburgerGpuAccelerator.cpp");
+extern "C" IOService *cheeseburger_gpu_accelerator_allocate(void);
+extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
+extern "C" kmod_info_t g_kernel_kmod_info;
+static IOService *gAccelerator = nullptr;
+static int gAcceleratorResult = -99;
+
+// Publish the registry-visible accelerator. IOGPUFamily is prelinked but not
+// started on this board, so its IOAcceleratorES metaclass does not exist until
+// the kext is loaded explicitly (the upstream GpuPowerProbe does the same).
+// The owner class is registered through preModLoad/postModLoad after the parent
+// exists, then attached to the platform like the original accelerator.
+extern "C" int cheeseburger_gpu_accelerator_publish(void) {
+    if (gAcceleratorResult != -99) return gAcceleratorResult;
+    int result = -1;
+    const OSSymbol *name=OSSymbol::withCString("IOAcceleratorES");
+    const OSMetaClass *meta=name?OSMetaClass::getMetaClassWithName(name):nullptr;
+    if(name)name->release();
+    if(!meta) {
+        kern_return_t kr=OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily");
+        IOLog("CB GPU IOGPU: load IOGPUFamily rc=%x\n",(unsigned)kr);
+        name=OSSymbol::withCString("IOAcceleratorES");
+        meta=name?OSMetaClass::getMetaClassWithName(name):nullptr;
+        if(name)name->release();
+    }
+    IOLog("CB GPU IOGPU: IOAcceleratorES class=%d size=%u\n",meta?1:0,
+        meta?meta->getClassSize():0);
+    if(!meta) { result = -2; goto done; }
+    if(meta->getClassSize()!=136) { result = -3; goto done; }
+    {
+        void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+        if(!handle) { result = -4; goto done; }
+        cheeseburger_gpu_accelerator_static_init();
+        int moderr=OSMetaClass::postModLoad(handle);
+        IOLog("CB GPU accelerator: modload rc=%d\n",moderr);
+        if(moderr) { result = -5; goto done; }
+    }
+    {
+        IOService *accel=cheeseburger_gpu_accelerator_allocate();
+        if(!accel) { result = -6; goto done; }
+        if(!accel->attach(IOService::getPlatform())) {
+            accel->release();
+            result = -7;
+            goto done;
+        }
+        accel->registerService();
+        gAccelerator=accel;
+        result = 0;
+    }
+done:
+    gAcceleratorResult=result;
+    IOLog("CB GPU accelerator: publish rc=%d\n",result);
+    return result;
+}
 
 extern "C" int cheeseburger_gpu_service_publish(void) {
     if(gService)return 0;
@@ -544,5 +645,7 @@ extern "C" int cheeseburger_gpu_service_publish(void) {
     gService=service;
     native_adreno_service_ready=1;
     service->registerService();
+    // Fallback if the probe did not run it earlier; idempotent.
+    cheeseburger_gpu_accelerator_publish();
     return 0;
 }

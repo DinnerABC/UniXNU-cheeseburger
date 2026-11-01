@@ -33,10 +33,10 @@ def compile(src,name=None,flags=(),late=False):
  if late:
   transformed=O/(name+'.late.o');run(['/opt/homebrew/opt/llvm/bin/llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_'+src.name,obj,transformed],name+'-late');obj=transformed
  compiled.append(obj);return obj
-cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','BoardBootArgs','CheeseburgerUsb','CheeseburgerDispProbe','CheeseburgerGpuProbe','CheeseburgerGpuSmmu','CheeseburgerGpuCp','CheeseburgerGpuService','CheeseburgerGpuPas','CheeseburgerAutoReset','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
-late={'NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','NativeLegacyDisplay','NativeGOPPresenter','NativeHidInput','NativeKeyStoreEvents','CheeseburgerGpuService'}
+cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','BoardBootArgs','CheeseburgerUsb','CheeseburgerDispProbe','CheeseburgerGpuProbe','CheeseburgerGpuSmmu','CheeseburgerGpuCp','CheeseburgerGpuService','CheeseburgerGpuAccelerator','CheeseburgerGpuPas','CheeseburgerAutoReset','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
+late={'NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','NativeLegacyDisplay','NativeGOPPresenter','NativeHidInput','NativeKeyStoreEvents','CheeseburgerGpuService','CheeseburgerGpuAccelerator'}
 for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=1'] if n=='NativeHidInput' else [],late=n in late)
-for n in ['BootWatchdogPolicy','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe']:compile(S/(n+'.c'))
+for n in ['BootWatchdogPolicy','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe','CheeseburgerLaunchdCache']:compile(S/(n+'.c'))
 subprocess.run([sys.executable,R/'scripts/p21-select-official-log-reports.py',*compiled],check=True)
 compile(S/'BootLog.c')
 for n in ['verified_root','xnu_crypto']:
@@ -44,7 +44,7 @@ for n in ['verified_root','xnu_crypto']:
 # These drivers share original superclass aliases. Emit each absolute alias once;
 # reject conflicting addresses instead of weakening the linker duplicate check.
 bindings={};binding_sources=[]
-for n in ['display','hid','pmgr','ufs','ram']:
+for n in ['display','hid','pmgr','ufs','ram','accelerator']:
  src=S/(n+'-original-bindings.S');binding_sources.append({'source':str(src.relative_to(R)),'sha256':hashlib.sha256(src.read_bytes()).hexdigest()})
  for line in src.read_text().splitlines():
   if line.startswith('.set '):

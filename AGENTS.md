@@ -296,3 +296,24 @@ Images, private logs and signing material stay out of Git.
   布局 = 头 1 块 + 位图 80 块 + 页区；**页 i 在块 81+i**。用 `dev-seed.dbr` 展开后按位图写回，
   读写挂载（journal 重放）才能读 `launchd.log`。步骤与证据见
   `docs/P21_GPU_USERSPACE_INTEGRATION_20261102.md`。
+
+## GPU 用户态插件迁移（2026-11-02 实机推进）
+
+- `IOGPUFamily` 只被 prelink 不会注册 `IOAcceleratorES`；发布 accelerator 前必须
+  `OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily")`，再 `OSMetaClass::preModLoad`
+  + 本类 `__GLOBAL__sub_I` + `postModLoad`，最后 attach 到 `IOService::getPlatform()` 并
+  `registerService()`（与上游 `GpuPowerProbe` 相同）。
+- 加速器类 `AGXAccelerator : IOAcceleratorES` 依赖三个原始地址：构造/析构/元类。用本机
+  prelink 镜像静态审计（vtable 与 IOService 仅 [0,1,7] 不同；getter 返回元类）后写入
+  `accelerator-original-bindings.S`；Apple 组件按 donor+slide 放置，重编不改地址，但改 roots/slide
+  后必须重算。不要用 A740 的地址。
+- 目标 OS 的 Metal 发现要求插件 principal class 是私有 `_MTLDevice` 子类；否则属性会读、
+  accelerator 会 open/close，但 `initWithAcceleratorPort:` 从不执行。插件需链接 Metal 并从
+  framework 解析 `_MTLDevice`。
+- 发现会先用 type 1（`IOGPUDeviceCreateWithAPIProperty`，API 值在高 16 位）打开 accelerator，
+  并可能长期保持该连接；它不是 ABI 客户端。单客户端门只约束 0x4147：其它类型作为 observer
+  创建，`externalMethod`/`clientMemoryForType` 一律拒绝，环/SMMU/BO 仍只属于一个 ABI 客户端。
+- 插件以 0x4147 open 客户端，走与探针相同的 P1（Query→BO→Map→Submit→Fence→CPU 回读）；
+  marker 用 0x4147xxxx 的 open（低半非零）即可在无连接时记录进度。boot 日志/快照可能提前
+  停止而心跳与 400 s 自动复位继续，是否执行以 marker、`GPSVC`、`GOPEN`、插件标记文件和
+  Data 重建为准。

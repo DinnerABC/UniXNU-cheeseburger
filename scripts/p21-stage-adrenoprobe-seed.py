@@ -72,6 +72,16 @@ def main():
             # through xpcproxy; the image does not mount that cryptex.
             (mount / 'mobile/ngpu/cryptex/App/usr/libexec/webbookmarksd').write_bytes(daemon)
             os.chmod(mount / 'mobile/ngpu/cryptex/App/usr/libexec/webbookmarksd', 0o755)
+            # The kernel's Extensions union presents this directory to the
+            # original Metal discovery, which loads the owner bundle in backboardd.
+            addons = mount / 'mobile/ngpu/addons'
+            addons.mkdir(parents=True, exist_ok=True)
+            os.chmod(addons, 0o755)
+            shutil.rmtree(addons / 'NativeAdrenoMetal.bundle', ignore_errors=True)
+            shutil.copytree(BUILD / 'NativeAdrenoMetal.bundle', addons / 'NativeAdrenoMetal.bundle')
+            for path in [addons / 'NativeAdrenoMetal.bundle',
+                         *(addons / 'NativeAdrenoMetal.bundle').rglob('*')]:
+                os.chmod(path, 0o755 if path.is_dir() or path.name == 'NativeAdrenoMetal' else 0o644)
             # Copy only the addon's own daemon plists (build.json), never stale
             # shadows of system jobs from an earlier experiment.
             for entry in owner.get('addon_files', []):
@@ -91,7 +101,8 @@ def main():
                   daemon_cdhash=owner['daemon_cdhash'],
                   files=['mobile/ngpu/bin/adrenoprobed', 'mobile/ngpu/daemons/*.plist',
                          'mobile/ngpu/developer/usr/local/libexec/NFQRCoded',
-                         'mobile/ngpu/cryptex/App/usr/libexec/webbookmarksd'],
+                         'mobile/ngpu/cryptex/App/usr/libexec/webbookmarksd',
+                         'mobile/ngpu/addons/NativeAdrenoMetal.bundle'],
                   seed_identity_changed=True, hardware_executed=False)
     OUT.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))

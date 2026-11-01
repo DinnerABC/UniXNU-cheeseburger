@@ -1,3 +1,24 @@
+## 2026-11-02 GPU 用户态迁移（官方插件路线，进行中）
+
+用户决定按上游（UniXNU/UniXNU-sheng）方式迁移 GPU 用户态。已完成从“自建 launchd 作业”到“**IOAcceleratorES + 插件在 backboardd 内运行**”的切换，并推进到插件实际执行、用户态客户端建立连接。**尚未完成 P1 的 BO/submit/fence/回读**。
+
+- 关键实现（已提交源码）：
+  - `package/BoardRuntime/CheeseburgerGpuAccelerator.cpp` + `OriginalAcceleratorABI.h` + `accelerator-original-bindings.S`：`AGXAccelerator : IOAcceleratorES`，发布 `MetalPluginName=NativeAdrenoMetal`、`MetalPluginClassName=NativeAdrenoMetalDevice`、`NativeSandboxGrantProcess=backboardd`，attach 到 `IOService::getPlatform()` 并 `registerService()`。类地址按本机 prelink 静态审计：构造 `0xfffffff004fa6b20`、析构 `0xfffffff004fa6b64`、元类 `0xfffffff006ebe688`（多次重编后不变）。
+  - `CheeseburgerGpuService.cpp`：发布时先 `OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily")`（仅 prelink 不会注册 `IOAcceleratorES`），再 `preModLoad` + 本类 `__GLOBAL__sub_I` + `postModLoad`；用户客户端接受任意 open 类型；单客户端门只约束 0x4147 ABI 客户端，其它类型为 observer（ABI/内存一律拒绝）；记录 opener 名称/uid/拒绝阶段。
+  - `CheeseburgerGpuProbe.cpp`：探测开始时（约 61 s）提前发布 accelerator。
+  - `package/Userland/native_adreno_metal_plugin.mm` + 构建脚本：owner 插件 bundle（`NativeAdrenoMetal.bundle`，principal class 继承私有 `_MTLDevice`，链接 Metal/IOKit/Foundation），在 `initWithAcceleratorPort:` 内跑 P1 后返回 nil；带 IOServiceOpen 进度 marker、`/private/var/tmp/p21-plugin.txt` 标记与 SetMetadata 结果。cdhash 加入 owner trust module。
+  - seed staging 写入 `/private/var/mobile/ngpu/addons/NativeAdrenoMetal.bundle`；既有 addon union mount 呈现到 `/System/Library/Extensions`（`GADDON ext=5/0` 已验证）。
+- 实机序列（均 400 s 自动回 Recovery）：
+  1. `0x3ee8a3aa`（镜像 `353227a6…`、内核 `6017bc11…`、payload `09ad09dc…`）：`open=1 close=1 uid=1f5`（backboardd 打开 GPU 用户客户端），但 `markers=0`——插件类不是 `_MTLDevice` 子类，被 Metal 发现跳过。
+  2. `0x3eddc234`（镜像 `da60d9f6…`、内核 `e3cb72fe…`、payload `2e257e22…`）：`GOPEN name=backboardd uid=1f5`；`markers=0`；`/private/var/tmp` 无插件标记文件。
+  3. `0x3ee780a4`（镜像 `b288102a…`、内核 `e3cb72fe…`、payload `1f6ff98d…`）：继承 `_MTLDevice` 后**插件开始执行**，`GPSV2 markers=442 last=3`，但 `open=1 close=0`——发现的 type-1 observer 客户端占住单客户端门，插件的 0x4147 open 得 Busy（`refused=428`）。
+  4. `0x3ee4fbce`（镜像 `8958e6e2…`、内核 `a4b6c14f…`、payload `b3f99009…`）：A/B 门拆分后仍 `markers=511 refused=507 open=1 close=0`，插件 open 仍被拒。
+  5. `0x3f552af0`（镜像 `905a7823…`、内核 `d1018ec3…`、payload `b51895cb…`）：本轮加入 open 阶段计数（`GOPEN … ostg=1..6`），但**快照只写到 17 rounds（约 85 s）**；心跳 tick 到 348 s、400 s 自动复位正常（日志/快照提前停止是已知现象）。accelerator 61.3 s 发布、服务 107.5 s 发布，发现活动在日志停止之后，未取得 `ostg`。
+- 结论/下一步：
+  - 官方路线已打通到“backboardd 的 Metal 发现加载并执行 owner 插件”；剩余是插件 0x4147 open 被拒的确切阶段（`ostg`：1 未就绪、2 Busy、3 内存、4 init、5 attach、6 start）。下一轮先在拒绝分支加**限流的 IOLog**（快照停止时仍能在 msgbuf 看到阶段与 open type），再启动；若为 Busy，需确认 observer 的 open type 与门持有者；若为 start/attach，按阶段修复。
+  - 之后才是 `--publish`（backboardd 返回原生设备、CARenderServer 合成）与 Metal 前端；A540 没有现成的 metal2vulkan/Turnip 等价物，P1 阶段只用我们的 ABI，不声称 Metal。
+  - 设备当前 Recovery；misc BCB 每轮启动前重写（已消费）。证据在 `out/`，冻结于 `rounds/20261101T211939Z-plugin-mass-gate` 等目录。
+
 ## 2026-11-02 launchd 注入结论与转向官方插件路径（本轮完成，等待迁移实现）
 
 - 本轮合并了上一轮本机构建候选并完成三次实机启动，设备 `3b25cc7c` 每次都自动回 Recovery（约 410–470 s，`CB auto reset: 400 s reached`）：
