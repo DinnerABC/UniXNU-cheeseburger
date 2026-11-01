@@ -279,6 +279,7 @@ public:
         ringPtr[c++] = uint32_t(commandsVA >> 32); ringPtr[c++] = words;
         ringPtr[c++] = packet7(0x5f, 1); ringPtr[c++] = 1;
         r.clean((volatile void *)ringPtr, c * 4);
+        ringCursor = c;
         r.mark("gpmukick"); r.publish(); wr(RBWrite, c);
         if (kickTo(rec, c)) return false;
         wr(GPMUCM3SysReset, 0);
@@ -290,6 +291,32 @@ public:
             r.delay(10);
         }
         fail(rec, -23, 4); return false;
+    }
+
+    // Minimal CP fence: switch to non-secure mode, wait for writes, then ask
+    // the CP to write a sequence into the mapped fence page. CPU flush/read is
+    // the evidence; a ring pointer alone is not a completed GPU DMA.
+    bool fence(uint64_t fenceVA, uint32_t sequence, volatile uint32_t *fenceCPU, Record &rec) {
+        if (!runningFlag || !ringPtr || !fenceVA || (fenceVA & 4095) || !fenceCPU) {
+            fail(rec, -30, 6); return false;
+        }
+        unsigned c = ringCursor;
+        ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;          // CP_SET_SECURE_MODE(0)
+        ringPtr[c++] = packet7(0x26, 0);                            // CP_WAIT_MEM_WRITES
+        ringPtr[c++] = packet7(0x46, 4); ringPtr[c++] = 4 | (1u << 31); // CACHE_FLUSH_TS + IRQ
+        ringPtr[c++] = uint32_t(fenceVA); ringPtr[c++] = uint32_t(fenceVA >> 32);
+        ringPtr[c++] = sequence;
+        fenceCPU[0] = 0; r.clean((volatile void *)fenceCPU, 4);
+        r.clean((volatile void *)ringPtr, c * 4);
+        ringCursor = c;
+        r.mark("fence"); r.publish(); wr(RBWrite, c);
+        if (kickTo(rec, c)) return false;
+        for (unsigned elapsed = 0; elapsed < 100000; elapsed += 10) {
+            r.clean((volatile void *)fenceCPU, 4);
+            if (fenceCPU[0] == sequence) { rec.stage = 6; rec.rc = 0; r.mark("fencedone"); return true; }
+            r.delay(10);
+        }
+        fail(rec, -31, 6); return false;
     }
 };
 

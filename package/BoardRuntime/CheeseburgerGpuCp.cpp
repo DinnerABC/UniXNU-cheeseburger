@@ -328,6 +328,17 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     IOSleep(8000);
     return;
    }
+   // Minimal DMA proof: the CP writes a timestamp into the fence page.
+   bool fok=engine.fence(fence.gva,1,(volatile uint32_t*)fence.va,rec);
+   cb_cp[95]=fok?1:0;
+   flush_dcache((vm_offset_t)fence.va,4096,FALSE);
+   if(!fok){
+    cb_cp[38]=12;cb_cp[39]=uint64_t(int32_t(rec.rc));
+    IOLog("CB GPU start: fence FAILED rc=%d; engine halted\n",rec.rc);
+    IOSleep(8000);
+    return;
+   }
+   IOLog("CB GPU start: fence OK seq=%x\n",*(volatile uint32_t*)fence.va);
    {uint64_t after[6];powerCore(gp,after);cb_cp[87]=after[4];cb_cp[88]=after[5];
     IOLog("CB GPU power: after-zap rbccu=%x/%x sp=%x/%x\n",
      uint32_t(after[0]),uint32_t(after[1]),uint32_t(after[2]),uint32_t(after[3]));}
