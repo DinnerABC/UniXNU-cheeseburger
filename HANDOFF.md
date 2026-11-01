@@ -1,14 +1,20 @@
 ## 2026-11-01 GPU 用户态提交（最小修正轮，用户态仍未验证）
 
-- 设备 `3b25cc7c` 在 Recovery；本轮镜像 `2d1b4d3e…`、内核 `80474673…`、firmware `84fbbe2c…`、
-  payload `067f0b07…`、boot `0x3db45895`，日志 `out/p21/persistent-logs/20261101T135707Z/`。
+- 设备 `3b25cc7c` 在 Recovery；最近一次实机镜像 `2d1b4d3e…`、内核 `80474673…`、
+  firmware `84fbbe2c…`、payload `067f0b07…`、boot `0x3db45895`，日志
+  `out/p21/persistent-logs/20261101T135707Z/`。本轮只构建未启动的内核 `402e9197…`
+  （关闭策略 + GPROBE exec 观测 + 文档），未打包/未换 UEFI/Data。
 - **已验证**：宿主模型 5 组 PASS（含 fence 等待成功/超时）；Fastboot 接受；内核
   `fence OK seq=1`、`CB GPU service: publish rc=0`；CBHB 含 `zapdone/submit/submitdone/fencedone`；
   快照 70 rounds 到 400 s；`AUTORESET issued=1` 自动回；UI/显示路径仍在
   （DISPLAY stage=10 frames=4 clients=25 SWAP=4）。
-- **未验证**：用户态进程没有启动/打开服务（`GPSVC open=0`、`GPSV2 markers=0`）；
-  像素、Metal、GPU 合成均未验证。不能宣称 P1 完成，也不是“只差一次启动”。
-- **本轮修正**：`CheeseburgerGpuWait.h` 统一 ns 预算（IODelay(50)=50000 ns）；服务单客户端、
+- **未验证**：未观察到用户态 GPU 服务连接（`GPSVC open=0`、`GPSV2 markers=0`）；
+  `markers=0` 只说明没有 marker open，不能推断进程未启动。像素、Metal、GPU 合成均未验证。
+  不能宣称 P1 完成，也不是“只差一次启动”。
+- **本轮修正（Kernel 402e9197，仅构建）**：`CheeseburgerGpuBoPolicy.h` 统一
+  clientClose/free/BoFree 的“引擎运行或 unmap 失败→保留”规则，`ClientGate` 用 generation
+  防旧连接清零新连接；宿主 `gpu_bo_policy_model` 覆盖关闭交错/unmap 失败；`GPROBE`
+  记录成功 exec 计数。`CheeseburgerGpuWait.h` 统一 ns 预算（IODelay(50)=50000 ns）；服务单客户端、
   IOVA 重叠拒绝、页表更新串行、BoFree 需 engine idle + SMMU unmap/TLB 成功；CPU map options
   记录在 `GPSV2`；内核 `GJOBS` 只读探测 launchd/Extensions 路径；用户态探针每个阶段写
   `/dev/console` 并先发 marker open（不依赖 SetMetadata）。

@@ -48,6 +48,7 @@ extern volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak_import)
 extern volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_service_stats[20] __attribute__((weak_import));
 extern volatile uint64_t cb_gpu_paths[8] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_probe_exec __attribute__((weak_import));
 extern char native_adreno_service_text[64] __attribute__((weak_import));
 extern volatile int native_adreno_service_ready __attribute__((weak_import));
 extern volatile int native_gpu_addon_stage __attribute__((weak_import));
@@ -445,6 +446,12 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     native_adreno_service_stats[16],native_adreno_service_stats[17],
     native_adreno_service_stats[18],native_adreno_service_stats[19],cb_boot_id);
   at=put(out,at,cap,v2,sizeof v2);
+  char pr[160];
+  snprintf(pr,sizeof pr,"GPROBE exec=%llu markers=%llu refused=%llu open=%llu calls=%llu bid=%llx",
+    &native_adreno_probe_exec?native_adreno_probe_exec:0,
+    native_adreno_service_stats[16],native_adreno_service_stats[19],
+    native_adreno_service_stats[0],native_adreno_service_stats[15],cb_boot_id);
+  at=put(out,at,cap,pr,sizeof pr);
  }
  if (&cb_gpu_paths[0] && cb_gpu_paths[7]==0x5a5a) {
   /* Existence probes for the launchd and kext directories (0 exists, positive

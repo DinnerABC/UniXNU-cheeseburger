@@ -31,6 +31,7 @@ void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_service_publish(void);
 volatile uint64_t cb_gpu_paths[8];
+volatile uint64_t native_adreno_probe_exec;
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);

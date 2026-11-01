@@ -18,6 +18,7 @@
 #include <kern/clock.h>
 #include <string.h>
 #include "NativeAdrenoABI.h"
+#include "CheeseburgerGpuBoPolicy.h"
 
 extern "C" {
 volatile uint64_t native_adreno_service_stats[20];
@@ -35,7 +36,8 @@ void flush_dcache(vm_offset_t,unsigned,boolean_t);
 namespace {
 enum : uint32_t {OpenType=0x4147, BoTokenBase=0x100, MaxBo=64, AbiInputBits=36, AbiOutputBits=36};
 IOService *gService=nullptr;
-volatile int gClientOpen=0;
+IOLock *gGateLock=nullptr;
+CheeseburgerGpu::ClientGate gGate;
 }
 
 class AGXDeviceUserClient : public IOUserClient {
@@ -50,6 +52,8 @@ class AGXDeviceUserClient : public IOUserClient {
     Bo *bos_=nullptr;
     IOLock *lock_=nullptr;
     bool live_=false;
+    bool ownsClient_=false;
+    uint64_t generation_=0;
     task_t task_=TASK_NULL;
     static IOReturn action(OSObject *,void *,IOExternalMethodArguments *);
     IOReturn run(uint32_t,const void *,size_t,void *,size_t);
@@ -66,6 +70,7 @@ class AGXDeviceUserClient : public IOUserClient {
     void dropView(Bo &);
     bool freeBo(Bo &);
 public:
+    void setGeneration(uint64_t generation) { generation_=generation; ownsClient_=true; }
     bool initWithTask(task_t,void *,UInt32,OSDictionary *) override;
     bool start(IOService *) override;
     void stop(IOService *) override;
@@ -109,20 +114,27 @@ IOReturn NativeAdrenoGpuService::newUserClient(task_t owningTask,void *securityI
     }
     // One client at a time: the ring, the SMMU mappings and the CPU views are
     // shared, so a second connection could overwrite an IOVA or race a submit
-    // with a teardown. Fail closed instead.
-    if(__atomic_exchange_n(&gClientOpen,1,__ATOMIC_ACQ_REL)){
+    // with a teardown. Fail closed instead. The generation makes a late close
+    // of an older client harmless to a newer one.
+    uint64_t generation=0;
+    if(!gGateLock){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNotReady;}
+    IOLockLock(gGateLock);
+    bool acquired=gGate.acquire(generation);
+    IOLockUnlock(gGateLock);
+    if(!acquired){
         native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
         return kIOReturnBusy;
     }
     AGXDeviceUserClient *client=new AGXDeviceUserClient;
     if(!client){
-        __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
+        IOLockLock(gGateLock);gGate.release(generation);IOLockUnlock(gGateLock);
         return kIOReturnNoMemory;
     }
+    client->setGeneration(generation);
     if(!client->initWithTask(owningTask,securityID,type,properties) ||
        !client->attach(this) || !client->start(this)) {
         client->release();
-        __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
+        IOLockLock(gGateLock);gGate.release(generation);IOLockUnlock(gGateLock);
         native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
         return kIOReturnNoResources;
     }
@@ -160,23 +172,25 @@ void AGXDeviceUserClient::dropView(Bo &bo) {
 bool AGXDeviceUserClient::freeBo(Bo &bo) {
     if(!bo.handle)return true;
     dropView(bo);
-    if(bo.mapped) {
-        int rc=cheeseburger_gpu_smmu_unmap(bo.iova,unsigned(bo.bytes/4096));
-        if(rc){
-            // The pages may still be reachable from the GPU: keep the object
-            // and its mapping instead of returning memory under a live PTE.
-            native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
-            return false;
-        }
-        native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
+    auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
+    auto unmap=[&](){ return cheeseburger_gpu_smmu_unmap(bo.iova,unsigned(bo.bytes/4096)); };
+    if(!CheeseburgerGpu::releaseMappedBuffer(bo.mapped,idle,unmap)){
+        // The pages may still be reachable from the GPU, or the SMMU could not
+        // be updated: keep the object and its mapping.
+        native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
+        return false;
     }
+    if(bo.mapped)native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
     OSSafeReleaseNULL(bo.desc);
     OSSafeReleaseNULL(bo.buf);
     bo=Bo();
     return true;
 }
 void AGXDeviceUserClient::free() {
-    __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
+    if(ownsClient_){
+        if(gGateLock){IOLockLock(gGateLock);gGate.release(generation_);IOLockUnlock(gGateLock);}
+        ownsClient_=false;
+    }
     if(task_){task_deallocate(task_);task_=TASK_NULL;}
     if(bos_) {
         for(unsigned i=0;i<MaxBo;++i)freeBo(bos_[i]);
@@ -188,7 +202,10 @@ void AGXDeviceUserClient::free() {
 IOReturn AGXDeviceUserClient::clientClose() {
     if(bos_)for(unsigned i=0;i<MaxBo;++i)freeBo(bos_[i]);
     if(live_){live_=false;native_adreno_service_stats[1]=native_adreno_service_stats[1]+1;}
-    __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
+    if(ownsClient_){
+        if(gGateLock){IOLockLock(gGateLock);gGate.release(generation_);IOLockUnlock(gGateLock);}
+        ownsClient_=false;
+    }
     terminate();
     return kIOReturnSuccess;
 }
@@ -309,13 +326,8 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
 IOReturn AGXDeviceUserClient::boFree(uint64_t handle) {
     Bo *bo=find(handle);
     if(!bo)return kIOReturnBadArgument;
-    // Every submit waits for its own fence; the idle gate is the explicit
-    // proof that the CP has consumed the ring before the leaf entries are torn
-    // down.
-    if(bo->mapped && cheeseburger_gpu_engine_idle()!=0){
-        native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
-        return kIOReturnBusy;
-    }
+    // freeBo applies the idle/stop and SMMU/TLB rule and keeps the buffer on
+    // failure; a busy engine returns kIOReturnIOError without freeing.
     if(!freeBo(*bo)){
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
         return kIOReturnIOError;
@@ -505,6 +517,7 @@ extern "C" void cheeseburger_gpu_service_static_init(void)
 extern "C" int cheeseburger_gpu_service_publish(void) {
     if(gService)return 0;
     cheeseburger_gpu_service_static_init();
+    if(!gGateLock){gGateLock=IOLockAlloc();if(!gGateLock)return -4;}
     uint64_t start=0,bytes=0;
     if(cheeseburger_gpu_engine_window(&start,&bytes))return -1;
     IOService *parent=IOService::getResourceService();

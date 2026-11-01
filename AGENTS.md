@@ -228,6 +228,10 @@ Images, private logs and signing material stay out of Git.
 - GPU addon：`native_gpu_addon_install` 在 Data 挂载内部写文件会卡死（无日志、约 2 分钟
   watchdog 复位）；`sgai/sgam` 可分别关闭安装/挂载。Data 种子任何改动都会改变 seed
   identity，触发 reseed 并使日志线程约 105 s 停止；不要用改种子来绕安装。
+- `CONFIG_UNION_MOUNTS` 已编入（`-DCONFIG_UNION_MOUNTS`）；VFS 的 union 查找/readdir 在
+  `vfs_lookup.c`/`vfs_attrlist.c`，bindfs 只保留 `MNT_UNION` 标志、不实现 union。挂载前
+  必须记录 mount flags、`mnt_vnodecovered` 与 union lookup 结果；firmlink/cryptex 可能让
+  路径绕过挂载点。不要为此实现完整 unionfs，也不要再覆盖 bluetoothd。
 - launchd job 目录已确认是 `/System/Library/LaunchDaemons`（boot `0x3db45895` 的 `GJOBS`
   `ld=0 ldb=0`，`com.apple.backboardd.plist` 存在）；SystemOS cryptex 路径不存在
   （`cx=2 cxb=2`）。之前可见检查的 ENOENT 是**非 union 挂载盖住下层目录**造成的，不是
@@ -242,3 +246,10 @@ Images, private logs and signing material stay out of Git.
   `dsb` 只作顺序屏障，不是 DMA 一致性证明，cache 属性要单独记录（`GPSV2 mapopt`）。
 - 快照 rounds 可能停止，CBHB 心跳继续；内核 fence 以 CBHB 的
   `zapdone/submit/submitdone/fencedone` 标记和心跳为准，不能因快照停止就判定内核停止。
+- P1 只能说“未观察到用户态 GPU 服务连接”；`markers=0` 不等于进程未启动。必须用同一 boot 的
+  `GPROBE exec`（成功 exec 计数）、marker open、`GPSVC`/`GPSV2` 的 open/refused 和
+  `IOServiceOpen` 返回值分别说明 launchd 加载/exec/找到服务/open；`/dev/console` 写入与
+  日志捕获在探针真正运行前不算已验证。
+- BO 关闭统一使用 `CheeseburgerGpuBoPolicy.h`：引擎运行中或 SMMU unmap/TLB 失败时保留对象；
+  `ClientGate` 的 generation 保证旧连接 close/free 不会清掉新连接。宿主
+  `gpu_bo_policy_model` 覆盖关闭交错/旧代释放/unmap 失败。

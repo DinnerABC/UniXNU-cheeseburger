@@ -79,7 +79,7 @@ CP 启动、GPMU、submit 单 IB、ring 回绕 700 次、非法 IB、kick 失败
 | E | Metal/AGX 前端的标准路径 | 发布 `IOAcceleratorES`、AdrenoMetal/Turnip a5xx 插件、显示交接 | 属于 P3，依赖 A–D 的用户态注入 |
 
 内核 ABI、BO、submit、fence 已由宿主机模型和对照组启动证明；**用户态提交仍未验证**
-（`GPSVC open=0/sub=0/fence=0`）。launchd 注入是必要条件，但注入路径尚未成立，
+（`GPSVC open=0/sub=0/fence=0`，未观察到用户态 GPU 服务连接；不能由 `markers=0` 推断进程未启动）。launchd 注入是必要条件，但注入路径尚未成立，
 因此不能把 P1 描述为“只差一次启动”。P1 的成功链必须逐步记录：进程启动 → 找到服务 →
 `IOServiceOpen` 成功 → 两个 BO 分配/映射 → 提交 → fence → CPU 读回四个值 → 安全清理，
 且每步带同一 boot ID 和真实返回值。
@@ -107,7 +107,14 @@ CP 启动、GPMU、submit 单 IB、ring 回绕 700 次、非法 IB、kick 失败
     `.../com.apple.backboardd.plist`、`/System/Cryptexes/OS/...`、Extensions 和
     `/private/preboot`，记录 errno；用于确定 launchd 实际 job 目录。
   - 用户态探针：每个阶段写 `/dev/console`（独立于 GPU 连接），并在服务找到后先发
-    0x41470001 marker open；真实 open 失败也有记录。
+    0x41470001 marker open；真实 open 失败也有记录。`/dev/console` 是否在该进程的
+    sandbox 下可写、以及是否进入可回收日志，尚未验证，留待受控启动。
+  - 关闭/异常路径：`releaseMappedBuffer` 统一“引擎运行→保留、unmap/TLB 失败→保留”；
+    `ClientGate` 用 generation 防止旧连接 close/free 清掉新连接；宿主
+    `gpu_bo_policy_model` 覆盖关闭交错、旧代释放、unmap 失败。
+  - 内核 `GPROBE`：`exec`（成功 exec `adrenoprobed` 的次数，`set_proc_name` 弱引用）、
+    marker、refused、open、calls，与同 boot 的 `GPSVC/GPSV2` 对照，用于区分
+    launchd 加载/exec/找到服务/open。
 - 本轮实机（boot `0x3db45895`，镜像 `2d1b4d3e…`）：快照 70 rounds 到 400 s；CBHB 含
   `fencedone`；`fence OK seq=1`、`publish rc=0`、`AUTORESET issued=1`；
   `GJOBS ld=0 ldb=0 cx=2 cxb=2 ext=0 extx=2 pre=0`；`GPSVC open=0`、`GPSV2 markers=0`；
@@ -115,3 +122,24 @@ CP 启动、GPMU、submit 单 IB、ring 回绕 700 次、非法 IB、kick 失败
   DISPLAY stage=10 frames=4 clients=25 SWAP=4；TOUCH stage=4 error=0 HID=0（触摸无响应仍是
   独立问题）；PosterBoard crash 循环仍在。**用户态提交仍未验证**。
 - 本轮不作为：bluetoothd 替换、文件影子挂载、完整 unionfs、改种子绕安装。
+
+## 8. 关闭策略与 launchd 观测（无启动轮，2026-11-01）
+
+- `CheeseburgerGpuBoPolicy.h`：`releaseMappedBuffer` 统一规则——引擎运行（idle()==-2）
+  或 SMMU unmap 失败时保留 BO；`ClientGate` 用 generation 防止旧连接 close/free 清掉
+  新连接。`clientClose`、`free`、显式 `BoFree` 都走 `freeBo` 的同一规则。
+- 宿主 `gpu_bo_policy_model`：关闭交错、旧代释放、unmap 失败、运行中保留；`gpu_wait_model`
+  覆盖等待成功/超时。6 组宿主模型全部 PASS（`out/p21/gpu-cp/host-tests/`）。
+- 内核新增 `GPROBE`（`native_adreno_probe_exec` + marker/refused/open/calls）。`exec` 来自
+  `set_proc_name` 的成功 exec 计数；与 `GPSVC/GPSV2` 一起用于区分 launchd 加载/exec/
+  找到服务/open。本轮**未启动**，`GPROBE` 尚无设备值。
+- 本轮内核构建 `402e9197…`（仅构建，未打包/未启动）；上一次实机仍是 `2d1b4d3e…` /
+  boot `0x3db45895`。
+- `/dev/console` 写入与日志捕获：探针未运行，**未验证**；必须在探针真正 exec 后确认。
+- 受控启动的判定条件（满足后再做一轮）：
+  1. 记录 daemons 挂载后的 `vfs_flags`（MNT_UNION 是否保留）、`mnt_vnodecovered` 和
+     union lookup 结果；
+  2. 在不改 seed identity 的前提下放置 daemon/plist（延迟安装），或明确接受一次记录的
+     reseed；
+  3. 同 boot 采集 `GPROBE exec/marker`、`GPSVC open/refused`、探针 `/dev/console` 行和
+     `IOServiceOpen` 返回值。

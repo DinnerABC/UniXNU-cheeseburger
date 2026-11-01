@@ -18,6 +18,7 @@ OUT = R / 'out/p21/gpu-cp/host-tests'
 TESTS = [
     ('gpu_start_model', 'tests/gpu_start_model.cpp'),
     ('gpu_wait_model', 'tests/gpu_wait_model.cpp'),
+    ('gpu_bo_policy_model', 'tests/gpu_bo_policy_model.cpp'),
     ('qcom_pas_model', 'tests/qcom_pas_model.cpp'),
     ('qcom_zap_model', 'tests/qcom_zap_model.cpp'),
     ('qcom_smmu_model', 'tests/qcom_smmu_model.cpp'),
@@ -26,6 +27,7 @@ HEADERS = [
     'package/BoardRuntime/CheeseburgerAtosGate.h',
     'package/BoardRuntime/CheeseburgerGpuStart.h',
     'package/BoardRuntime/CheeseburgerGpuWait.h',
+    'package/BoardRuntime/CheeseburgerGpuBoPolicy.h',
     'package/BoardRuntime/CheeseburgerGpuWalk.h',
     'package/BoardRuntime/QcomPAS.h',
     'package/BoardRuntime/CheeseburgerZap.h',

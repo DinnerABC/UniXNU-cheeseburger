@@ -1,6 +1,23 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -7393,7 +7393,7 @@
+@@ -959,6 +959,16 @@
+ 	    (unsigned)imgp->ip_ndp->ni_cnd.cn_namelen);
+ 	p->p_comm[imgp->ip_ndp->ni_cnd.cn_namelen] = '\0';
+ 
++	/* Bounded observation of the GPU probe's own exec. A zero counter means
++	 * launchd never executed it (or the exec failed), which is different from
++	 * the probe running but not finding the service. */
++	{
++		extern volatile uint64_t native_adreno_probe_exec __attribute__((weak_import));
++		if (&native_adreno_probe_exec && strcmp(p->p_comm, "adrenoprobed") == 0) {
++			native_adreno_probe_exec = native_adreno_probe_exec + 1;
++		}
++	}
++
+ #if DEVELOPMENT || DEBUG
+ 	/*
+ 	 * This happens during image activation, so the crash behavior flags from
+@@ -7393,7 +7403,7 @@
  {
  	char parent[192];
  	strlcpy(parent, path, sizeof(parent));
@@ -9,7 +26,7 @@
  		if (parent[i] != '/') {
  			continue;
  		}
-@@ -7478,7 +7478,7 @@
+@@ -7478,7 +7488,7 @@
  		at += 24;
  		const char *name = (const char *)(addon + at);
  		at += (name_bytes + 7) & ~7ULL;
@@ -18,7 +35,7 @@
  		uint8_t *data = kalloc_data(size ? size : 1, Z_WAITOK);
  		int error = data ? native_gpu_addon_inflate(addon + at, packed, data, size) : ENOMEM;
  		if (!error) {
-@@ -7504,13 +7504,34 @@
+@@ -7504,13 +7514,34 @@
  static void
  native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  {
@@ -57,7 +74,7 @@
  	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
  	    sizeof(extensions_point), "/System/Library/Extensions/AGXMetalA10.bundle",
  	    "/System/Library/Extensions/NativeAdrenoMetal.bundle/Info.plist", &native_gpu_addon_stage,
-@@ -7520,7 +7541,7 @@
+@@ -7520,7 +7551,7 @@
  	    "/System/Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
  	/* The default iPadOS 17 wallpaper's layered animation with PNG images in place of its HEIC ones (no hardware HEVC decoder here).
  	 * The overlay carries the animation's documents and the PNG images; the sealed assets directory stays visible below it. */
