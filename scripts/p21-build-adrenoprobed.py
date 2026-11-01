@@ -21,7 +21,7 @@ import zlib
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 R = Path(__file__).resolve().parents[1]
 C = R / 'out/p21/atos-gate'
-OUT = C / 'userland'
+OUT = Path(os.environ.get('P21_PROBE_OUT', C / 'userland'))
 SRC = R / 'package/Userland/adrenoprobed.cpp'
 ABI = R / 'package/BoardRuntime/NativeAdrenoABI.h'
 ORIGINAL = R / 'out/p12/trust/original-static-system.bundle'

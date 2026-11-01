@@ -47,6 +47,8 @@ extern volatile uint64_t native_gop_wait_stats[7] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_service_stats[20] __attribute__((weak_import));
+/* Effective uid of the last task that reached the GPU user client's open. */
+extern volatile uint64_t native_adreno_client_uid __attribute__((weak_import));
 extern volatile uint64_t cb_gpu_paths[8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_probe_exec __attribute__((weak_import));
 extern volatile uint64_t native_gpu_addon_mount_flags __attribute__((weak_import));
@@ -70,6 +72,22 @@ extern volatile int native_gpu_addon2_stage __attribute__((weak_import));
 extern volatile int native_gpu_addon2_status __attribute__((weak_import));
 extern volatile int native_gpu_addon3_stage __attribute__((weak_import));
 extern volatile int native_gpu_addon3_status __attribute__((weak_import));
+/* /Developer union that serves the service cache's factory daemon path. */
+extern volatile int native_gpu_addon4_stage __attribute__((weak_import));
+extern volatile int native_gpu_addon4_status __attribute__((weak_import));
+/* Owner copy of the sealed launchd service cache: stage, last error, the
+ * sealed and augmented sizes, object/daemon counts, whether the loader binary
+ * carries launchd_unsecure_cache=, the union mount stage/status and rollback. */
+extern volatile int native_gpu_addon_cache_stage __attribute__((weak_import));
+extern volatile int native_gpu_addon_cache_status __attribute__((weak_import));
+extern volatile int native_gpu_addon_cache_loader __attribute__((weak_import));
+extern volatile int native_gpu_addon_cache_mount_stage __attribute__((weak_import));
+extern volatile int native_gpu_addon_cache_mount_status __attribute__((weak_import));
+extern volatile int native_gpu_addon_cache_rollback __attribute__((weak_import));
+extern volatile uint64_t native_gpu_addon_cache_input __attribute__((weak_import));
+extern volatile uint64_t native_gpu_addon_cache_output __attribute__((weak_import));
+extern volatile int native_gpu_addon_cache_objects __attribute__((weak_import));
+extern volatile int native_gpu_addon_cache_daemons __attribute__((weak_import));
 extern volatile uint32_t native_adreno_export_stats[4] __attribute__((weak_import));
 extern volatile int32_t native_touch_strokes[16][7] __attribute__((weak_import));
 extern volatile uint32_t native_touch_stroke_count __attribute__((weak_import));
@@ -436,15 +454,15 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   /* User-client submission (sheng NativeAdreno ABI): opens/closes, BOs,
    * maps, submits, fences, waits, errors, last status/selector, BO bytes,
    * pages, metadata bytes and calls. The daemon's own result line follows. */
-  char svc[240];
-  snprintf(svc,sizeof svc,"GPSVC ready=%d open=%llu close=%llu bo=%llu free=%llu map=%llu unmap=%llu sub=%llu fence=%llu wait=%llu err=%llu st=%llx sel=%llx bytes=%llu pages=%llu meta=%llu calls=%llu bid=%llx",
+  char svc[288];
+  snprintf(svc,sizeof svc,"GPSVC ready=%d open=%llu close=%llu bo=%llu free=%llu map=%llu unmap=%llu sub=%llu fence=%llu wait=%llu err=%llu st=%llx sel=%llx bytes=%llu pages=%llu meta=%llu calls=%llu uid=%llx bid=%llx",
     (int)native_adreno_service_ready,
     native_adreno_service_stats[0],native_adreno_service_stats[1],native_adreno_service_stats[2],
     native_adreno_service_stats[3],native_adreno_service_stats[4],native_adreno_service_stats[5],
     native_adreno_service_stats[6],native_adreno_service_stats[8],native_adreno_service_stats[7],
     native_adreno_service_stats[9],native_adreno_service_stats[10],native_adreno_service_stats[11],
     native_adreno_service_stats[12],native_adreno_service_stats[13],native_adreno_service_stats[14],
-    native_adreno_service_stats[15],cb_boot_id);
+    native_adreno_service_stats[15],&native_adreno_client_uid?native_adreno_client_uid:~0ull,cb_boot_id);
   at=put(out,at,cap,svc,sizeof svc);
   char txt[112];
   snprintf(txt,sizeof txt,"GPSTXT %s bid=%llx",native_adreno_service_text,cb_boot_id);
@@ -502,6 +520,31 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     &native_gpu_addon_orig_stat[0]?native_gpu_addon_orig_stat[2]:~0ull,
     &native_gpu_addon_boot_mount?(int)native_gpu_addon_boot_mount:-1,cb_boot_id);
   at=put(out,at,cap,add3,sizeof add3);
+  if (&native_gpu_addon4_stage) {
+   /* The sealed service cache's XPC-activity job starts the App-cryptex path
+    * /System/Cryptexes/App/usr/libexec/webbookmarksd; stage 5/status 0 means
+    * that union is mounted and the owner program resolves through it. */
+   char dev[120];
+   snprintf(dev,sizeof dev,"GCRYPT stage=%d status=%d bid=%llx",
+     (int)native_gpu_addon4_stage,(int)native_gpu_addon4_status,cb_boot_id);
+   at=put(out,at,cap,dev,sizeof dev);
+  }
+  if (&native_gpu_addon_cache_stage) {
+   /* The system domain's daemons come from the sealed service cache; this row
+    * shows whether the owner job was merged into a copy and whether the union
+    * that serves it was verified and kept. */
+   char cache[240];
+   snprintf(cache,sizeof cache,"GCACHE stage=%d err=%d in=%llu out=%llu obj=%d dmn=%d ldr=%d mnt=%d/%d rb=%d bid=%llx",
+     (int)native_gpu_addon_cache_stage,(int)native_gpu_addon_cache_status,
+     &native_gpu_addon_cache_input?native_gpu_addon_cache_input:0,
+     &native_gpu_addon_cache_output?native_gpu_addon_cache_output:0,
+     &native_gpu_addon_cache_objects?(int)native_gpu_addon_cache_objects:-1,
+     &native_gpu_addon_cache_daemons?(int)native_gpu_addon_cache_daemons:-1,
+     &native_gpu_addon_cache_loader?(int)native_gpu_addon_cache_loader:-1,
+     (int)native_gpu_addon_cache_mount_stage,(int)native_gpu_addon_cache_mount_status,
+     &native_gpu_addon_cache_rollback?(int)native_gpu_addon_cache_rollback:-1,cb_boot_id);
+   at=put(out,at,cap,cache,sizeof cache);
+  }
  }
  if (&cb_zap[0] && cb_zap[0]!=0xdeadbeef && cb_zap[1]) {
   char zap[240];

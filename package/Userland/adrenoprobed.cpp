@@ -192,6 +192,8 @@ int main(){
     call(c,NativeAdrenoMethodBoFree,&ft,(NativeAdrenoAbiTimestamp*)nullptr);
     line("P21PROBE stage=cleanup done verified=%d",verified);
     IOServiceClose(c.conn);
-    line("P21PROBE stage=exit code=%d",verified==4?0:20);
-    return verified==4?0:20;
+    // One verified cycle per boot: keep the job alive so launchd's KeepAlive
+    // does not resubmit the same test continuously.
+    line("P21PROBE stage=idle verified=%d",verified);
+    for (;;) sleep(3600);
 }

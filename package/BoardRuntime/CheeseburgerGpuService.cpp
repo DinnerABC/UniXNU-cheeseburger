@@ -16,12 +16,15 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <kern/clock.h>
+#include <sys/proc.h>
+#include <sys/kauth.h>
 #include <string.h>
 #include "NativeAdrenoABI.h"
 #include "CheeseburgerGpuBoPolicy.h"
 
 extern "C" {
 volatile uint64_t native_adreno_service_stats[20];
+volatile uint64_t native_adreno_client_uid=~0ull;
 char native_adreno_service_text[64];
 volatile int native_adreno_service_ready;
 int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
@@ -143,8 +146,18 @@ IOReturn NativeAdrenoGpuService::newUserClient(task_t owningTask,void *securityI
 }
 
 bool AGXDeviceUserClient::initWithTask(task_t ownerTask,void *security,UInt32 type,OSDictionary *properties) {
-    if(!ownerTask||type!=OpenType||
-       clientHasPrivilege(security,kIOClientPrivilegeAdministrator)!=kIOReturnSuccess||
+    if(!ownerTask||type!=OpenType)return false;
+    // The factory job that starts the owner probe runs as mobile (501), while
+    // the original policy only accepted the administrator token. Keep root as
+    // the general rule and admit exactly that device user; the single-client
+    // gate below still serializes every open.
+    uint64_t uid=~0ull;
+    proc_t owner=(proc_t)get_bsdtask_info(ownerTask);
+    kauth_cred_t cred=owner?kauth_cred_proc_ref(owner):nullptr;
+    if(cred){uid=kauth_cred_getuid(cred);kauth_cred_unref(&cred);}
+    native_adreno_client_uid=uid;
+    bool privileged=clientHasPrivilege(security,kIOClientPrivilegeAdministrator)==kIOReturnSuccess;
+    if((!privileged&&uid!=501)||
        !IOUserClient::initWithTask(ownerTask,security,type,properties))return false;
     task_=ownerTask;task_reference(task_);
     return true;

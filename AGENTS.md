@@ -274,3 +274,25 @@ Images, private logs and signing material stay out of Git.
 - BO 关闭统一使用 `CheeseburgerGpuBoPolicy.h`：引擎运行中或 SMMU unmap/TLB 失败时保留对象；
   `ClientGate` 的 generation 保证旧连接 close/free 不会清掉新连接。宿主
   `gpu_bo_policy_model` 覆盖关闭交错/旧代释放/unmap 失败。
+
+## GPU 用户态接入（2026-11-02 已确认）
+
+- launchd 系统域只从签名服务缓存导入作业，搜索路径不含 `/Library/LaunchDaemons`；缓存中的
+  `com.apple.factory.NFQRCoded` 从未被导入。`/System` 作业即使被 XPC activity 触发，owner
+  二进制替换也会被 **AMFI launch constraint（enforcing，launch type 1，“Constraint not matched”）**
+  拒绝；owner trust cache 的 cdhash 不能替代平台身份。不要再尝试新增/替换 launchd plist、
+  路径或缓存，也不要启用 `sgac`/`launchd_unsecure_cache`（反汇编确认其直接跳过缓存
+  SecStaticCode/AMFI 校验）。
+- 用户态 GPU 按上游方式：内核发布 `IOAcceleratorES`（`MetalPluginName`、
+  `NativeSandboxGrantProcess=backboardd`）→ backboardd 的 Metal 发现加载
+  `/System/Library/Extensions/NativeAdrenoMetal.bundle` → 插件在 backboardd 内打开用户客户端；
+  放行靠官方 `zzw-native-adreno-sandbox-grant.patch`（只对服务命名的进程跳过 MACF open 检查）。
+  前置是 prelink/加载 `com.apple.iokit.IOGPUFamily`，且其基类 ABI 需按本机 21H392 kernelcache
+  审计，不能套用 A740 地址。
+- 我们的 `NativeAdrenoABI.h` 与官方 165 行版本一致；不要为接入再改 ABI，先改服务发布形态与插件。
+- 用户客户端 open 允许 root 或 mobile(501)（`GPSVC … uid=` 记录实际 uid），其他 uid 拒绝；
+  单客户端门与 BO 策略不变。探针一轮完成后 idle，避免 KeepAlive/XPC activity 反复提交。
+- 取证：Data 是 seed + UFS overlay。存储区在 `/dev/block/sda` 绝对 LBA 11261615（4 KiB），
+  布局 = 头 1 块 + 位图 80 块 + 页区；**页 i 在块 81+i**。用 `dev-seed.dbr` 展开后按位图写回，
+  读写挂载（journal 重放）才能读 `launchd.log`。步骤与证据见
+  `docs/P21_GPU_USERSPACE_INTEGRATION_20261102.md`。

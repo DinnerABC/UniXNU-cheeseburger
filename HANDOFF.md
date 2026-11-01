@@ -1,4 +1,16 @@
-## 2026-11-02 本机编译及本轮候选（进行中）
+## 2026-11-02 launchd 注入结论与转向官方插件路径（本轮完成，等待迁移实现）
+
+- 本轮合并了上一轮本机构建候选并完成三次实机启动，设备 `3b25cc7c` 每次都自动回 Recovery（约 410–470 s，`CB auto reset: 400 s reached`）：
+  1. boot `0x4bce371e`（镜像 `56d9ad08…`、内核 `203c5c9d…`、固件 `6070871b…`、payload `e829d961…`）：GPU fence `seq=1`、服务 `publish rc=0`、用户态启动、触摸 `HID=12`、显示 `frames>0`、400 s 自动回；`GPROBE exec=0`。日志 `out/p21/persistent-logs/20261101T172951Z/`，冻结于 `rounds/20261101T174801Z-local-build-baseline`。
+  2. boot `0x55a9e4ea`（镜像 `8ba834fd…`、内核 `cc8636d0…`、固件 `947c5b31…`、payload `6271f231…`）：`/Developer` union `GDEV stage=5 status=0`，但 launchd 未导入 `/Library` 工厂作业，`GPROBE exec=0`；日志 `20261101T181318Z`，冻结于 `rounds/20261101T183050Z-dev-job-vfs`。
+  3. boot `0x3ee5d06f`（镜像 `84dbfc4c…`、内核 `985f9a7e…`、固件 `b835fe34…`、payload `75d24c0b…`）：`/System/Cryptexes` union `GCRYPT stage=5 status=0`；`webbookmarksd` 由 XPC activity 触发、xpcproxy exec 后被 **AMFI launch constraint（enforcing）** 拒绝；日志 `20261101T184447Z`，冻结于 `rounds/20261101T184636Z-cryptex-amfi-constraint`。
+- **已确认的硬墙**：launchd 系统域只导入签名缓存搜索路径（不含 `/Library/LaunchDaemons`）；`/System` 作业的 owner 二进制替换被 AMFI launch constraint 以 “Constraint not matched” 拒绝（owner trust cache 不能替代平台身份）；`launchd_unsecure_cache=` 经反汇编确认会完全跳过 `SecStaticCode`/AMFI 缓存校验，禁止启用。详细证据、log 读取方法与 Data overlay 重建步骤见 `docs/P21_GPU_USERSPACE_INTEGRATION_20261102.md`。
+- **用户决定**：按上游方式迁移——调研 UniXNU / UniXNU-sheng 的 GPU 用户态接入并以 sheng 适配为主。结论是上游不靠 launchd 作业：内核发布 `IOAcceleratorES` 服务（`MetalPluginName`/`NativeSandboxGrantProcess`），backboardd 的 Metal 发现加载 `/System/Library/Extensions/NativeAdrenoMetal.bundle` 插件，插件在 backboardd 内打开用户客户端；官方 `zzw-native-adreno-sandbox-grant.patch` 负责放行。我们的 `NativeAdrenoABI.h` 与官方 165 行版本完全一致，差距在服务形态、插件、sandbox grant 与 `IOGPUFamily` 前置。
+- **本轮代码**：GPU 用户客户端 open 放宽为 root 或 mobile(501) 并记录 `uid`（`GPSVC … uid=`）；探针完成一轮后进入 idle，避免 KeepAlive 反复提交；新增 XNU 补丁 `0011-cheeseburger-developer-daemon-mount.patch`（先 `/Developer`、后改 `/System/Cryptexes`，现作为被拒证据保留）；BootLog 增加 `GCRYPT` 行；seed staging 支持 `P21_SEED_BASE/OUT/PROBE_BUILD` 并写入 developer/cryptex 树。
+- **下一步（迁移实现）**：按 `docs/P21_GPU_USERSPACE_INTEGRATION_20261102.md` 第 4 节执行——prelink 加入 `IOGPUFamily` 并按 21H392 审计 `IOAcceleratorES` 基类 ABI；改造 accelerator 服务与属性；纳入 sandbox grant 补丁；构建最小 owner 插件在 backboardd 内跑 P1（Query→BO→Map→Submit→Fence→回读）；再加 `--publish`/`--clients` 与 Metal 前端。不要在 `/Developer`、Cryptexes 路径或新 launchd plist 上继续投入。
+- 设备状态：Recovery（ADC 5037，root adb）；本轮三次启动前均写并回读 misc BCB，每次自动回后 API 已消费，下一轮启动前必须重写。证据与镜像在 `out/`（gitignored），源码与文档见本轮 commit。
+
+## 2026-11-02 本机编译及本轮候选（已并入上一节）
 
 - 使用 `/Users/dinnerabc/unixnu-p21/atos-gate/source-tree` 隔离构建，NAS 负责源码和候选证据；`scripts/p21-compile-atos-gate.py` 支持 `P21_LOCAL_ROOT` 与 `P21_CANDIDATE`。本机 build 成功、136.7 秒，回写 NAS 的 stripped 内核 SHA-256 `5b84d06e8475cec30e0d9ad2cd181cddfc6ae81a8e690833533e5fa468ab314a`，unstripped `ec19c052ec040d738c90b3f9373a539239d020f310999519b4230d7c6af60373`，来源 `out/p21/atos-gate/kernel-source-build.json`。本轮独立候选 `out/p21/atos-local-round/`。
 - 用户停止了另一 agent；其已经启动的本机编译子进程完成后被复用。保留该 agent 的 launchd cache、脚本及测试未提交改动；不重置或覆盖。`AGENTS.md` 已补本机编译和 NAS 同步规则。
