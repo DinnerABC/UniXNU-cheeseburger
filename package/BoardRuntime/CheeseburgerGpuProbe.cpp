@@ -28,6 +28,7 @@ static bool mapw(W &w,uint64_t pa,unsigned size){
  return w.v;
 }
 static uint32_t rd(W &w,unsigned off){uint32_t x=w.v[off/4];__asm__ volatile("dmb sy":::"memory");return x;}
+static void wr(W &w,unsigned off,uint32_t x){__asm__ volatile("dsb sy":::"memory");w.v[off/4]=x;__asm__ volatile("dsb sy":::"memory");}
 static void fill(unsigned from,unsigned to,uint32_t v){for(unsigned i=from;i<to;++i)cb_gpu[i]=v;}
 
 // GPUCC offsets: PLL/CRC, CX reset/status/GDSC, roots and branches.
@@ -54,6 +55,13 @@ static void worker(void*,wait_result_t){
  cb_gpu[0]=rd(gcc,0x71004);          // GCC_GPU_CFG_AHB_CBCR
  cb_gpu[1]=rd(gcc,0x71010);          // GCC_GPU_BIMC_GFX_CBCR
  cb_gpu[2]=rd(gcc,0x71028);          // GCC_GPU_MISC
+ cb_gpu[70]=rd(gcc,0x46040);          // GCC_BIMC_GFX_CBCR (SMMU clock list)
+ if(!(cb_gpu[70]&1)){
+  wr(gcc,0x46040,uint32_t(cb_gpu[70])|1);
+  for(unsigned i=0;i<20 && !(rd(gcc,0x46040)&1);++i)IOSleep(1);
+ }
+ cb_gpu[71]=rd(gcc,0x46040);
+ IOLog("CB GPU: gcc_bimc_gfx %x->%x\n",uint32_t(cb_gpu[70]),uint32_t(cb_gpu[71]));
  // ClockDxe descriptors: gcc_hlos1/2_gpu_smmu_clk at 0x7d000/0x7e000 and
  // VDD_HLOS1/2_GPU_SMMU at 0x7d024/0x7e024. Read-only: these domains carry
  // the SMMU's table-walk/memory path, which ATOS waits on.

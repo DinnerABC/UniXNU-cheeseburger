@@ -320,8 +320,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  }
  if (&cb_gpu[0] && cb_gpu[63]) {
   char gpu[240];
-  snprintf(gpu,sizeof gpu,"GPU0 gcc ahb=%08llx bimc=%08llx misc=%08llx stage=%llu flags=%llx err=%llx",
-    cb_gpu[0]&0xffffffff,cb_gpu[1]&0xffffffff,cb_gpu[2]&0xffffffff,cb_gpu[63],cb_gpu[62],cb_gpu[61]);at=put(out,at,cap,gpu,sizeof gpu);
+  snprintf(gpu,sizeof gpu,"GPU0 gcc ahb=%08llx bimc=%08llx misc=%08llx bimc2=%08llx>%08llx stage=%llu flags=%llx err=%llx",
+    cb_gpu[0]&0xffffffff,cb_gpu[1]&0xffffffff,cb_gpu[2]&0xffffffff,cb_gpu[70]&0xffffffff,cb_gpu[71]&0xffffffff,cb_gpu[63],cb_gpu[62],cb_gpu[61]);at=put(out,at,cap,gpu,sizeof gpu);
   for(unsigned i=4;i<28;i+=12){int n=snprintf(gpu,sizeof gpu,"GPU%u gpucc",(i-4)/12+1);
    for(unsigned k=0;k<12 && i+k<28;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[i+k]&0xffffffffull);}
    at=put(out,at,cap,gpu,sizeof gpu);}
