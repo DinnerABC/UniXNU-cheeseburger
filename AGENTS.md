@@ -180,3 +180,37 @@ Images, private logs and signing material stay out of Git.
 - ATOS records FSR/FSYNR/FAR before clearing them, requires both the halt
   request bit and the IDLE acknowledgement, and gates the CP kick on
   halt/resume/timeout failures.
+
+## GPU clock / CP confirmed facts (2026-11-01)
+
+- `gcc_bimc_gfx_clk` (GCC 0x46040) must be enabled and read back bit0=1 before
+  trusting the GPU SMMU. The UEFI ClockDxe name alone did not enable it; with
+  it halted, ATOS stays ACTIVE and CP kicks time out. Enable it in the GPU
+  probe and record the before/after value; do not assume the UEFI clock table
+  covered every DTS clock.
+- The DarwinBoot low SMMU pool is one `cheeseburger-smmu-pool=<pa>` argument
+  for a fixed 64 KiB `AllocateMaxAddress + EfiReservedMemoryType` range. Map
+  it with `IOMemoryDescriptor::withPhysicalAddress` and
+  `kIOMapAnywhere | kIOMapCopybackCache`; `IODeviceMemory` defaults make
+  `bzero`'s `dc zva` fault on this board.
+- Keep the ATOS gate enabled by default. The explicit
+  `cheeseburger-gpu-atos-gate=0` diagnostic was only to isolate the gate and
+  must not be left in a candidate. ATOS now returns 0 with the BIMC clock on.
+- A successful kick means RPTR reached WPTR and the reset idle mask
+  (`idleStatus`, which allows 0x80000101/0x800001c1) passes, not only
+  `!(Status & ~1)`. Status3 bit24 remains part of the check.
+- Startup order is ME_INIT -> GPMU upload/ready (0xbabeface) -> ZAP/PAS auth.
+  Only then submit CP_SET_SECURE_MODE(0) and a CACHE_FLUSH_TS fence. A fence
+  is not proven until the CPU flush/read returns the sequence; RPTR or
+  GPMUReady alone are not DMA/rendering evidence.
+- Boot args must stay below roughly 700 bytes; the pool uses one argument and
+  the current payload is 599 bytes. Do not append a second size argument.
+- A persistent log that stops is not proof the kernel stopped. A secondary-core
+  panic can leave the log/console path blocked while the rest of the system
+  runs and the 400 s auto-reset still fires. Record the user-visible uptime and
+  treat the screen panic text as separate evidence; the panic text is not
+  persisted by the current panic screen.
+- Remaining known issue: `CP_AHB_FAULT` (e.g. 900009c, ME write) can be set
+  after GPMU/ZAP without blocking the fence. Decode it before concluding a
+  user submission failure; do not read stalled GPU MMIO on failure paths.
+

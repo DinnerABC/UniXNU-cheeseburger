@@ -1,3 +1,11 @@
+## 2026-11-01 GPU 当前状态（CP + GPMU + fence 已实机验证）
+
+- 设备 `3b25cc7c` 当前在 Recovery；最近一轮 fence 镜像 `3af1fd5b…`、内核 `10223927…`、firmware `80f81754…`，日志 `out/p21/persistent-logs/20261101T102647Z/`，boot `0x3d6b6baf`。`fence OK seq=1`、`post-auth trust=0 rptr=9->19 wptr=19`、`GCP13 rw=19/19`、ZAP rc=0、GPMU ready=babeface；400 s 自动返回（`AUTORESET issued=1`）。
+- **已实机证明**：`gcc_bimc_gfx_clk` 直接使能是 SMMU/ATOS/CP 的决定性前提；低地址 SMMU 池被真实使用（`lt=3 ht=0`）；ATOS `rc=0`；CP kick `rc=0`、RPTR 前进；GPMU 上传 ready；ZAP/PAS auth 全 0；CPU 读到 GPU 写入的 fence 序列号 1。
+- **未证明**：GPU 用户客户端、IOSurface 资源生命周期、渲染任务、Metal、合成器和 UI 流畅度；最近一轮 `DISPLAY frames=0` 属于已知间歇，与 GPU fence 无关。`CP_AHB_FAULT=900009c`（ME write）仍存在但未阻断 fence；SID2 secure stream 仍 `0x200ff` FAULT。
+- 详细证据、边界与下一步执行表见 **`docs/P21_GPU_CP_GPMU_FENCE_20261101.md`**。下一步 P1：移植 sagit `QcomGPU` 的提交/后端，建立持久 GPU 服务与最小用户态 batch+fence；之后再 IOSurface/2D、Metal/合成，最后测流畅度。
+- 仍在实行的约束：一次构建/一次启动、gate、400 s 自动回、10 GiB Data、P8 静默控制台；不写 TrustControl、不做 SID0 bypass、不关闭 ZAP/PAS；boot args <约 700 B。
+
 ## 2026-11-01：低地址 SMMU 表池（P4，进行中）
 
 - UEFI `DarwinBoot` 在 ExitBootServices 前用 `AllocatePages(AllocateMaxAddress, EfiReservedMemoryType, 16 pages, ...)` 预留 64 KiB 低池，把 PA 作为 `cheeseburger-smmu-pool` 追加到 kernel command line；XNU `CheeseburgerGpuSmmu` 优先用该池建 root/leaf 表，失败才回退原有分配。BootLog 新增 `SMPOOL pa=... bytes=... used=...`。UEFI 修改在 `out/p21/atos-gate/uefi-src/darwinboot-smmu-pool.patch`，VM overlay 源已同步。

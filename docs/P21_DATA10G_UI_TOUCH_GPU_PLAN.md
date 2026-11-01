@@ -38,6 +38,14 @@
 - 仍不能把本轮当作 UI 日志完全消失的自动证据：屏幕以用户观察为准；日志侧
   `[visible-console-tail]` 仍正常采集。
 
+## 2026-11-01 GPU 里程碑（已实机验证）
+
+- P4 已完成：BIMC GFX 时钟使能后 ATOS `rc=0`；低池 `lt=3 ht=0`；CP kick `rc=0`、RPTR 前进。
+- P5 已完成：GPMU `ready=babeface`；ZAP/PAS auth 全 0；fence `seq=1` 由 CPU 读到。
+- P6 进行中：下一步移植 sagit `QcomGPU` 提交/资源，建立持久 GPU 服务与用户态 batch + fence；详细证据和边界见 `docs/P21_GPU_CP_GPMU_FENCE_20261101.md`。
+- P2（触摸 3 次读失败恢复）仍是潜在缺陷；P3（PosterBoard/sandbox）按用户决定暂缓。
+- 已知未解决：`CP_AHB_FAULT=900009c`（ME write）不阻断 fence，但需在用户态提交前解码；SID2 secure stream 仍 `0x200ff` FAULT；`DISPLAY frames=0` 是已知间歇，不能归因 GPU。
+
 ## 计划表
 
 | 顺序 | 阶段 | 目标 | 具体改动 | 通过判据 | 风险/边界 |
@@ -46,9 +54,9 @@
 | P1 | Data + 静默控制台 | 让系统用上 10 GiB，日志不再盖 UI | 候选 payload 换 10 GiB 种子；去掉 `-v/debug=0x8/-enable_kprintf_spam`；600 s 自动回 | `DATA pages=2621440`；ENOSPC 消失或显著减少；屏幕 UI 可见；自动回 Recovery | 两个独立变量同轮；若 UI 仍被盖，单独查 console/display 所有权 |
 | P2 | 触摸恢复 | 触摸 worker 不因 3 次读失败永久退出 | 失败时 toggle GCC BLSP1_QUP5 BCR、重开 CBCR、重新 `qupInit`；记录失败时 GCC/QUP 状态；host 检查 | `TOUCH stage=4`；sink/send/rep 随触摸增长；HID reports 增长 | 先按上游 i2c-qup 恢复路径；不在 IRQ 上下文做重初始化 |
 | P3 | PosterBoard / sandbox | 降低崩溃循环与属性拒绝 | 先看 10 GiB Data 后是否缓解；再核对 canvas-width/height 属性来源与 sandbox profile | corpse 次数下降；不再持续 `canvas-width` deny | 不整体放宽 sandbox；不伪造属性 |
-| P4 | GPU ATOS | 让硬件 ATOS 完成 | UEFI `AllocatePages(AllocateMaxAddress, EfiReservedMemoryType)` 预留 <4 GiB 表池，经 `/chosen` 给 XNU；只替换页表物理位置 | ATOS `rc=0`、PAR 匹配 ring PA；CP kick 后 RPTR 前进 | 保持 2 GiB 内存、ZAP/PAS；不 SID0 bypass、不写 trust |
-| P5 | GPU 首个任务 | CP_ME_INIT、fence/GPMU | ATOS 通过后核对 CP_ME_INIT/ring/doorbell；再做 fence 写回与 GPMU | CP 完成 init；CPU 看到 fence；无 fault | 每步 fail-closed；失败不读停住的 GPU AHB |
-| P6 | 用户态 GPU | IOSurface/Metal 客户端 | 在 P5 成功后接用户客户端与 IOSurface | 客户端提交成功、帧内容正确 | 不提前宣称 Metal 可用 |
+| P4 | GPU ATOS | 让硬件 ATOS 完成 | UEFI `AllocatePages(AllocateMaxAddress, EfiReservedMemoryType)` 预留 64 KiB 低池，经单参数 `cheeseburger-smmu-pool` 给 XNU；XNU 用 CopybackCache 映射；直接使能 `gcc_bimc_gfx_clk` | ATOS `rc=0`、PAR 匹配；CP kick 后 RPTR 前进 | 保持 2 GiB 内存、ZAP/PAS；不 SID0 bypass、不写 trust |
+| P5 | GPU 首个任务 | CP_ME_INIT、GPMU、fence | ME_INIT -> GPMU -> ZAP -> `CP_SET_SECURE_MODE(0)` + `CACHE_FLUSH_TS` | CP kick `rc=0`；GPMU ready=babeface；CPU 读到 fence seq | `CP_AHB_FAULT` 仍存在但未阻断 fence；失败 fail-closed |
+| P6 | 用户态 GPU | IOSurface/Metal 客户端 | 在 P5 成功后移植 sagit `QcomGPU` 提交/资源，建立持久 GPU 服务与用户客户端 | 用户态 batch + fence 往返；2D/渲染内容可由 CPU 校验 | 不提前宣称 Metal 可用；不绕过 ATOS/ZAP |
 
 ## 证据纪律
 
