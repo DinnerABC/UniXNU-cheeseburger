@@ -1,3 +1,10 @@
+## 2026-11-01 ATOS 门禁候选（运行中）
+
+- 候选 `out/p21/atos-gate/uefi/boot-p21-up1.img`，SHA-256 `2b7397429f3bb0d46687499d43ee7cf418243bc66f86212b529e5a38e0785c2e`；内核 `afb7d180492467685926b885835467bc0962170368efb447076b663cc12dcf3c`。本轮只修复 ATOS 失败仍可能 kick 的门禁，不含低地址池，不能认为 GPU 已工作。
+- 主机检查及打包门禁通过，固件 pins 已核对；构建与检查入口 `scripts/p21-compile-atos-gate.py`、`scripts/p21-check-atos-gate.py`，日志在 `out/p21/atos-gate/`。头文件优先复用本地固定来源，缺失时走 127.0.0.1:7897。
+- 设备 `3b25cc7c` 已执行一次 `fastboot boot`，传输和命令均 OKAY；运行结果和新 boot ID 尚待回收。启动前仅更新 misc 命令字段，原始首块 `misc-before-clean.bin`、写后回读 `misc-readback.bin` 在候选目录，回读 SHA-256 `8698abf44b69b8040dd109feefc23706f070a26932c47f2b44a835efb2b9c801`。不写 boot/recovery/GPT。
+- 返回 Recovery 后读取持久日志，对比上一轮 boot ID `0x52ba5833`，确认 ATOS timeout 是否阻止 kick、系统是否存活及是否自动返回；不得把传输成功当作 GPU 成功。
+
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
 ## 2026-11-01：ATOS 门禁源码修复
