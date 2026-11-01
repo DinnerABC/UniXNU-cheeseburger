@@ -1,3 +1,11 @@
+## 2026-11-01：低地址 SMMU 表池（P4，进行中）
+
+- UEFI `DarwinBoot` 在 ExitBootServices 前用 `AllocatePages(AllocateMaxAddress, EfiReservedMemoryType, 16 pages, ...)` 预留 64 KiB 低池，把 PA 作为 `cheeseburger-smmu-pool` 追加到 kernel command line；XNU `CheeseburgerGpuSmmu` 优先用该池建 root/leaf 表，失败才回退原有分配。BootLog 新增 `SMPOOL pa=... bytes=... used=...`。UEFI 修改在 `out/p21/atos-gate/uefi-src/darwinboot-smmu-pool.patch`，VM overlay 源已同步。
+- **第一次尝试的参数超长**：payload 651 B 加上池的 PA+size 两个参数约 722 B，超过项目已知的约 700 B 截断线。boot `0x3eff380a` 的持久日志只到 55 s（2 rounds，无 heartbeat），但用户确认系统并未停止，蓝字到约 450 s 才手动重启；`AUTORESET requested=400 elapsed=53 issued=0`。日志/auto-reset 被 panic/console 锁住，不是 400 s 参数没写。屏幕出现 `unaligned kernel data abort`；日志没有 panic 文本（panic screen 只画屏），且没有 `SMPOOL`/`CB GPU` 行，低池代码尚未被证明执行。**不能据此判断低池成功或失败。**
+- 修正：池固定 64 KiB，只追加一个 `cheeseburger-smmu-pool=<pa>`；payload 去掉 `cheeseburger-disp-probe=60`、`cheeseburger-usb-probe=0`，args 599 B，加池参数约 634 B。候选 image `2d178302…`、kernel `c78b34fb…`、firmware `7c8d3d56…`、expanded payload `0a3ca3e1…`，gate `20261101T072331Z` PASS，auto-reset 400。
+- 待回收：本轮是否仍出现 `unaligned kernel data abort`、`SMPOOL` 是否出现、ATOS 是否仍 `rc=-2`、CP 是否 kick、400 s 是否自动返回。若 panic 只影响一个核而系统继续，持久日志/auto-reset 仍可能被锁；需要屏幕 panic 文本或单独的 panic-text 持久化路径。
+- 结论纪律：日志停在 55 s 不等于内核停；用户观察到的 450 s 运行是权威现场。低池结果以本轮 `SMPOOL`/ATOS 行为准，不能拿上一轮推断。
+
 ## 2026-11-01：10 GiB Data 生效 + 屏幕日志根因（P1）
 
 - 镜像 `d107ac79…`（kernel `afb7d180…`、firmware `5cad6653…`、expanded payload `609c3007…`、args 635）启动一次；日志 `out/p21/persistent-logs/20261101T061144Z/`，boot `0x51875b27`，82 rounds，0 写入错误，uptime 408 s。

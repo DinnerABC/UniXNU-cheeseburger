@@ -70,6 +70,29 @@ static IOBufferMemoryDescriptor *gRootBuf=nullptr;
 static uint64_t gRootPA=0;
 static volatile uint64_t *gRootVA=nullptr;
 static unsigned gIovaBits=0,gPaBits=0,gStartLevel=0;
+// DarwinBoot reserves a low (<4 GiB) pool before ExitBootServices and passes it
+// through the command line. Use it for every table when present; the SMMU can
+// otherwise fail to read the high pages XNU normally hands out.
+static IOMemoryMap *gPoolMap=nullptr;
+static volatile uint8_t *gPoolVA=nullptr;
+static uint64_t gPoolPA=0,gPoolBytes=0,gPoolUsed=0;
+static bool gPoolTried=false;
+static bool allocPoolPage(uint64_t &pa,void *&va){
+ if(!gPoolTried){
+  gPoolTried=true;unsigned ppa=0;const unsigned pbytes=65536; // DarwinBoot allocates 16 pages
+  if(PE_parse_boot_argn("cheeseburger-smmu-pool",&ppa,sizeof ppa)&&ppa&&
+     uint64_t(ppa)+pbytes<=0x100000000ull){
+   IODeviceMemory *m=IODeviceMemory::withRange(ppa,pbytes);
+   gPoolMap=m?m->map(kIOMapAnywhere):nullptr;OSSafeReleaseNULL(m);
+   if(gPoolMap){gPoolVA=(volatile uint8_t*)gPoolMap->getVirtualAddress();gPoolPA=ppa;gPoolBytes=pbytes;
+    cb_smmu[20]=gPoolPA;cb_smmu[21]=gPoolBytes;
+    IOLog("CB GPU SMMU pool: pa=%llx bytes=%llu\n",gPoolPA,gPoolBytes);}
+  }
+ }
+ if(!gPoolVA||gPoolUsed+4096>gPoolBytes)return false;
+ pa=gPoolPA+gPoolUsed;va=(void*)(gPoolVA+gPoolUsed);gPoolUsed+=4096;++gLowTables;cb_smmu[14]=gPoolUsed;cb_smmu[22]=gLowTables;
+ return true;
+}
 // Try the restricted low-physical pool first and verify the returned PA is
 // really below 4 GiB; the mask is a placement request, not a guarantee. Fall
 // back to the normal pool and record the split so a low-table result is never
@@ -94,6 +117,7 @@ static IOBufferMemoryDescriptor *allocPage(uint64_t &pa,void *&va,bool &low){
 }
 static bool allocTable(uint64_t &pa,volatile uint64_t *&va){
  void *v=nullptr;bool low=false;
+ if(allocPoolPage(pa,v)){memset(v,0,4096);flush_dcache((vm_offset_t)v,4096,FALSE);va=(volatile uint64_t*)v;return true;}
  if(!allocPage(pa,v,low))return false;
  memset(v,0,4096);flush_dcache((vm_offset_t)v,4096,FALSE);
  va=(volatile uint64_t*)v;
@@ -273,11 +297,12 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  // One physically contiguous, cache-cleaned, zero root table. Keep it for the
  // boot; the mapper that adds leaf entries will reuse it.
  {void *rootVA=nullptr;bool rootLow=false;
-  gRootBuf=allocPage(gRootPA,rootVA,rootLow);
-  gRootVA=(volatile uint64_t*)rootVA;
-  if(rootLow)++gLowTables;else if(gRootBuf)++gHighTables;
-  cb_smmu[22]=gLowTables;cb_smmu[23]=gHighTables;}
- if(!gRootBuf||!gRootPA||(gRootPA&4095)||!gRootVA||(gRootPA>>36)){cb_smmu[0]=7;return;}
+  if(allocPoolPage(gRootPA,rootVA)){gRootBuf=nullptr;}
+  else{gRootBuf=allocPage(gRootPA,rootVA,rootLow);
+   if(rootLow)++gLowTables;else if(gRootBuf)++gHighTables;
+   cb_smmu[22]=gLowTables;cb_smmu[23]=gHighTables;}
+  gRootVA=(volatile uint64_t*)rootVA;}
+ if(!gRootVA||!gRootPA||(gRootPA&4095)||(gRootPA>>36)){cb_smmu[0]=7;return;}
  memset((void*)gRootVA,0,4096);flush_dcache((vm_offset_t)gRootVA,4096,FALSE);
  cb_smmu[1]=gRootPA;cb_smmu[13]=(oas<<8)|ias;
  // Global setup, then bank 0, exactly as the sagit non-secure sequence.

@@ -345,6 +345,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(sm,sizeof sm,"SMICRO before=%llx after=%llx impl0=%llx result=%lld lt=%llu ht=%llu bid=%llx",
     cb_smmu[16],cb_smmu[17],cb_smmu[18],(long long)cb_smmu[19],cb_smmu[22],cb_smmu[23],cb_boot_id);
   at=put(out,at,cap,sm,sizeof sm);
+  snprintf(sm,sizeof sm,"SMPOOL pa=%llx bytes=%llu used=%llu bid=%llx",
+    cb_smmu[20],cb_smmu[21],cb_smmu[14],cb_boot_id);at=put(out,at,cap,sm,sizeof sm);
   if (&cb_map[0] && cb_map[0]!=0xdeadbeef) {
    snprintf(sm,sizeof sm,"SMAP st=%llu va=%llx pa=%llx pte=%llx",
      cb_map[0],cb_map[1],cb_map[2],cb_map[3]);at=put(out,at,cap,sm,sizeof sm);
