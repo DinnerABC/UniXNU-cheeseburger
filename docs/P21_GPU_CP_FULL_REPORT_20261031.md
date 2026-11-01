@@ -517,3 +517,19 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
   否则释放并回退普通池；记录低/高页数量（`SMICRO lt/ht`），不把高地址结果当低地址。
 - 目标：低地址 root/各级表 + 64 位 ATOS 写入后，若 ATOS 返回期望 PA，则硬件 walk 成立；再看
   CP `ME_INIT`/`RPTR`。若仍超时，按 GCP14/GCP15 的原始状态定位。
+
+### 11.23 round 15 实机：低地址页表不可得，ATOS 仍不完成
+
+- boot `0x52ba5833`，8？/66 rounds、0 写入错误；镜像 `480a499d…`、内核 `66e0c6b8…`、payload `ab6cfcb6…`、
+  固件 `39c871a2…`；66 rounds 自动回。
+- `SMICRO ... lt=0 ht=3`：root + 2 个叶表共 3 页，**全部来自高物理池**；受限 32 位掩码请求未得到
+  <4 GiB 页，已按设计校验并回退、记录。低地址对照无法在本机 2 GiB VM 中完成。
+- `GCP15 fsrb=400 fsynrb=0 farb=0 ttbr=2099b000/1 tcr=80201c root=12099b000`；ATOS 仍
+  `rc=-2 atsr=1 fsr=400`，haltctl=`17c`（请求+IDLE），64 位 ATS1PR 单次写入未改变结果。
+- CP 仍 `kick FAILED rc=-4 r=0 w=9 irq=0 ... scratch=0`；`frames=0`（显示首帧的已知间歇问题，
+  未据此归因 SMMU）。
+- 结论：ATOS 的失败与页表层级/写入宽度/电源时钟无关；低地址页表与正式分配机制是下一步。
+  计划在 UEFI 侧用 `AllocatePages(AllocateMaxAddress, EfiReservedMemoryType, ...)` 预留低 4 GiB
+  的 SMMU 表池，并通过 `/chosen` 属性（sheng Config 的 `[entry.chosen]` 注入路径）交给 XNU；
+  XNU 只使用该池建立 root/叶表，TCR/stream/固件/ring 保持不变。若该池也无法获得，再按本机
+  vendor 的 NoC/XPU 权限核对 SMMU master 的高地址访问，不盲目加 vote。
