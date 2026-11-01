@@ -10,7 +10,8 @@ import re
 
 MAGIC = b'CBHB0001'
 _LINE = re.compile(
-    rb'^CBHB0001 boot=([0-9a-f]{16}) seq=(\d+) sec=(\d+) tag=([a-z0-9]+) state=(\d+) rounds=(\d+)$')
+    rb'^CBHB0001 boot=([0-9a-f]{16}) seq=(\d+) sec=(\d+) tag=([a-z0-9]+) state=(\d+) rounds=(\d+)'
+    rb'(?: m=(\d+) l=([0-9a-f]+) o=(\d+) s=(-?\d+) a=(\d+))?$')
 
 
 def parse(block):
@@ -22,7 +23,7 @@ def parse(block):
     if not m:
         return None
     boot = m.group(1).decode('ascii')
-    return {
+    result = {
         'magic': MAGIC.decode('ascii'),
         'boot': boot,
         'boot_id': '0x' + boot,
@@ -33,6 +34,10 @@ def parse(block):
         'rounds': int(m.group(6)),
         'line': line.decode('ascii', 'replace'),
     }
+    if m.group(7) is not None:
+        result.update(markers=int(m.group(7)), last=int(m.group(8), 16), opens=int(m.group(9)),
+                      open_stage=int(m.group(10)), abi_opens=int(m.group(11)))
+    return result
 
 
 def encode(boot_id, seq, sec, tag, state, rounds, size=4096):
