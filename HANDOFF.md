@@ -8,9 +8,14 @@
   `fence OK seq=1`、`CB GPU service: publish rc=0`；CBHB 含 `zapdone/submit/submitdone/fencedone`；
   快照 70 rounds 到 400 s；`AUTORESET issued=1` 自动回；UI/显示路径仍在
   （DISPLAY stage=10 frames=4 clients=25 SWAP=4）。
-- **未验证**：未观察到用户态 GPU 服务连接（`GPSVC open=0`、`GPSV2 markers=0`）；
-  `markers=0` 只说明没有 marker open，不能推断进程未启动。像素、Metal、GPU 合成均未验证。
-  不能宣称 P1 完成，也不是“只差一次启动”。
+- **未验证**：未观察到用户态 GPU 服务连接（`GPSVC open=0`、`GPROBE exec=0`）；
+  `markers=0`/`exec=0` 不能推断进程未启动，只能说明没有成功的 exec/marker。像素、Metal、
+  GPU 合成均未验证。不能宣称 P1 完成。
+- **launchd 进展（boot `0x3f3e3c8f`，镜像 `dbd33465…`、内核 `a39b12a3…`）**：官方
+  `bindfs + MNT_UNION` 挂载成功（`daem=5/0`、`flags=0x4101029`、原/自有 plist 双 lookup
+  均 0）；`GADDON3 data=1f5/1f5/81a4 mnt=0/0/81a4 orig=0/0/81a4 boot=1` 证明挂载后
+  `BINDM_FORCE_ROOT` 报告 root:wheel，Data 原始 501:501 未改。`LimitLoadToSessionType=System`
+  已加入，仍 `GPROBE exec=0`。所有权不是原因；剩余是 launchd 枚举/plist 接受/加载时机。
 - **本轮修正（Kernel 402e9197，仅构建）**：`CheeseburgerGpuBoPolicy.h` 统一
   clientClose/free/BoFree 的“引擎运行或 unmap 失败→保留”规则，`ClientGate` 用 generation
   防旧连接清零新连接；宿主 `gpu_bo_policy_model` 覆盖关闭交错/unmap 失败；`GPROBE`

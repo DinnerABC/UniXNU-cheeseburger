@@ -5,15 +5,16 @@
 
 namespace CheeseburgerGpu {
 
-// A mapped buffer may be released only when the engine is stopped or idle and
-// the SMMU unmap (including its TLB sync) succeeded. Failure keeps the object:
-// freeing pages that a CP could still reference is worse than leaking them.
+// A mapped buffer may be released only when DMA is known to be stopped:
+// idle() == 0 (running and idle) or 1 (halt confirmed by register readback).
+// Unknown (-1), abandoned without a confirmed halt, a running engine (-2), or
+// a failed SMMU unmap/TLB sync keeps the object. Freeing pages a CP could
+// still reference is worse than leaking them.
 template <class Idle, class Unmap>
 inline bool releaseMappedBuffer(bool mapped, Idle idle, Unmap unmap) {
     if (!mapped) return true;
-    // idle() returns 0 idle, -2 still running; -1 means the engine is halted
-    // or abandoned, which is stopped and therefore safe.
-    if (idle() == -2) return false;
+    const int state = idle();
+    if (state != 0 && state != 1) return false;
     if (unmap() != 0) return false;
     return true;
 }

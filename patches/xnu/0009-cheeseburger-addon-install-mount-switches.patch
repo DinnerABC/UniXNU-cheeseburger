@@ -1,9 +1,10 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -959,6 +959,16 @@
+@@ -958,6 +958,16 @@
+ 	bcopy((caddr_t)imgp->ip_ndp->ni_cnd.cn_nameptr, (caddr_t)p->p_comm,
  	    (unsigned)imgp->ip_ndp->ni_cnd.cn_namelen);
  	p->p_comm[imgp->ip_ndp->ni_cnd.cn_namelen] = '\0';
- 
++
 +	/* Bounded observation of the GPU probe's own exec. A zero counter means
 +	 * launchd never executed it (or the exec failed), which is different from
 +	 * the probe running but not finding the service. */
@@ -13,11 +14,86 @@
 +			native_adreno_probe_exec = native_adreno_probe_exec + 1;
 +		}
 +	}
-+
+ 
  #if DEVELOPMENT || DEBUG
  	/*
- 	 * This happens during image activation, so the crash behavior flags from
-@@ -7393,7 +7403,7 @@
+@@ -7228,7 +7238,39 @@
+ volatile int native_gpu_addon2_status = -1;
+ volatile int native_gpu_addon3_stage = 0;
+ volatile int native_gpu_addon3_status = -1;
++/* Result of the last mount that reached stage 3: the actual vfs flags, the
++ * lookups through the union, and the rollback status. A failed check leaves
++ * the original directory in place instead of a partial view. */
++volatile uint64_t native_gpu_addon_mount_flags = 0;
++volatile int native_gpu_addon_orig = -1;
++volatile int native_gpu_addon_own = -1;
++volatile int native_gpu_addon_rollback = -1;
++/* Observed ownership and enumeration after the union mount. 0xffffffff means
++ * the lookup or getattr failed; these are observations, not a root cause. */
++volatile uint64_t native_gpu_addon_data_stat[3] = {~0ull, ~0ull, ~0ull};
++volatile uint64_t native_gpu_addon_mount_stat[3] = {~0ull, ~0ull, ~0ull};
++volatile uint64_t native_gpu_addon_orig_stat[3] = {~0ull, ~0ull, ~0ull};
++volatile int native_gpu_addon_boot_mount = 0;
+ static void
++native_gpu_addon_stat(const char *path, volatile uint64_t *out)
++{
++	vnode_t vp = NULLVP;
++	vfs_context_t ctx = vfs_context_current();
++	out[0] = out[1] = out[2] = ~0ull;
++	if (vnode_lookup(path, 0, &vp, ctx)) return;
++	struct vnode_attr va;
++	VATTR_INIT(&va);
++	VATTR_WANTED(&va, va_uid);
++	VATTR_WANTED(&va, va_gid);
++	VATTR_WANTED(&va, va_mode);
++	if (vnode_getattr(vp, &va, ctx) == 0) {
++		out[0] = va.va_uid;
++		out[1] = va.va_gid;
++		out[2] = va.va_mode;
++	}
++	vnode_put(vp);
++}
++static void
+ native_gpu_addon_mount(proc_t p, user_addr_t scratch, user_addr_t offset, const char *source, size_t source_size,
+     const char *point, size_t point_size, const char *visible, const char *own, volatile int *stage, volatile int *status)
+ {
+@@ -7259,20 +7301,35 @@
+ 		return;
+ 	}
+ 	*stage = 3;
++	mount_t mounted = NULL;
++	vnode_t root = NULLVP;
++	if (!vnode_lookup(point, 0, &root, vfs_context_current()) && root) {
++		mounted = vnode_mount(root);
++		native_gpu_addon_mount_flags = mounted ? vfs_flags(mounted) : 0;
++		vnode_put(root);
++		root = NULLVP;
++	}
+ 	/* The union must still show a sealed lower entry next to the owner's. */
+ 	error = vnode_lookup(visible, 0, &probe, vfs_context_current());
++	native_gpu_addon_orig = error;
+ 	if (!error) {
+ 		vnode_put(probe);
+ 		probe = NULLVP;
+ 		*stage = 4;
+ 		/* ... and the owner's own entry must be visible through it (stage 5). */
+ 		error = vnode_lookup(own, 0, &probe, vfs_context_current());
++		native_gpu_addon_own = error;
+ 		if (!error) {
+ 			vnode_put(probe);
+ 			probe = NULLVP;
+ 			*stage = 5;
+ 		}
+ 	}
++	if (error && mounted) {
++		/* Do not leave a view that hides the system jobs: put the original
++		 * directory back before launchd starts. */
++		native_gpu_addon_rollback = dounmount(mounted, 0, 0, vfs_context_current());
++	}
+ 	*status = error;
+ }
+ /* The GPU addon of the boot payload (scripts/make-gpu-addon.py, handed over by the loader as /chosen/memory-map/GpuAddon): every file
+@@ -7393,7 +7450,7 @@
  {
  	char parent[192];
  	strlcpy(parent, path, sizeof(parent));
@@ -26,7 +102,7 @@
  		if (parent[i] != '/') {
  			continue;
  		}
-@@ -7478,7 +7488,7 @@
+@@ -7478,7 +7535,7 @@
  		at += 24;
  		const char *name = (const char *)(addon + at);
  		at += (name_bytes + 7) & ~7ULL;
@@ -35,7 +111,7 @@
  		uint8_t *data = kalloc_data(size ? size : 1, Z_WAITOK);
  		int error = data ? native_gpu_addon_inflate(addon + at, packed, data, size) : ENOMEM;
  		if (!error) {
-@@ -7504,13 +7514,34 @@
+@@ -7504,23 +7561,50 @@
  static void
  native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  {
@@ -58,6 +134,10 @@
 +	if (!mounts) {
 +		return;
 +	}
++	/* The mount path sets native_bindfs_boot_mount, which makes bindfs set
++	 * BINDM_FORCE_ROOT; record that intent and the ownership it reports. */
++	native_gpu_addon_boot_mount = 1;
++	native_gpu_addon_stat("/private/var/mobile/ngpu/daemons/org.cheeseburger.adrenoprobed.plist", native_gpu_addon_data_stat);
 +	if (mounts == 2) {
 +		/* Shadow the binary of a non-essential RunAtLoad daemon. launchd keeps
 +		 * its job plists from startup, so a late plist directory mount does not
@@ -74,8 +154,13 @@
  	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
  	    sizeof(extensions_point), "/System/Library/Extensions/AGXMetalA10.bundle",
  	    "/System/Library/Extensions/NativeAdrenoMetal.bundle/Info.plist", &native_gpu_addon_stage,
-@@ -7520,7 +7551,7 @@
- 	    "/System/Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
+ 	    &native_gpu_addon_status);
+ 	native_gpu_addon_mount(p, scratch, 0x600, daemons_source, sizeof(daemons_source), daemons_point, sizeof(daemons_point),
+ 	    "/System/Library/LaunchDaemons/com.apple.backboardd.plist",
+-	    "/System/Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
++	    "/System/Library/LaunchDaemons/org.cheeseburger.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
++	native_gpu_addon_stat("/System/Library/LaunchDaemons/org.cheeseburger.adrenoprobed.plist", native_gpu_addon_mount_stat);
++	native_gpu_addon_stat("/System/Library/LaunchDaemons/com.apple.backboardd.plist", native_gpu_addon_orig_stat);
  	/* The default iPadOS 17 wallpaper's layered animation with PNG images in place of its HEIC ones (no hardware HEVC decoder here).
  	 * The overlay carries the animation's documents and the PNG images; the sealed assets directory stays visible below it. */
 -	static const char wallpaper_source[] = "/private/var/ngpu/wallpaper",

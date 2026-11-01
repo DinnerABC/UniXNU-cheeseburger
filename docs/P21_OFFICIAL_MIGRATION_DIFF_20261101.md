@@ -85,4 +85,4 @@ UEFI、内核、Data、时钟和硬件参数。官方框架固定提交：`16e59
 |---|---|---|
 | 底层路径存在 | `GJOBS ld=0 ldb=0` | 已证明 |
 | launchd 实际读取我们的 plist | 原 `bluetoothd` 仍执行；无 exec 观测 | 未证明 |
-| 我们的 job 已加载/已 exec | `GPROBE exec`（下一受控启动） | 未测量 |
+| 我们的 job 已加载/已 exec | boot `0x3db7cb89`：`GPROBE exec=0`，无 P21PROBE 行 | 未加载/未 exec；union 挂载与双查找本身通过（`daem=5/0`、`GADDON2 flags=4101029 orig=0 own=0`）。下一步记录挂载后 uid/gid/mode 与 boot-mount 开关（`GADDON3`）；501:501 只是观察差异，未确认根因。内核 readdir 接口不兼容，launchd 枚举以 `GPROBE exec` 判断 |

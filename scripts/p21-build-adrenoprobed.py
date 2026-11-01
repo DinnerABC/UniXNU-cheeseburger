@@ -89,19 +89,8 @@ def main():
     jobs = {
         DAEMON_ID: dict(Label=DAEMON_ID, ProgramArguments=['/private/var/mobile/ngpu/bin/adrenoprobed'],
                         RunAtLoad=True, KeepAlive=False, UserName='root', ThrottleInterval=30,
+                        LimitLoadToSessionType='System',
                         ProcessType='Interactive', StandardErrorPath='/dev/null'),
-        # launchd may answer a lookup of an existing job name through the union
-        # view without enumerating new names, so the same program is offered
-        # under two existing RunAtLoad jobs as sheng does.
-        'com.apple.iomfb_fdr_loader': dict(Label='com.apple.iomfb_fdr_loader',
-                                           ProgramArguments=['/private/var/mobile/ngpu/bin/adrenoprobed'],
-                                           RunAtLoad=True, KeepAlive=False,
-                                           LimitLoadToSessionType='System', ProcessType='Interactive',
-                                           StandardErrorPath='/dev/null'),
-        'com.apple.bluetoothd': dict(Label='com.apple.bluetoothd',
-                                     ProgramArguments=['/private/var/mobile/ngpu/bin/adrenoprobed'],
-                                     RunAtLoad=True, KeepAlive=False, ProcessType='Interactive',
-                                     StandardErrorPath='/dev/null'),
     }
     for name, job in jobs.items():
         (OUT / (name + '.plist')).write_bytes(plistlib.dumps(job, fmt=plistlib.FMT_XML))

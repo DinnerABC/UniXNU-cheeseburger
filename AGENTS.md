@@ -246,6 +246,10 @@ Images, private logs and signing material stay out of Git.
   `dsb` 只作顺序屏障，不是 DMA 一致性证明，cache 属性要单独记录（`GPSV2 mapopt`）。
 - 快照 rounds 可能停止，CBHB 心跳继续；内核 fence 以 CBHB 的
   `zapdone/submit/submitdone/fencedone` 标记和心跳为准，不能因快照停止就判定内核停止。
+- 官方 addon 挂载在本机已证明：`bindfs + MNT_RDONLY|MNT_UNION` 后 `GADDON2`
+  `flags=0x4101029 orig=0 own=0`，`GADDON3` 显示挂载路径 0:0（`BINDM_FORCE_ROOT` 生效）
+  而 Data 原文件仍是 501:501；不要为此在 Data 上 chown。launchd 仍 `GPROBE exec=0`，
+  剩余是 launchd 的目录枚举/plist 接受/加载时机，不是所有权。
 - P1 只能说“未观察到用户态 GPU 服务连接”；`markers=0` 不等于进程未启动。必须用同一 boot 的
   `GPROBE exec`（成功 exec 计数）、marker open、`GPSVC`/`GPSV2` 的 open/refused 和
   `IOServiceOpen` 返回值分别说明 launchd 加载/exec/找到服务/open；`/dev/console` 写入与

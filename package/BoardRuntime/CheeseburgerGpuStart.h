@@ -62,7 +62,7 @@ struct Record {
 
 template <class R> class Startup {
     R &r;
-    bool resetDone = false, abandonedFlag = false, runningFlag = false;
+    bool resetDone = false, abandonedFlag = false, runningFlag = false, haltAck = false;
     volatile uint32_t *ringPtr = nullptr;
     unsigned ringCursor = 0;
 
@@ -152,6 +152,7 @@ public:
 
     bool abandoned() const { return abandonedFlag; }
     bool running() const { return runningFlag; }
+    bool haltConfirmed() const { return haltAck; }
 
     // Leaves the GPU halted on failure. Callable repeatedly; never unhalts.
     void abandon(Record &rec) {
@@ -190,6 +191,10 @@ public:
             r.delay(10); waited += 10;
         }
         rec.me = rd(MEControl); rec.vbif = rd(VBIFHalted);
+        // Both stop controls read back halted: the only state in which DMA is
+        // known to be stopped. A failure elsewhere leaves this false, so a
+        // later teardown keeps the buffer instead of guessing.
+        haltAck = ((rec.me & Halt) == Halt) && ((rec.vbif & 15) == 15);
         r.mark("swrst");
         if (rd(RBBMSwReset) || rd(RBRead) || rd(RBWrite) || rd(ContextSwitch) || rd(TrustControl) > 1)
             return fail(rec, -5, 1);
@@ -244,6 +249,7 @@ public:
 
         // sagit order: release the engine first, then stage the ring and kick.
         r.publish(); wr(VBIFHalt, 0); wr(MEControl, 0);
+        haltAck = false;
         unsigned cursor = 0;
         ring[cursor++] = packet7(0x48, 8);  // CP_ME_INIT, A540 payload
         static const uint32_t init[] = {0x2f, 3, 0x20000000, 0, 0, 0, 0, 0};

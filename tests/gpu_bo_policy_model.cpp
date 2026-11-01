@@ -32,8 +32,18 @@ int main(){
     }
     {
         int unmaps=0;
+        bool ok=releaseMappedBuffer(true,[&]{return 1;},[&]{++unmaps;return 0;});
+        check(ok&&unmaps==1,"release/confirmed-stop-allows-unmap");
+    }
+    {
+        int unmaps=0;
         bool ok=releaseMappedBuffer(true,[&]{return -1;},[&]{++unmaps;return 0;});
-        check(ok&&unmaps==1,"release/stopped-allows-unmap");
+        check(!ok&&unmaps==0,"release/unknown-keeps-buffer");
+    }
+    {
+        int unmaps=0;
+        bool ok=releaseMappedBuffer(true,[&]{return -3;},[&]{++unmaps;return 0;});
+        check(!ok&&unmaps==0,"release/unexpected-state-keeps-buffer");
     }
     {
         bool ok=releaseMappedBuffer(true,[&]{return 0;},[&]{return -4;});

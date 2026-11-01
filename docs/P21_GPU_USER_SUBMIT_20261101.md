@@ -143,3 +143,70 @@ CP 启动、GPMU、submit 单 IB、ring 回绕 700 次、非法 IB、kick 失败
      reseed；
   3. 同 boot 采集 `GPROBE exec/marker`、`GPSVC open/refused`、探针 `/dev/console` 行和
      `IOServiceOpen` 返回值。
+
+## 9. launchd 候选（2026-11-01，用户授权一次 reseed）
+
+- 输入保持：A540 初始化、内核源码/参数、UEFI、21H461、时钟、显示配置不变；只改
+  Data seed（用户已授权一次 reseed）与 addon 挂载校验。
+- Data seed：在 10 GiB seed 副本中只放
+  `mobile/ngpu/bin/adrenoprobed` 与 `mobile/ngpu/daemons/org.cheeseburger.adrenoprobed.plist`；
+  不包含任何系统 job 的 shadow。encoded `9f8c45f8…`；daemon CDHash `728fe415…`；
+  owner trust 模块顺序保持 Apple×2 + own（已实测可加载）。
+- 启动参数：`cheeseburger-gpu-service=1 sheng-gpu-addon=1 sgai=0 sgam=1`（644 B）。
+  `sgai=0` 跳过启动期安装（避免 Data 挂载内写入卡死）；`sgam=1` 走官方
+  `bindfs + MNT_RDONLY|MNT_UNION` 挂载到 `/System/Library/LaunchDaemons`。
+- 挂载后一次性校验（`GADDON2`）：实际 `vfs_flags`（MNT_UNION 是否保留）、
+  原 `com.apple.backboardd.plist` 查找、`org.cheeseburger.adrenoprobed.plist` 查找；
+  任一失败立即 `dounmount` 回退，保证 launchd 仍看到原目录，不留半成品挂载。
+- 释放判定：`engine_idle()` 三态——0 运行且空闲、1 reset 回读确认 halt、-1 未知/
+  abandoned 未确认、-2 运行中；只有 0/1 且 SMMU unmap/TLB 成功才释放 BO。
+- 同 boot 记录：`GADDON/GADDON2`、`GPROBE exec/markers/refused/open`、`GPSVC/GPSV2`、
+  探针 `/dev/console` 行、CPU 读回四个 dword、首个失败阶段与返回值。
+- 失败分支：job 与原项可见但 `GPROBE exec=0` → 查 launchd 读取/plist 接受/签名；
+  exec 有记录但 open 失败 → 查服务匹配/sandbox/权限/ABI；open 成功但 BO/map/submit
+  失败 → 修首个失败调用；提交完成但读回错 → 查 CPU 映射属性、PTE、缓存维护、IB 与
+  fence；四值与 fence 均通过 → 进入已知像素与 IOSurface 生命周期，暂不宣称 Metal。
+
+## 10. launchd 候选第一次结果（boot `0x3db7cb89`）
+
+- 镜像 `50cfe172…`，内核 `08e4c81a…`，firmware `bcad6a5c…`，payload `b5f5d6a5…`，args 644 B，
+  Data 预置种子 `9f8c45f8…`（授权 reseed）。
+- **挂载/可见性通过**：`GADDON ext=1/2 daem=5/0 wp=1/2`（daemons 到 stage 5，status 0）；
+  `GADDON2 flags=4101029 orig=0 own=0 rb=-1`——`vfs_flags` 含 `MNT_UNION`（0x20），
+  原 `com.apple.backboardd.plist` 与自有 `org.cheeseburger.adrenoprobed.plist` 都能查到，
+  未发生回退。这证明 union 挂载本身在本机可用。
+- **launchd 未执行**：`GPROBE exec=0 markers=0 refused=0 open=0 calls=0`，
+  `GPSVC open=0`，msgbuf 无 `P21PROBE`/adrenoprobed 行。原系统 job 正常运行。
+- 结论边界：路径存在、挂载 flags/双查找通过已证明；“launchd 实际读取该目录”与
+  “我们的 job 被加载/exec”仍未证明。没有把它写成用户态提交或成功。
+- 观察到但**未确认根因**的差异：种子预置文件 uid/gid 为 `501:501`，系统 plist 为
+  root:wheel。官方 patch 的 `BINDM_FORCE_ROOT` 会在 bindfs `getattr` 报告 root:wheel；
+  本机构建树有该实现。不能把 `501:501` 直接定为 launchd 拒绝原因，也不做内核批量
+  chown。下一候选记录：Data 原路径与 `/System/Library/LaunchDaemons` 挂载路径的
+  实际 uid/gid/mode、`native_bindfs_boot_mount`（BINDM_FORCE_ROOT 的开关）以及
+  目录枚举结果（`GADDON3`），并保留 `LimitLoadToSessionType=System` 作为待验证变量。
+  `GADDON3` 本轮只记录 uid/gid/mode 与 boot-mount 开关；内核 `VNOP_READDIR` 与
+  目标 XNU 的 `uio_resid_64`/六参数接口不兼容，readdir 诊断不并入本轮。launchd 的
+  实际枚举仍以 `GPROBE exec` 和 launchd 行为判断，不把 VNOP_READDIR 结果当作同一路径。
+  若挂载后 plist 显示 0:0，则保留 Data 所有权，转查 launchd 枚举/接受/签名/加载；
+  若仍为 501:501，再定位 FORCE_ROOT 未生效的具体原因。
+- 本轮快照 70 rounds、`fence OK`、`publish rc=0`、`AUTORESET issued=1`；Data reseed
+  `state=3`（writes=133446）。DISPLAY/TOUCH 证据仍按独立问题保留。
+
+## 11. 所有权观测结果（boot `0x3f3e3c8f`，本轮第二次受控启动）
+
+- 镜像 `dbd33465…`，内核 `a39b12a3…`，firmware `6f4d6c96…`，payload `5cb8080f…`，
+  Data 预置种子 `46d03a5a…`（授权 reseed），args 644 B。
+- `GADDON3 data=1f5/1f5/81a4 mnt=0/0/81a4 orig=0/0/81a4 boot=1`：
+  Data 原路径为 `501:501 0644`；挂载后的自有 plist 与原 `backboardd.plist` 都是
+  `0:0 0644`。`boot=1` 表示挂载走 `native_bindfs_boot_mount`，bindfs 的
+  `BINDM_FORCE_ROOT` 生效；**未在 Data 上 chown**。
+- 挂载/可见性仍通过：`GADDON daem=5/0`、`GADDON2 flags=4101029 orig=0 own=0 rb=-1`。
+- 但 `GPROBE exec=0`、`GPSVC open=0`、无 `P21PROBE` 行；`LimitLoadToSessionType=System`
+  已加入 plist，仍不足以触发 exec。
+- 结论：所有权差异与 FORCE_ROOT 不是 launchd 未加载/未执行的原因（mounted 已显示 0:0，
+  按用户分支保留 Data 所有权、不再 chown）。剩余待查：launchd 对本目录的实际枚举
+  （getattrlistbulk/缓存/扫描时机）、plist 接受与签名、job 加载和 exec。原系统 job 始终
+  可见并正常运行；未覆盖 bluetoothd 或任何系统 job。
+- 本轮分项：主机模型 6/6 PASS；Fastboot 接受；内核 `fence OK seq=1`、`publish rc=0`；
+  用户态提交未观察；像素/Metal/GPU 合成未验证；显示/触摸/crash 证据独立保留。

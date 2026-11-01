@@ -483,11 +483,17 @@ extern "C" int cheeseburger_gpu_engine_wait(uint32_t seq,uint64_t timeout_ns){
 // Idle gate for buffer teardown: only a running engine that has consumed the
 // whole ring and reports the reset idle status may release a mapped BO.
 extern "C" int cheeseburger_gpu_engine_idle(void){
- if(!gEngine||!gMmio||!gSubmitLock||!gEngine->running()||gEngine->abandoned())return -1;
+ if(!gEngine||!gMmio||!gSubmitLock)return -1;
+ // 1 only after reset read back both stop controls halted. An abandoned or
+ // not-started engine without that readback is unknown, not stopped.
+ const bool confirmed=gEngine->haltConfirmed();
+ if(gEngine->abandoned())return confirmed?1:-1;
+ if(!gEngine->running())return confirmed?1:-1;
  IOLockLock(gSubmitLock);
  uint32_t r=gMmio->read(CheeseburgerGpu::RBRead),w=gMmio->read(CheeseburgerGpu::RBWrite);
  uint32_t st=gMmio->read(CheeseburgerGpu::Status),st3=gMmio->read(CheeseburgerGpu::Status3);
  IOLockUnlock(gSubmitLock);
+ if(r==0xffffffffu||w==0xffffffffu||st==0xffffffffu||st3==0xffffffffu)return -1;
  return (r==w && CheeseburgerGpu::idleStatus(st) && !(st3&(1u<<24)))?0:-2;
 }
 // Address window the user client may map BOs into. One 16 MiB window keeps

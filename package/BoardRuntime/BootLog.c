@@ -49,6 +49,14 @@ extern volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak_import)
 extern volatile uint64_t native_adreno_service_stats[20] __attribute__((weak_import));
 extern volatile uint64_t cb_gpu_paths[8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_probe_exec __attribute__((weak_import));
+extern volatile uint64_t native_gpu_addon_mount_flags __attribute__((weak_import));
+extern volatile int native_gpu_addon_orig __attribute__((weak_import));
+extern volatile int native_gpu_addon_own __attribute__((weak_import));
+extern volatile int native_gpu_addon_rollback __attribute__((weak_import));
+extern volatile uint64_t native_gpu_addon_data_stat[3] __attribute__((weak_import));
+extern volatile uint64_t native_gpu_addon_mount_stat[3] __attribute__((weak_import));
+extern volatile uint64_t native_gpu_addon_orig_stat[3] __attribute__((weak_import));
+extern volatile int native_gpu_addon_boot_mount __attribute__((weak_import));
 extern char native_adreno_service_text[64] __attribute__((weak_import));
 extern volatile int native_adreno_service_ready __attribute__((weak_import));
 extern volatile int native_gpu_addon_stage __attribute__((weak_import));
@@ -474,6 +482,26 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     (int)native_gpu_addon_status,(int)native_gpu_addon2_stage,(int)native_gpu_addon2_status,
     (int)native_gpu_addon3_stage,(int)native_gpu_addon3_status,cb_boot_id);
   at=put(out,at,cap,add,sizeof add);
+  char add2[160];
+  snprintf(add2,sizeof add2,"GADDON2 flags=%llx orig=%d own=%d rb=%d bid=%llx",
+    &native_gpu_addon_mount_flags?native_gpu_addon_mount_flags:0,
+    &native_gpu_addon_orig?(int)native_gpu_addon_orig:-1,
+    &native_gpu_addon_own?(int)native_gpu_addon_own:-1,
+    &native_gpu_addon_rollback?(int)native_gpu_addon_rollback:-1,cb_boot_id);
+  at=put(out,at,cap,add2,sizeof add2);
+  char add3[220];
+  snprintf(add3,sizeof add3,"GADDON3 data=%llx/%llx/%llx mnt=%llx/%llx/%llx orig=%llx/%llx/%llx boot=%d bid=%llx",
+    &native_gpu_addon_data_stat[0]?native_gpu_addon_data_stat[0]:~0ull,
+    &native_gpu_addon_data_stat[0]?native_gpu_addon_data_stat[1]:~0ull,
+    &native_gpu_addon_data_stat[0]?native_gpu_addon_data_stat[2]:~0ull,
+    &native_gpu_addon_mount_stat[0]?native_gpu_addon_mount_stat[0]:~0ull,
+    &native_gpu_addon_mount_stat[0]?native_gpu_addon_mount_stat[1]:~0ull,
+    &native_gpu_addon_mount_stat[0]?native_gpu_addon_mount_stat[2]:~0ull,
+    &native_gpu_addon_orig_stat[0]?native_gpu_addon_orig_stat[0]:~0ull,
+    &native_gpu_addon_orig_stat[0]?native_gpu_addon_orig_stat[1]:~0ull,
+    &native_gpu_addon_orig_stat[0]?native_gpu_addon_orig_stat[2]:~0ull,
+    &native_gpu_addon_boot_mount?(int)native_gpu_addon_boot_mount:-1,cb_boot_id);
+  at=put(out,at,cap,add3,sizeof add3);
  }
  if (&cb_zap[0] && cb_zap[0]!=0xdeadbeef && cb_zap[1]) {
   char zap[240];

@@ -60,15 +60,19 @@ def main():
                 os.chmod(mount / directory, 0o755)
             (mount / 'mobile/ngpu/bin/adrenoprobed').write_bytes(daemon)
             os.chmod(mount / 'mobile/ngpu/bin/adrenoprobed', 0o755)
-            for plist in sorted(BUILD.glob('*.plist')):
-                if plist.name.endswith('-entitlements.plist'):
+            # Copy only the addon's own daemon plists (build.json), never stale
+            # shadows of system jobs from an earlier experiment.
+            for entry in owner.get('addon_files', []):
+                if not entry.startswith('daemons/'):
                     continue
+                plist = BUILD / Path(entry).name
                 shutil.copyfile(plist, mount / 'mobile/ngpu/daemons' / plist.name)
                 os.chmod(mount / 'mobile/ngpu/daemons' / plist.name, 0o644)
         finally:
             subprocess.run(['hdiutil', 'detach', device], check=True)
         if raw.read_bytes()[32:36] != b'NXSB':
             sys.exit('the edited image is no longer an APFS container')
+        OUT.unlink(missing_ok=True)  # owner derivative only; BASE is never touched
         metadata = packed_ramdisk.pack(raw, OUT)
     report = dict(result='ADRENOPROBE_SEED_STAGE_PASS', base_sha256=hashlib.sha256(blob).hexdigest(),
                   output=metadata, daemon_sha256=owner['daemon_sha256'],
