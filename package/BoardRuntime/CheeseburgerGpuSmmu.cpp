@@ -203,6 +203,30 @@ extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned page
  cb_mapret[0]=ok?0:uint64_t(-4);cb_mapret[1]=tlb;
  return ok?0:-4;
 }
+static bool unmapPage(uint64_t iova){
+ if(!gRootVA||(iova&4095))return false;
+ volatile uint64_t *t=gRootVA;
+ for(unsigned level=gStartLevel;level<3;++level){
+  unsigned shift=39-9*level;uint64_t e=t[(iova>>shift)&511];
+  if(!e)return true; // already clear
+  if((e&0xfffULL)!=3)return false;
+  t=findTable(e&~0xfffULL);if(!t)return false;
+ }
+ unsigned index=(iova>>12)&511;
+ if(!t[index])return true;
+ t[index]=0;cleanTable(t);return true;
+}
+// Tear down a mapped BO range. The caller must have stopped using the range
+// on the GPU (every submit waits for its fence), so clearing and one TLB sync
+// cannot race an in-flight fetch.
+extern "C" int cheeseburger_gpu_smmu_unmap(uint64_t iova,unsigned pages){
+ if(!gRootVA||!pages||(iova&4095)||iova<0x1000000ULL||
+    iova+uint64_t(pages)*4096>(1ULL<<gIovaBits))return -1;
+ for(unsigned i=0;i<pages;++i)if(!unmapPage(iova+uint64_t(i)*4096))return -2;
+ W *sp=smmuMap();if(!sp)return -3;
+ bool ok=tlbSync(*sp,0x8000,true);
+ return ok?0:-4;
+}
 // Read-only software walk of the live tables for diagnostics; no MMIO.
 struct KernelTables {
  volatile uint64_t *root(){return gRootVA;}

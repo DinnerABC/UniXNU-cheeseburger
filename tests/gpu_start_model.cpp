@@ -21,6 +21,14 @@ struct Mock {
     unsigned unhaltWrites = 0, rbWriteWrites = 0, submitWrites = 0, rbControlWrites = 0, delays = 0, posted = 0;
     char marks[64][16] = {};
     unsigned markCount = 0;
+    // CP_CACHE_FLUSH_TS simulation: clean() sees the ring before the doorbell,
+    // publish() then writes the sequence to the host fence page. The test
+    // registers the page, so submit() can observe its own completion.
+    volatile uint32_t *hostFence = nullptr;
+    uint32_t fenceSeq = 0, lastRbWrite = 0, execCursor = 0;
+    bool wrapped = false;
+    const uint32_t *ringView = nullptr;
+    unsigned ringWords = 0;
 
     Mock() { reset(); }
     void reset() {
@@ -50,6 +58,23 @@ struct Mock {
         if (o == RBWrite) {
             ++rbWriteWrites;
             if (value == 9) ++submitWrites;
+            if (value < lastRbWrite) wrapped = true;
+            // Execute the ring like the CP: walk the doorbell range
+            // circularly and take the last CP_CACHE_FLUSH_TS packet.
+            const uint32_t *w = ringView;
+            const unsigned total = ringWords;
+            auto scan = [&](unsigned a, unsigned b) {
+                if (!w) return;
+                for (unsigned i = a; i + 5 <= b; ++i)
+                    if (w[i] == packet7(0x46, 4)) fenceSeq = w[i + 4];
+            };
+            if (w && total) {
+                if (value >= execCursor) scan(execCursor, value);
+                else { scan(execCursor, total); scan(0, value); }
+            }
+            execCursor = value;
+            lastRbWrite = value;
+            if (hostFence && fenceSeq) hostFence[0] = fenceSeq;
             if (fail != Kick) {
                 running = true;
                 reg[RBRead / 4] = value;
@@ -68,7 +93,10 @@ struct Mock {
         }
     }
     void publish() {}
-    void clean(volatile void *, unsigned) {}
+    void clean(volatile void *p, unsigned n) {
+        ringView = const_cast<const uint32_t *>(static_cast<const volatile uint32_t *>(p));
+        ringWords = n / 4;
+    }
 };
 
 static void check(bool ok, const char *name);
@@ -162,6 +190,92 @@ int main() {
         check(m.reg[GPMUCM3SysReset / 4] == 0 && m.reg[GPMUReady / 4] == 0xbabeface, "gpmu/ready");
         check(ring[9] == packet7(0x5f, 1) && ring[10] == 0 && ring[11] == packet7(0x3f, 3) &&
               ring[12] == 0x2012000 && ring[13] == 0 && ring[14] == 1000, "gpmu/commands");
+    }
+
+    // User submission: CP_INDIRECT_BUFFER then the non-secure fence, and the
+    // CPU observes the CP-written sequence.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "submit/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "submit/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "submit/gpmu");
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        const int rc = engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords);
+        check(rc == 0, "submit/rc");
+        check(rec.stage == 7 && engine.running(), "submit/stage");
+        check(ring[17] == packet7(0x3f, 3) && ring[18] == 0x4000000 && ring[19] == 0 &&
+              ring[20] == 12, "submit/ib-packet");
+        check(ring[21] == packet7(0x66, 1) && ring[22] == 0 &&
+              ring[23] == packet7(0x26, 0) && ring[24] == packet7(0x46, 4) &&
+              ring[25] == (4 | (1u << 31)) && ring[26] == 0x2015000 &&
+              ring[27] == 0 && ring[28] == 2, "submit/fence-packet");
+        check(fence[0] == 2, "submit/fence-value");
+    }
+
+    // The ring is 32 KiB and every submit waits for its own completion, so a
+    // packet must never cross the wrap: the tail is NOP-filled and the cursor
+    // restarts at zero.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "wrap/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "wrap/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "wrap/gpmu");
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        bool all_ok = true;
+        unsigned fail_at = 0;
+        for (unsigned i = 0; i < 700; ++i) {
+            const int rc = engine.submit(&ib, 1, 0x2015000, 3 + i, fence, rec, RingDwords);
+            if (rc != 0) { all_ok = false; fail_at = i + 1; std::printf("WRAPFAIL i=%u rc=%d read=%u write=%u\n", i, rc, rec.read, rec.write); break; }
+        }
+        (void)fail_at;
+        check(all_ok, "wrap/700-submits");
+        check(m.wrapped, "wrap/happened");
+        check(m.lastRbWrite <= RingDwords, "wrap/target-bounded");
+        check(ring[RingDwords - 1] == packet7(0x10, 0), "wrap/tail-nop");
+    }
+
+    // Malformed buffers and a failed kick must fail closed: halted, abandoned,
+    // and no further submission is possible.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "badib/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "badib/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "badib/gpmu");
+        const Startup<Mock>::Ib bad = {0x4000002, 12};
+        check(engine.submit(&bad, 1, 0x2015000, 2, fence, rec, RingDwords) != 0, "badib/reject");
+        check(rec.abandoned && engine.abandoned() && !engine.running(), "badib/abandoned");
+        halted_after_failure(m, "badib/halted");
+    }
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "kickfail/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "kickfail/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "kickfail/gpmu");
+        m.fail = Mock::Kick;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) != 0, "kickfail/reject");
+        check(rec.rc == -4 && rec.abandoned && engine.abandoned(), "kickfail/abandoned");
+        halted_after_failure(m, "kickfail/halted");
     }
 
     // Success path.

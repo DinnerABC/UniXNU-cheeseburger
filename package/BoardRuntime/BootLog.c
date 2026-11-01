@@ -46,6 +46,20 @@ extern unsigned long vm_kernel_slide;
 extern volatile uint64_t native_gop_wait_stats[7] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_service_stats[16] __attribute__((weak_import));
+extern char native_adreno_service_text[64] __attribute__((weak_import));
+extern volatile int native_adreno_service_ready __attribute__((weak_import));
+extern volatile int native_gpu_addon_stage __attribute__((weak_import));
+extern volatile int native_gpu_addon_status __attribute__((weak_import));
+extern volatile int native_gpu_addon_files __attribute__((weak_import));
+extern volatile int native_gpu_addon_written __attribute__((weak_import));
+extern volatile int native_gpu_addon_same __attribute__((weak_import));
+extern volatile int native_gpu_addon_failed __attribute__((weak_import));
+extern volatile int native_gpu_addon_error __attribute__((weak_import));
+extern volatile int native_gpu_addon2_stage __attribute__((weak_import));
+extern volatile int native_gpu_addon2_status __attribute__((weak_import));
+extern volatile int native_gpu_addon3_stage __attribute__((weak_import));
+extern volatile int native_gpu_addon3_status __attribute__((weak_import));
 extern volatile uint32_t native_adreno_export_stats[4] __attribute__((weak_import));
 extern volatile int32_t native_touch_strokes[16][7] __attribute__((weak_import));
 extern volatile uint32_t native_touch_stroke_count __attribute__((weak_import));
@@ -407,6 +421,36 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      (unsigned)boot_log_errors,(unsigned long long)p20_display_frames);
    at=put(out,at,cap,cp,sizeof cp);
   }
+ }
+ if (&native_adreno_service_stats[0] && native_adreno_service_stats[0]!=0xdeadbeef) {
+  /* User-client submission (sheng NativeAdreno ABI): opens/closes, BOs,
+   * maps, submits, fences, waits, errors, last status/selector, BO bytes,
+   * pages, metadata bytes and calls. The daemon's own result line follows. */
+  char svc[240];
+  snprintf(svc,sizeof svc,"GPSVC ready=%d open=%llu close=%llu bo=%llu free=%llu map=%llu unmap=%llu sub=%llu fence=%llu wait=%llu err=%llu st=%llx sel=%llx bytes=%llu pages=%llu meta=%llu calls=%llu bid=%llx",
+    (int)native_adreno_service_ready,
+    native_adreno_service_stats[0],native_adreno_service_stats[1],native_adreno_service_stats[2],
+    native_adreno_service_stats[3],native_adreno_service_stats[4],native_adreno_service_stats[5],
+    native_adreno_service_stats[6],native_adreno_service_stats[8],native_adreno_service_stats[7],
+    native_adreno_service_stats[9],native_adreno_service_stats[10],native_adreno_service_stats[11],
+    native_adreno_service_stats[12],native_adreno_service_stats[13],native_adreno_service_stats[14],
+    native_adreno_service_stats[15],cb_boot_id);
+  at=put(out,at,cap,svc,sizeof svc);
+  char txt[112];
+  snprintf(txt,sizeof txt,"GPSTXT %s bid=%llx",native_adreno_service_text,cb_boot_id);
+  at=put(out,at,cap,txt,sizeof txt);
+ }
+ if (&native_gpu_addon_files) {
+  /* GPU addon install/mount status from the boot-time exec hook: files found
+   * and written, the Extensions (plugin) mount, LaunchDaemons mount and the
+   * wallpaper overlay. A negative status is the errno of the refused step. */
+  char add[200];
+  snprintf(add,sizeof add,"GADDON files=%d written=%d same=%d failed=%d err=%d ext=%d/%d daem=%d/%d wp=%d/%d bid=%llx",
+    (int)native_gpu_addon_files,(int)native_gpu_addon_written,(int)native_gpu_addon_same,
+    (int)native_gpu_addon_failed,(int)native_gpu_addon_error,(int)native_gpu_addon_stage,
+    (int)native_gpu_addon_status,(int)native_gpu_addon2_stage,(int)native_gpu_addon2_status,
+    (int)native_gpu_addon3_stage,(int)native_gpu_addon3_status,cb_boot_id);
+  at=put(out,at,cap,add,sizeof add);
  }
  if (&cb_zap[0] && cb_zap[0]!=0xdeadbeef && cb_zap[1]) {
   char zap[240];

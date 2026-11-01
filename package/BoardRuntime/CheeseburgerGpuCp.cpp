@@ -28,6 +28,7 @@ extern volatile uint64_t cb_zap[32];
 extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
+int cheeseburger_gpu_service_publish(void);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
@@ -140,6 +141,15 @@ static void powerCore(W &gp, volatile uint64_t *out){
  }
  out[4]=rd(gp,0xa88d*4);out[5]=rd(gp,0xa88b*4);
 }
+// The CP engine outlives the probe worker: the user client submits through it
+// after the probe has returned. Everything here is created once and kept for
+// the boot lifetime, like the mapped ring and fence pages.
+static Mmio *gMmio=nullptr;
+static CheeseburgerGpu::Startup<Mmio> *gEngine=nullptr;
+static volatile uint32_t *gRing=nullptr,*gFence=nullptr;
+static uint64_t gRingGva=0,gFenceGva=0;
+static uint32_t gRingWords=0,gFenceSeq=0;
+static IOLock *gSubmitLock=nullptr;
 static void captureGpuFaults(Mmio &m){
  cb_cp[50]=m.read(CheeseburgerGpu::CPHwFault);
  cb_cp[51]=m.read(CheeseburgerGpu::CPProtectStatus);
@@ -233,8 +243,13 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  // line. 2/3 exist solely for the controlled console A/B.
  unsigned start=0;
  if(PE_parse_boot_argn("cheeseburger-gpu-start",&start,sizeof start)&&start&&gp.v){
-  Mmio m;m.v=gp.v;
-  CheeseburgerGpu::Startup<Mmio> engine(m);
+  if(!gMmio)gMmio=new Mmio;
+  if(!gEngine&&gMmio)gEngine=new CheeseburgerGpu::Startup<Mmio>(*gMmio);
+  if(!gSubmitLock)gSubmitLock=IOLockAlloc();
+  if(!gMmio||!gEngine||!gSubmitLock){cb_cp[38]=13;IOSleep(8000);return;}
+  gMmio->v=gp.v;
+  Mmio &m=*gMmio;
+  CheeseburgerGpu::Startup<Mmio> &engine=*gEngine;
   CheeseburgerGpu::Record rec;
   cb_cp[38]=1;cb_cp[39]=0;
   // Reuse the probe's GPUCC snapshot; sampling time is the GPU probe, not the
@@ -339,6 +354,17 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     return;
    }
    IOLog("CB GPU start: fence OK seq=%x\n",*(volatile uint32_t*)fence.va);
+   // The engine and its pages now belong to the persistent GPU service. The
+   // probe worker keeps them for the boot lifetime (statics) and never frees
+   // them; submission from userland is serialized by gSubmitLock.
+   gRing=(volatile uint32_t*)ring.va;gRingGva=ring.gva;gRingWords=ring.bytes/4;
+   gFence=(volatile uint32_t*)fence.va;gFenceGva=fence.gva;gFenceSeq=1;
+   unsigned svc=0;
+   if(PE_parse_boot_argn("cheeseburger-gpu-service",&svc,sizeof svc)&&svc==1){
+    int prc=cheeseburger_gpu_service_publish();
+    cb_cp[96]=uint64_t(int32_t(prc));
+    IOLog("CB GPU service: publish rc=%d\n",prc);
+   }
    {uint64_t after[6];powerCore(gp,after);cb_cp[87]=after[4];cb_cp[88]=after[5];
     IOLog("CB GPU power: after-zap rbccu=%x/%x sp=%x/%x\n",
      uint32_t(after[0]),uint32_t(after[1]),uint32_t(after[2]),uint32_t(after[3]));}
@@ -394,4 +420,42 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   }
   IOSleep(8000);
  }
+}
+
+// Submission interface for the persistent user client. The probe worker owns
+// the engine and the pages; these wrappers serialize submits and are the only
+// way a user request reaches the CP. Each submit waits for its own fence, so
+// the ring is idle when it wraps and a later BO cannot be freed under an
+// in-flight fetch.
+extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
+ unsigned count,uint32_t *seq){
+ if(!gEngine||!gRing||!gFence||!gFenceGva||!gSubmitLock||!seq||count>16||(count&&(!vas||!dwords)))return -1;
+ CheeseburgerGpu::Startup<Mmio>::Ib ibs[16];
+ for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
+ IOLockLock(gSubmitLock);
+ uint32_t s=gFenceSeq+1;if(!s)s=1;
+ CheeseburgerGpu::Record rec;
+ int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords);
+ if(rc==0){gFenceSeq=s;*seq=s;}
+ IOLockUnlock(gSubmitLock);
+ return rc;
+}
+extern "C" int cheeseburger_gpu_engine_wait(uint32_t seq,uint64_t timeout_ns){
+ if(!gFence||!seq)return -1;
+ uint64_t waited=0;
+ for(;;){
+  __asm__ volatile("dsb sy":::"memory");
+  flush_dcache((vm_offset_t)gFence,4,FALSE);
+  __asm__ volatile("dsb sy":::"memory");
+  if(*gFence>=seq)return 0;
+  if(waited>=timeout_ns)return -2;
+  IODelay(100);waited+=100;
+ }
+}
+// Address window the user client may map BOs into. One 16 MiB window keeps
+// the 4 KiB leaf tables inside the preallocated table cap; a larger aperture
+// needs 2 MiB block mappings, which are not implemented yet.
+extern "C" int cheeseburger_gpu_engine_window(uint64_t *start,uint64_t *bytes){
+ if(!start||!bytes||!gEngine||!gRing)return -1;
+ *start=0x4000000ULL;*bytes=0x1000000ULL;return 0;
 }

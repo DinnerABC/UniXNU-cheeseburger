@@ -1,0 +1,68 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7393,7 +7393,7 @@
+ {
+ 	char parent[192];
+ 	strlcpy(parent, path, sizeof(parent));
+-	for (size_t i = sizeof("/private/var/ngpu") - 1; parent[i]; ++i) {
++	for (size_t i = sizeof("/private/var/mobile/ngpu") - 1; parent[i]; ++i) {
+ 		if (parent[i] != '/') {
+ 			continue;
+ 		}
+@@ -7478,7 +7478,7 @@
+ 		at += 24;
+ 		const char *name = (const char *)(addon + at);
+ 		at += (name_bytes + 7) & ~7ULL;
+-		snprintf(path, sizeof(path), "/private/var/ngpu/%s", name);
++		snprintf(path, sizeof(path), "/private/var/mobile/ngpu/%s", name);
+ 		uint8_t *data = kalloc_data(size ? size : 1, Z_WAITOK);
+ 		int error = data ? native_gpu_addon_inflate(addon + at, packed, data, size) : ENOMEM;
+ 		if (!error) {
+@@ -7504,13 +7504,34 @@
+ static void
+ native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
+ {
+-	uint32_t enabled = 0;
++	uint32_t enabled = 0, install = 1, mounts = 1;
+ 	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
+ 		return;
+ 	}
+-	native_gpu_addon_install(p, scratch);
+-	static const char extensions_source[] = "/private/var/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
+-	static const char daemons_source[] = "/private/var/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
++	/* This board hangs inside the boot-time install while it is still under the
++	 * Data mount, so installation and mounting have independent switches and
++	 * the owner files live in the mobile-writable part of the Data volume. */
++	PE_parse_boot_argn("sgai", &install, sizeof(install));
++	PE_parse_boot_argn("sgam", &mounts, sizeof(mounts));
++	if (install) {
++		native_gpu_addon_install(p, scratch);
++	}
++	if (!mounts) {
++		return;
++	}
++	if (mounts == 2) {
++		/* Shadow the binary of a non-essential RunAtLoad daemon. launchd keeps
++		 * its job plists from startup, so a late plist directory mount does not
++		 * reach it; the exec path is looked up when the job starts, and this
++		 * mount is in place before bluetoothd is exec'd. */
++		static const char daemon_source[] = "/private/var/mobile/ngpu/bin/adrenoprobed",
++		    daemon_point[] = "/usr/sbin/bluetoothd";
++		native_gpu_addon_mount(p, scratch, 0x400, daemon_source, sizeof(daemon_source), daemon_point,
++		    sizeof(daemon_point), daemon_point, daemon_point, &native_gpu_addon_stage, &native_gpu_addon_status);
++		return;
++	}
++	static const char extensions_source[] = "/private/var/mobile/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
++	static const char daemons_source[] = "/private/var/mobile/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
+ 	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
+ 	    sizeof(extensions_point), "/System/Library/Extensions/AGXMetalA10.bundle",
+ 	    "/System/Library/Extensions/NativeAdrenoMetal.bundle/Info.plist", &native_gpu_addon_stage,
+@@ -7520,7 +7541,7 @@
+ 	    "/System/Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
+ 	/* The default iPadOS 17 wallpaper's layered animation with PNG images in place of its HEIC ones (no hardware HEVC decoder here).
+ 	 * The overlay carries the animation's documents and the PNG images; the sealed assets directory stays visible below it. */
+-	static const char wallpaper_source[] = "/private/var/ngpu/wallpaper",
++	static const char wallpaper_source[] = "/private/var/mobile/ngpu/wallpaper",
+ 	    wallpaper_point[] = "/Library/Wallpaper/Collections/iPadOS_17~ipad.wallpaperCollection/Wallpapers/"
+ 	    "7570.iPadOS_17_Flat-1024w-1366h@2x~ipad.wallpaper/7570.iPadOS_17_Flat_Background-1024w-1366h@2x~ipad.ca";
+ 	native_gpu_addon_mount(p, scratch, 0x800, wallpaper_source, sizeof(wallpaper_source), wallpaper_point, sizeof(wallpaper_point),

@@ -1,0 +1,23 @@
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -47,6 +47,7 @@
+ #include <kern/cpu_data.h>
+ #include <kern/sched_prim.h>
+ #include <libkern/section_keywords.h>
++#include <pexpert/pexpert.h>
+ 
+ #if __arm64__
+ #include <machine/machine_routines.h>
+@@ -537,9 +538,12 @@
+  return p6_diag_record[16] && p6_diag_record[29] &&
+   p6_diag_record[26] == 4320 && p6_diag_record[17] >= 4320*1920;
+ }
++static int p8_fb_screen = -1;
+ void p8_console_char(char ch) {
+  unsigned int pos=__atomic_fetch_add(&p8_console_count,1,__ATOMIC_RELAXED);
+  p8_console_ring[pos%sizeof(p8_console_ring)]=ch;
++ if (p8_fb_screen < 0 && PE_state.bootArgs) { unsigned int v = 1; p8_fb_screen = (PE_parse_boot_argn("p8-fb-console", &v, sizeof v) && v == 0) ? 0 : 1; }
++ if (p8_fb_screen == 0) return;
+  if(ch=='\r'){p8_col=0;return;}
+  if(ch=='\n'){p8_col=0;p8_row++;return;}
+  if((unsigned char)ch<32)return;

@@ -1,3 +1,12 @@
+## 2026-11-01 GPU 用户态提交（sheng NativeAdreno 标准，P1 进行中）
+
+- **已实现**：sheng `NativeAdrenoABI.h`、持久 `NativeAdrenoGpuService` + `AGXDeviceUserClient`（BO/映射/Submit/WaitFence/SetMetadata）、CP IB 提交（INDIRECT_BUFFER + fence、ring 回绕）、SMMU unmap、用户态 `adrenoprobed`、owner trust bundle、Data 种子预置与 addon 开关补丁。详见 `docs/P21_GPU_USER_SUBMIT_20261101.md`。
+- **已实机证明**：对照组（新内核+服务，原始 trust、无 addon，镜像 `132b2ad1`，内核 `6709fdf0`，boot `0x3db53bd3`）`fence OK seq=1`、`CB GPU service: publish rc=0`、400 s 自动回、UI 正常；owner trust 三模块 `loaded module: 0/1/2`（boot `0x3dc2364e`）。
+- **P1 仍差 launchd 注入**：gpuaddon 启动期安装会在 Data 挂载内卡死（无日志、2 分钟 watchdog）；本机 bindfs 没有 union；`/System/Library/LaunchDaemons` 不是本机 launchd 的 job 来源（可见检查 ENOENT，job 在 SystemOS cryptex）；文件影子挂载返回 ENOTDIR；改 Data 种子触发 reseed 并让日志线程约 105 s 停。没有用户态进程打开服务，不能宣称 P1 完成。
+- **下一步**：先定位 launchd 实际读取的 cryptex job 目录并验证挂载点（GADDON stage 4 + `GPSVC open=1`），或实现 bindfs union/提前挂载；之后再 IOSurface/2D（P2）、Metal/AGX（P3）。
+- 自建 trust 模块必须放 Apple 两个模块之后（engineering）；放第 0 会按 static 加载，失败即 panic。
+- 当前约束不变：一次构建/一次启动、preboot gate、misc BCB、400 s 自动回、10 GiB Data、P8 静默控制台、boot args <约 700 B。
+
 ## 2026-11-01 GPU 当前状态（CP + GPMU + fence 已实机验证）
 
 - 设备 `3b25cc7c` 当前在 Recovery；最近一轮 fence 镜像 `3af1fd5b…`、内核 `10223927…`、firmware `80f81754…`，日志 `out/p21/persistent-logs/20261101T102647Z/`，boot `0x3d6b6baf`。`fence OK seq=1`、`post-auth trust=0 rptr=9->19 wptr=19`、`GCP13 rw=19/19`、ZAP rc=0、GPMU ready=babeface；400 s 自动返回（`AUTORESET issued=1`）。

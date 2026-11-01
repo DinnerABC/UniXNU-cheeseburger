@@ -293,30 +293,77 @@ public:
         fail(rec, -23, 4); return false;
     }
 
-    // Minimal CP fence: switch to non-secure mode, wait for writes, then ask
-    // the CP to write a sequence into the mapped fence page. CPU flush/read is
-    // the evidence; a ring pointer alone is not a completed GPU DMA.
-    bool fence(uint64_t fenceVA, uint32_t sequence, volatile uint32_t *fenceCPU, Record &rec) {
-        if (!runningFlag || !ringPtr || !fenceVA || (fenceVA & 4095) || !fenceCPU) {
-            fail(rec, -30, 6); return false;
+    // One user indirect buffer: GPU address of the command stream and its
+    // length in dwords. The buffer must already be mapped in this context.
+    struct Ib { uint64_t va; uint32_t dwords; };
+    static constexpr unsigned SubmitFenceWords = 8; // 0x66(2) + 0x26(1) + 0x46(5)
+
+    // Append IB packets plus the non-secure fence to the ring, kick once and
+    // wait for the CP to write the sequence. Every call waits for its own
+    // completion, so the 32 KiB ring is idle when it wraps. This is the
+    // submission primitive the user client calls; fence() below is the
+    // zero-buffer case.
+    int submit(const Ib *ibs, unsigned count, uint64_t fenceVA, uint32_t sequence,
+               volatile uint32_t *fenceCPU, Record &rec, unsigned ringDwords) {
+        if (!runningFlag || abandonedFlag || !ringPtr || ringDwords != RingDwords) {
+            fail(rec, -40, 7); return rec.rc;
+        }
+        if (!fenceVA || (fenceVA & 4095) || !fenceCPU || count > 16 ||
+            (count && !ibs)) {
+            fail(rec, -41, 7); return rec.rc;
+        }
+        for (unsigned i = 0; i < count; ++i)
+            if (!ibs[i].va || (ibs[i].va & 3) || !ibs[i].dwords || ibs[i].dwords > 0x3fff) {
+                fail(rec, -42, 7); return rec.rc;
+            }
+        // The hardware write pointer is authoritative: the probe's own path and
+        // this producer must agree, and the CP has consumed everything before
+        // a submit starts. Adopt it instead of trusting a stale local cursor,
+        // then refuse to write while the CP has not reached it.
+        const uint32_t hw = rd(RBWrite);
+        if (hw && hw <= ringDwords) ringCursor = hw;
+        for (unsigned i = 0; i < 1000 && rd(RBRead) != hw; ++i) r.delay(10);
+        if (rd(RBRead) != hw) { fail(rec, -45, 7); return rec.rc; }
+        const unsigned need = SubmitFenceWords + count * 4;
+        if (need > ringDwords) { fail(rec, -43, 7); return rec.rc; }
+        if (ringCursor + need >= ringDwords) {
+            // NOP-fill the tail instead of letting a packet cross the wrap.
+            for (unsigned i = ringCursor; i < ringDwords; ++i) ringPtr[i] = packet7(0x10, 0);
+            ringCursor = 0;
         }
         unsigned c = ringCursor;
+        for (unsigned i = 0; i < count; ++i) {
+            ringPtr[c++] = packet7(0x3f, 3);                        // CP_INDIRECT_BUFFER
+            ringPtr[c++] = uint32_t(ibs[i].va);
+            ringPtr[c++] = uint32_t(ibs[i].va >> 32);
+            ringPtr[c++] = ibs[i].dwords;
+        }
         ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;          // CP_SET_SECURE_MODE(0)
         ringPtr[c++] = packet7(0x26, 0);                            // CP_WAIT_MEM_WRITES
         ringPtr[c++] = packet7(0x46, 4); ringPtr[c++] = 4 | (1u << 31); // CACHE_FLUSH_TS + IRQ
         ringPtr[c++] = uint32_t(fenceVA); ringPtr[c++] = uint32_t(fenceVA >> 32);
         ringPtr[c++] = sequence;
         fenceCPU[0] = 0; r.clean((volatile void *)fenceCPU, 4);
-        r.clean((volatile void *)ringPtr, c * 4);
+        r.clean((volatile void *)ringPtr, ringDwords * 4);
         ringCursor = c;
-        r.mark("fence"); r.publish(); wr(RBWrite, c);
-        if (kickTo(rec, c)) return false;
+        r.mark("submit"); r.publish(); wr(RBWrite, c);
+        if (kickTo(rec, c)) return rec.rc;
         for (unsigned elapsed = 0; elapsed < 100000; elapsed += 10) {
             r.clean((volatile void *)fenceCPU, 4);
-            if (fenceCPU[0] == sequence) { rec.stage = 6; rec.rc = 0; r.mark("fencedone"); return true; }
+            if (fenceCPU[0] == sequence) { rec.stage = 7; rec.rc = 0; r.mark("submitdone"); return 0; }
             r.delay(10);
         }
-        fail(rec, -31, 6); return false;
+        fail(rec, -44, 7); return rec.rc;
+    }
+
+    // Minimal CP fence: switch to non-secure mode, wait for writes, then ask
+    // the CP to write a sequence into the mapped fence page. CPU flush/read is
+    // the evidence; a ring pointer alone is not a completed GPU DMA.
+    bool fence(uint64_t fenceVA, uint32_t sequence, volatile uint32_t *fenceCPU, Record &rec) {
+        const int rc = submit(nullptr, 0, fenceVA, sequence, fenceCPU, rec, RingDwords);
+        if (rc != 0) return false;
+        rec.stage = 6; r.mark("fencedone");
+        return true;
     }
 };
 

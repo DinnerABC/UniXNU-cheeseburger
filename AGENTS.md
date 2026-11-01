@@ -214,3 +214,20 @@ Images, private logs and signing material stay out of Git.
   after GPMU/ZAP without blocking the fence. Decode it before concluding a
   user submission failure; do not read stalled GPU MMIO on failure paths.
 
+
+## GPU 用户态提交（2026-11-01 已确认）
+
+- 用户态 ABI 采用 sheng 的 `NativeAdrenoABI.h` 原样；服务名 `NativeAdrenoGpu`，客户端类
+  `AGXDeviceUserClient`，服务在 CP fence 成功后才发布。用户态进程未打开服务前，不能宣称
+  P1（用户态 batch+fence）完成。
+- 板级新增 IOKit 类必须加入 `p21-build-board-runtime.py` 的 `late` 集合（元类初始化移出
+  `__mod_init_func`，在 publish 时显式调用）；否则会在持久日志线程启动前 panic。
+- owner trust：第 0 个模块被内核当作 static，加载失败会 `panic("failed to load static
+  trust cache module")`；自建模块必须放在两个 Apple 模块之后（engineering，本机实测
+  0/1/2 全部 loaded）。
+- GPU addon：`native_gpu_addon_install` 在 Data 挂载内部写文件会卡死（无日志、约 2 分钟
+  watchdog 复位）；`sgai/sgam` 可分别关闭安装/挂载。Data 种子任何改动都会改变 seed
+  identity，触发 reseed 并使日志线程约 105 s 停止；不要用改种子来绕安装。
+- 本机 bindfs 是普通 bind，不支持 union；`/System/Library/LaunchDaemons` 不是本机 launchd
+  的 job 来源（可见 plist 检查 ENOENT，job 在 SystemOS cryptex）；对文件路径做 bindfs
+  挂载返回 ENOTDIR。注入 launchd 前先确认实际 job 目录，不能重复这两条失败路径。
