@@ -487,3 +487,19 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
 - **不能据此声称 CP 已执行**：bypass 改变了失败形态，但停点未知。候选已冻结；配置已恢复 `smmu=1`。
 - 返回 Recovery 后：先读 round 14 窗口（boot ID、RPTR/WPTR/scratch、心跳/控制台）；据结果决定
   “SMMU 翻译是阻塞点，分析随后停住”或“bypass 本身导致停住”。在回收日志前不启动新候选。
+
+### 11.21 round 14 日志回收：SID0 bypass 被硬件拒绝，未证明 CP 执行
+
+- 窗口 `out/p21/persistent-logs/20261101T040320Z/`，boot `0x528dbd09`，8 rounds、0 写入错误。
+- `CB GPU SMMU: SID0 bypass s2cr=20000 (diagnostic)`：代码写 `S2CR0=0x10000`（TYPE=BYPASS），
+  **回读为 `0x00020000`（TYPE=FAULT）**——该 SMMU 在 SMR0 有效/翻译开启时把 SID0 置为 FAULT，
+  bypass 未生效。因此本轮 CP 的物理地址取指走的是 FAULT，不是 bypass。
+- 心跳：`halt/ack/idle/swrst/cm3/ready → cfg/addr`，**没有 kick**；控制台最后一行是 102.0 s 的
+  `reset rc=0`，之后无输出；900 s 无自动返回。停点在 `start()` 的 addr 之后、kick 标记之前，包含
+  `VBIFHalt=0/MEControl=0` 解停与 ring 填充；在 SID0=FAULT 的取指状态下，解停后 AHB 停住的解释更合理。
+- **结论**：round 14 不能作为“CP 执行”或“SMMU 翻译是唯一阻塞点”的证据；SID0 bypass 在本机不可用，
+  已从代码移除。保留的结论是 IAS/OAS 修正、HLOS 域 ON、ATOS 仍 ACTIVE/无 fault、translation 模式
+  仍 kick -4。
+- 下一步方向（不再尝试 bypass）：从 **SMMU walk 的存储/NoC 路径**（页表 PA 均 >4 GiB、SMMU master
+  的 BIMC QoS/NoC 投票）或 **ATOS 引擎语义** 入手；用低物理地址页表（若可分配）或 vendor 的
+  NoC/QoS 配置做对照。任何新候选恢复 `smmu=1`。

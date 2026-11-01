@@ -16,7 +16,6 @@
 extern "C" {
 volatile uint64_t cb_gpu[80];
 void cheeseburger_gpu_smmu_setup(void);
-int cheeseburger_gpu_smmu_bypass(void);
 void cheeseburger_gpu_cp_probe(void);
 }
 namespace {
@@ -82,8 +81,6 @@ static void worker(void*,wait_result_t){
  cb_gpu[62]|=smmu?0x10u:0u;
  unsigned setup=0;PE_parse_boot_argn("cheeseburger-gpu-smmu-setup",&setup,sizeof setup);
  if(smmu&&setup)cheeseburger_gpu_smmu_setup();
- // Diagnostic mode 2: SID0 bypass for a physical-address CP fetch.
- if(smmu==2)cheeseburger_gpu_smmu_bypass();
  unsigned cp=0;if(PE_parse_boot_argn("cheeseburger-gpu-cp",&cp,sizeof cp)&&cp&&smmu&&setup)cheeseburger_gpu_cp_probe();
  cb_gpu[63]=3;
 }
