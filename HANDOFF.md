@@ -4,7 +4,7 @@
 - GPU：`GCP5 stage=6 rc=-2`、`GCP14 par=ffffffffffffffff rc=-2 expect=10a5e7000`，未执行 reset/kick（ME/VBIF 记录为 deadbeef）。门禁按预期阻止了 ATOS 失败后的 kick；**ATOS 仍超时，GPU 未前进**。
 - 非 GPU：Data 卷 1 GiB 已接近写满（present=257915/262144，free≈5.4k blocks，reserved=5189），本轮控制台尾部大量 ENOSPC/cloudd；PosterBoard/壁纸扩展崩溃循环 17 次（上一轮 30 次、10-31 各轮 27–29 次，**均非本轮引入**）。sandbox 拒绝 `IOPlatformDevice` canvas-width/height、`NativeLegacyDisplay` GainMapVersion/IOMFBIntDcpUsedForExtWhenLidClose，与上一轮同型。显示本轮 frames=6/SWAP=6（上一轮 0），但 `-v debug=0x8 -enable_kprintf_spam` 的内核控制台持续覆盖帧缓冲，UI 被日志刷新。
 - 触摸回归：本轮 `TOUCH stage=UINT64_MAX error=-7 frames=3919 publish=0 sink=0`；上一轮 `stage=4 publish=118 sink=118`。退出时 `TOUCH7 post qup0=0 qup400=0 qup408=0 qupc=0`，即 QUP5 寄存器整体读 0，不是单次 NACK；worker 连续 3 次读失败即退出且不恢复。尚未复跑同镜像，不能归因于门禁改动；下一次先修读取失败恢复并加 QUP/GCC 掉电诊断。
-- 构建审计：`native/kernel.macho` 93,025,552 B（LINKEDIT 7,664,912）与自检产物 89,182,960 B（LINKEDIT 3,822,320）不同；`__TEXT_EXEC` 8,454,144 B 字节完全一致（sha256 `4b7783ff…`），差异只在 LINKEDIT（符号/调试信息）。`scripts/p21-check-atos-gate.py` 已补：BoardRuntime 仓库/构建树逐文件同步、native 与编译产物 executable/data 段相等、gate 内核/镜像 pin；重跑 PASS，native `8f6eed2c…`、prelink `c6c24e0e…`、final `afb7d180…`。
+- 构建审计：`native/kernel.macho` 93,025,552 B（LINKEDIT 7,664,912）与自检产物 89,182,960 B（LINKEDIT 3,822,320）不同；已确认 native 与构建树 `mach.development.bcm2837.unstripped` 完全相同（`8f6eed2c…`），差异只是复制了未 strip 的符号表；`__TEXT_EXEC` 8,454,144 B 字节与 stripped 产物完全一致（sha256 `4b7783ff…`）。`scripts/p21-check-atos-gate.py` 已补：BoardRuntime 仓库/构建树逐文件同步、native 与编译产物 executable/data 段相等、gate 内核/镜像 pin；重跑 PASS，native `8f6eed2c…`、prelink `c6c24e0e…`、final `afb7d180…`。
 
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
