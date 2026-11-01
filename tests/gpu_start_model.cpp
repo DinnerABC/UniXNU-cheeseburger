@@ -34,7 +34,7 @@ struct Mock {
     }
     uint32_t read(uint32_t o) {
         if (o == VBIFHalted) return fail == VbifAck ? 0 : 0xf000f;
-        if (o == Status) return fail == Idle ? 0xc00003c1u : (running ? 0 : 0x800001c1u);
+        if (o == Status) return fail == Idle ? 0xc00003c1u : (running ? 0x80000101u : 0x800001c1u);
         if (o == Status3) return 0;
         if (o == MEControl) return fail == MeNotHalt ? 0 : reg[o / 4];
         if (o == RBBMSwReset) return fail == SwReset ? 1 : 0;

@@ -220,7 +220,7 @@ public:
                 const uint32_t irq = rd(InterruptStatus), cpirq = rd(CPInterruptStatus);
                 if ((irq & ErrorIRQs) || (cpirq & 0x3f)) { rec.irq = irq; rec.cpIrq = cpirq; return -3; }
                 const uint32_t read = rd(RBRead);
-                if (read == cursor && !(rd(Status) & ~1u) && !(rd(Status3) & (1u << 24))) {
+                if (read == cursor && idleStatus(rd(Status)) && !(rd(Status3) & (1u << 24))) {
                     rec.read = read; rec.write = rd(RBWrite); rec.stage = 4; rec.rc = 0;
                     r.mark("done");
                     runningFlag = true; resetDone = false;
