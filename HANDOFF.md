@@ -4,6 +4,9 @@
 - **第一次尝试的参数超长**：payload 651 B 加上池的 PA+size 两个参数约 722 B，超过项目已知的约 700 B 截断线。boot `0x3eff380a` 的持久日志只到 55 s（2 rounds，无 heartbeat），但用户确认系统并未停止，蓝字到约 450 s 才手动重启；`AUTORESET requested=400 elapsed=53 issued=0`。日志/auto-reset 被 panic/console 锁住，不是 400 s 参数没写。屏幕出现 `unaligned kernel data abort`；日志没有 panic 文本（panic screen 只画屏），且没有 `SMPOOL`/`CB GPU` 行，低池代码尚未被证明执行。**不能据此判断低池成功或失败。**
 - 修正：池固定 64 KiB，只追加一个 `cheeseburger-smmu-pool=<pa>`；payload 去掉 `cheeseburger-disp-probe=60`、`cheeseburger-usb-probe=0`，args 599 B，加池参数约 634 B。候选 image `2d178302…`、kernel `c78b34fb…`、firmware `7c8d3d56…`、expanded payload `0a3ca3e1…`，gate `20261101T072331Z` PASS，auto-reset 400。
 - 待回收：本轮是否仍出现 `unaligned kernel data abort`、`SMPOOL` 是否出现、ATOS 是否仍 `rc=-2`、CP 是否 kick、400 s 是否自动返回。若 panic 只影响一个核而系统继续，持久日志/auto-reset 仍可能被锁；需要屏幕 panic 文本或单独的 panic-text 持久化路径。
+- **panic 已符号化（boot `0x3d426cf6`，用户提供屏幕文本）**：`pc=_bzero+68` 是 `dc zva, x3`；`lr=cheeseburger_gpu_smmu_setup+972` 是 `bzero(gRootVA, 4096)`；`x20=cb_smmu`，`x0=0xfffffff78d715000` 是池映射 VA。根因是新低池用 `IODeviceMemory` 默认映射成 Device/uncached 内存，`dc zva` 在 Device 内存上触发 unaligned data abort；不是旧的随机内核问题。
+- 该系统在 panic 后仍继续运行，且**用户确认 400 s 自动重启成功**；日志写入停在 panic，但 auto-reset 路径存活。400 s 计时本身有效。
+- 修复：低池改用 `IOMemoryDescriptor::withPhysicalAddress(...)+map(kIOMapAnywhere|kIOMapCopybackCache)`（普通 RAM copyback），保留 `flush_dcache`；内核重编中。UEFI 的单参数、64 KiB 池和 args 634 B 保持不变。
 - 结论纪律：日志停在 55 s 不等于内核停；用户观察到的 450 s 运行是权威现场。低池结果以本轮 `SMPOOL`/ATOS 行为准，不能拿上一轮推断。
 
 ## 2026-11-01：10 GiB Data 生效 + 屏幕日志根因（P1）

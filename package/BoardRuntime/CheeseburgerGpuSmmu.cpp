@@ -5,6 +5,7 @@
 // not map any buffer yet, so no GPU DMA can run until firmware/rings are added.
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/thread.h>
 #include <kern/sched_prim.h>
@@ -82,11 +83,12 @@ static bool allocPoolPage(uint64_t &pa,void *&va){
   gPoolTried=true;unsigned ppa=0;const unsigned pbytes=65536; // DarwinBoot allocates 16 pages
   if(PE_parse_boot_argn("cheeseburger-smmu-pool",&ppa,sizeof ppa)&&ppa&&
      uint64_t(ppa)+pbytes<=0x100000000ull){
-   IODeviceMemory *m=IODeviceMemory::withRange(ppa,pbytes);
-   gPoolMap=m?m->map(kIOMapAnywhere):nullptr;OSSafeReleaseNULL(m);
+   IOMemoryDescriptor *d=IOMemoryDescriptor::withPhysicalAddress(ppa,pbytes,kIODirectionInOut);
+   gPoolMap=d?d->map(kIOMapAnywhere|kIOMapCopybackCache):nullptr;OSSafeReleaseNULL(d);
    if(gPoolMap){gPoolVA=(volatile uint8_t*)gPoolMap->getVirtualAddress();gPoolPA=ppa;gPoolBytes=pbytes;
     cb_smmu[20]=gPoolPA;cb_smmu[21]=gPoolBytes;
     IOLog("CB GPU SMMU pool: pa=%llx bytes=%llu\n",gPoolPA,gPoolBytes);}
+   else IOLog("CB GPU SMMU pool map failed pa=%x bytes=%u\n",ppa,pbytes);
   }
  }
  if(!gPoolVA||gPoolUsed+4096>gPoolBytes)return false;
