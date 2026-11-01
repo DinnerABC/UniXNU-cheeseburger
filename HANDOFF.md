@@ -8,6 +8,8 @@
 - **屏幕日志根因**：板级 P8 framebuffer console（`patches/xnu/0003-cheeseburger-visible-early-console.patch` + `0004-cheeseburger-console-handoff.patch`）在 `serial_console.c` 的 `p8_console_char()` 中把每个 kprintf 直接写进 1080×1920 GOP 扫描缓冲，回绕时整屏清黑；它不受 `-v/debug` 控制，与 iOS UI 共用同一扫描缓冲，所以日志和 UI 不能叠加。不是 iOS 显示栈的单线程限制。
 - 新增 `patches/xnu/0008-cheeseburger-fb-console-switch.patch` 与稳定系列 `out/p21/atos-gate/patches/xnu/series`：`p8-fb-console=0` 时只写 `p8_console_ring`，不画屏；日志仍进持久日志窗口和 CBHB。`scripts/p21-compile-atos-gate.py` 已把该系列加入构建；auto-reset 恢复 400 s。该内核正在重编，尚未启动。
 - 工具修正：monitor 用 Python 3.9 解码失败；`read-cheeseburger-log.py` 已固定优先用 `/opt/homebrew/bin/python3.13` 调 decoder。
+- P8 开关候选 `3373cf40…` / kernel `0b6fa20b…`（args 651，`p8-fb-console=0`，auto-reset 400）已启动一次：boot `0x4338e6da`，43 rounds，心跳最后 sec=208；用户确认已进入系统并**手动重启**。`AUTORESET requested=400 elapsed=56 issued=0`，所以本轮**仍未验证 400 s 自动返回**；后续保持 400 s，下一次不手动干预。
+- P8 轮数据：`DATA state=2 pages=2621440 first=11261615 err=0`（10 GiB 持久 Data 已续用）；`TOUCH stage=4 error=-7 i2c=11202/2 publish/sink/send/rep=7`；`DISPLAY frames=3 clients=55`；ENOSPC 0；PosterBoard corpse 29。触摸与 UI 均可用，P8 屏幕日志是否完全消失以用户屏幕观察为准（日志侧 `[visible-console-tail]` 仍采集）。
 - 方案：当前推荐关闭屏幕绘制、保留内存/持久日志；真正“日志叠加 UI”需要显示后端合成器或 MDP5 独立平面，当前阶段不做。
 
 ## 2026-11-01 ATOS 门禁候选（已回收）

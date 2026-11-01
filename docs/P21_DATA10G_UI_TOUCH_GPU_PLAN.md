@@ -32,8 +32,11 @@
 - 根因是板级 P8 framebuffer console 直接把每个 kprintf 写进同一 GOP 扫描缓冲，
   与 `-v/debug` 无关。已新增 `patches/xnu/0008-cheeseburger-fb-console-switch.patch`
   和 `p8-fb-console=0`：保留日志环/持久日志，不画屏；auto-reset 恢复 400 s。
-- 该候选已重编中，尚未启动；不能把本轮当作 UI 干净或自动返回的验证。
-- 本轮是用户手动回 Recovery（`AUTORESET requested=600 elapsed=69 issued=0`，uptime 408 s）。
+- 该候选已启动：boot `0x4338e6da`，用户确认进入系统，触摸 stage=4；10 GiB Data 续用
+  `state=2 pages=2621440 first=11261615 err=0`；ENOSPC 0；PosterBoard corpse 29。
+- 本轮仍是用户手动重启（心跳最后 sec=208，`AUTORESET requested=400 issued=0`）；**400 s 自动返回尚未验证**，后续保持 400 s 且不手动干预。
+- 仍不能把本轮当作 UI 日志完全消失的自动证据：屏幕以用户观察为准；日志侧
+  `[visible-console-tail]` 仍正常采集。
 
 ## 计划表
 
