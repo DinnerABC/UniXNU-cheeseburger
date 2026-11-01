@@ -15,7 +15,7 @@ if raw[:8]!=b'SHLOG001':
 H=struct.Struct('<8sIIQQ8I6I32s');h=H.unpack_from(raw);assert h[1]==3 and 140<=h[2]<=4096 and h[4]==plan['absolute_first_lba'] and h[5]==plan['blocks'];assert (h[6],h[7],h[9],h[10]) in [(1,32,33,8),(1,256,257,32)]
 assert h[8]<=h[7]*4096 and 0<h[11]<=(plan['blocks']-h[9])//h[10] and h[9]+h[10]*h[11]<=plan['blocks'];assert h[19].split(b'\0')[0]==b'cheeseburger-P21';assert struct.unpack_from('<5I',raw,H.size)==(0,0,0,0,0)
 report.update(msg_blocks=h[7],slot_blocks=h[10],slot_count=h[11],slots_written=h[12],ring_overwritten=max(0,h[12]-h[11]),result='BOUNDED_LOG_WINDOW_READ_PASS',boot_id=hex(h[3]),rounds=h[14],write_errors=h[15],state=h[18],tag='cheeseburger-P21')
-decoder=R.parent/'upstream/UniXNU-sheng/scripts/read-sheng-log.py';subprocess.run([sys.executable,str(decoder),'--decode',str(out/'window.bin'),'--out',str(out/'decoded')],check=True)
+decoder=R.parent/'upstream/UniXNU-sheng/scripts/read-sheng-log.py';decoder_py=Path('/opt/homebrew/bin/python3.13');decoder_py=decoder_py if decoder_py.is_file() else Path(sys.executable);subprocess.run([str(decoder_py),str(decoder),'--decode',str(out/'window.bin'),'--out',str(out/'decoded')],check=True)
 # Independent liveness block at the last window block (outside msg/slot areas).
 free_first=h[9]+h[10]*h[11];free_count=max(0,h[5]-free_first)
 hb=heartbeat_record.collect(raw,h[3],free_first,free_count)
@@ -25,4 +25,4 @@ if hb['records']:
  for d in (out/'decoded').iterdir():
   if d.is_dir():(d/'heartbeat.json').write_text(json.dumps(hb,indent=2)+'\n')
 (out/'retrieval.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2));print('Saved:',out)
-subprocess.run([sys.executable,str(R/'scripts/logging/analyze-cheeseburger-run.py'),str(out)],check=True)
+subprocess.run([str(decoder_py),str(R/'scripts/logging/analyze-cheeseburger-run.py'),str(out)],check=True)
