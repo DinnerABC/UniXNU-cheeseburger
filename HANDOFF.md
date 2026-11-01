@@ -1,9 +1,10 @@
-## 2026-11-01 ATOS 门禁候选（运行中）
+## 2026-11-01 ATOS 门禁候选（已回收）
 
-- 候选 `out/p21/atos-gate/uefi/boot-p21-up1.img`，SHA-256 `2b7397429f3bb0d46687499d43ee7cf418243bc66f86212b529e5a38e0785c2e`；内核 `afb7d180492467685926b885835467bc0962170368efb447076b663cc12dcf3c`。本轮只修复 ATOS 失败仍可能 kick 的门禁，不含低地址池，不能认为 GPU 已工作。
-- 主机检查及打包门禁通过，固件 pins 已核对；构建与检查入口 `scripts/p21-compile-atos-gate.py`、`scripts/p21-check-atos-gate.py`，日志在 `out/p21/atos-gate/`。头文件优先复用本地固定来源，缺失时走 127.0.0.1:7897。
-- 设备 `3b25cc7c` 已执行一次 `fastboot boot`，传输和命令均 OKAY；运行结果和新 boot ID 尚待回收。启动前仅更新 misc 命令字段，原始首块 `misc-before-clean.bin`、写后回读 `misc-readback.bin` 在候选目录，回读 SHA-256 `8698abf44b69b8040dd109feefc23706f070a26932c47f2b44a835efb2b9c801`。不写 boot/recovery/GPT。
-- 返回 Recovery 后读取持久日志，对比上一轮 boot ID `0x52ba5833`，确认 ATOS timeout 是否阻止 kick、系统是否存活及是否自动返回；不得把传输成功当作 GPU 成功。
+- 设备已返回 Recovery；日志 `out/p21/persistent-logs/20261101T052640Z/`，boot `0x55357fdd`，66 rounds，0 写入错误，`AUTORESET issued=1 rc=0`。上一轮为 fb-qup3，boot `0x52ba5833`。
+- GPU：`GCP5 stage=6 rc=-2`、`GCP14 par=ffffffffffffffff rc=-2 expect=10a5e7000`，未执行 reset/kick（ME/VBIF 记录为 deadbeef）。门禁按预期阻止了 ATOS 失败后的 kick；**ATOS 仍超时，GPU 未前进**。
+- 非 GPU：Data 卷 1 GiB 已接近写满（present=257915/262144，free≈5.4k blocks，reserved=5189），本轮控制台尾部大量 ENOSPC/cloudd；PosterBoard/壁纸扩展崩溃循环 17 次（上一轮 30 次、10-31 各轮 27–29 次，**均非本轮引入**）。sandbox 拒绝 `IOPlatformDevice` canvas-width/height、`NativeLegacyDisplay` GainMapVersion/IOMFBIntDcpUsedForExtWhenLidClose，与上一轮同型。显示本轮 frames=6/SWAP=6（上一轮 0），但 `-v debug=0x8 -enable_kprintf_spam` 的内核控制台持续覆盖帧缓冲，UI 被日志刷新。
+- 触摸回归：本轮 `TOUCH stage=UINT64_MAX error=-7 frames=3919 publish=0 sink=0`；上一轮 `stage=4 publish=118 sink=118`。退出时 `TOUCH7 post qup0=0 qup400=0 qup408=0 qupc=0`，即 QUP5 寄存器整体读 0，不是单次 NACK；worker 连续 3 次读失败即退出且不恢复。尚未复跑同镜像，不能归因于门禁改动；下一次先修读取失败恢复并加 QUP/GCC 掉电诊断。
+- 构建审计：`native/kernel.macho` 93,025,552 B（LINKEDIT 7,664,912）与自检产物 89,182,960 B（LINKEDIT 3,822,320）不同；`__TEXT_EXEC` 8,454,144 B 字节完全一致（sha256 `4b7783ff…`），差异只在 LINKEDIT（符号/调试信息）。`scripts/p21-check-atos-gate.py` 已补：BoardRuntime 仓库/构建树逐文件同步、native 与编译产物 executable/data 段相等、gate 内核/镜像 pin；重跑 PASS，native `8f6eed2c…`、prelink `c6c24e0e…`、final `afb7d180…`。
 
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
