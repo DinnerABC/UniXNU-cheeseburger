@@ -37,6 +37,23 @@ evidence in the message or HANDOFF so any candidate can be rolled back,
 compared or used as a reference. Never carry a round's changes uncommitted.
 Images, private logs and signing material stay out of Git.
 
+## Local XNU builds and NAS evidence
+
+- The NAS checkout is authoritative for source and retained candidates. Run
+  XNU preparation, compilation, object generation and linking on the local
+  disk in an isolated `/Users/dinnerabc/unixnu-p21/` build tree; do not run
+  the full XNU build in a NAS source tree. Use `P21_LOCAL_ROOT` and
+  `P21_CANDIDATE` with `scripts/p21-compile-atos-gate.py` for P21 candidates.
+- Before each build, incrementally sync current source, patches and generated
+  inputs, check their hashes and resolve board/archive symlinks. Never delete
+  other agents' files or concurrently use the same build tree.
+- Copy the actual compiled kernel and records back to the NAS candidate and
+  compare hashes. Prelink, payload, UEFI, pins and image must use the same
+  round's inputs. Keep build, packaging and device results distinct.
+- Reuse verified official header caches; when a download is necessary use
+  proxy `127.0.0.1:7897`. Watch process status and logs rather than fixed long
+  sleeps. Preserve the established VM firmware overlay and previous candidates.
+
 ## Evidence and attribution discipline
 
 - Every offline gate run writes `gate-<UTC>.json` into the candidate directory

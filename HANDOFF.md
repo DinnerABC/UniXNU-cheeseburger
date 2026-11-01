@@ -1,3 +1,10 @@
+## 2026-11-02 本机编译及本轮候选（进行中）
+
+- 使用 `/Users/dinnerabc/unixnu-p21/atos-gate/source-tree` 隔离构建，NAS 负责源码和候选证据；`scripts/p21-compile-atos-gate.py` 支持 `P21_LOCAL_ROOT` 与 `P21_CANDIDATE`。本机 build 成功、136.7 秒，回写 NAS 的 stripped 内核 SHA-256 `5b84d06e8475cec30e0d9ad2cd181cddfc6ae81a8e690833533e5fa468ab314a`，unstripped `ec19c052ec040d738c90b3f9373a539239d020f310999519b4230d7c6af60373`，来源 `out/p21/atos-gate/kernel-source-build.json`。本轮独立候选 `out/p21/atos-local-round/`。
+- 用户停止了另一 agent；其已经启动的本机编译子进程完成后被复用。保留该 agent 的 launchd cache、脚本及测试未提交改动；不重置或覆盖。`AGENTS.md` 已补本机编译和 NAS 同步规则。
+- 近期未提交候选包含 `sgac=1`、`launchd_unsecure_cache=/System/Library/xpc/launchd.plist`，其安全语义和数字解析与原设计不一致，本轮不启用。使用原 boot `dbd33465...` 中提取的同一 Data seed `46d03a5a264af71d0e4851cdafca0ff9f646aeaf42e764eda9aafb9166f366ba` 与 trust bundle `17a5441b5c88c55d06ac2742777cc2e797cbff161fe484bc7ffa6e1f2d19fc2c`，避免变更 seed 身份。此候选仅验证本机构建及启动链，不声称用户态 GPU 提交成功。
+- 宿主 GPU 模型通过：`out/p21/gpu-cp/host-tests/20261101T171340Z/`。镜像打包、启动及设备结果待补；不得把 host PASS 作为设备成功。
+
 ## 2026-11-01 GPU 用户态提交（最小修正轮，用户态仍未验证）
 
 - 设备 `3b25cc7c` 在 Recovery；最近一次实机镜像 `2d1b4d3e…`、内核 `80474673…`、
