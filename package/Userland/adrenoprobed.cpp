@@ -11,6 +11,8 @@
 #include <mach/mach.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <atomic>
@@ -18,6 +20,17 @@
 
 namespace {
 constexpr uint32_t kOpenType=0x4147;
+
+// Independent progress/error channel: a probe that has not opened the GPU
+// service yet cannot use SetMetadata, so each stage goes to /dev/console (the
+// kernel message buffer) as well as stderr. Lines are bounded.
+void line(const char *fmt,...){
+    char text[160];
+    va_list ap;va_start(ap,fmt);vsnprintf(text,sizeof text,fmt,ap);va_end(ap);
+    int fd=open("/dev/console",O_WRONLY|O_NOCTTY|O_CLOEXEC);
+    if(fd>=0){write(fd,text,strlen(text));write(fd,"\n",1);close(fd);}
+    fprintf(stderr,"%s\n",text);
+}
 
 uint32_t parity(uint32_t v){v^=v>>16;v^=v>>8;v^=v>>4;v^=v>>2;v^=v>>1;return (~v)&1;}
 uint32_t packet7(uint32_t op,uint32_t n){
@@ -67,6 +80,7 @@ bool checked(Ctx &c,kern_return_t kr,const char *why){
 
 int main(){
     Ctx c;
+    line("P21PROBE stage=start pid=%d",(int)getpid());
     // The GPU probe publishes the service after CP_ME_INIT, GPMU and ZAP
     // (about 100 s into boot), while launchd starts this job much earlier.
     io_service_t service=0;
@@ -75,40 +89,53 @@ int main(){
         if(!service)service=IOServiceGetMatchingService(kIOMainPortDefault,IOServiceNameMatching("NativeAdrenoGpu"));
         if(!service)usleep(500000);
     }
-    if(!service){report(c,"nosvc",0);return 3;}
-    if(IOServiceOpen(service,mach_task_self(),kOpenType,&c.conn)!=KERN_SUCCESS||!c.conn){
-        IOObjectRelease(service);report(c,"noopen",0);return 4;
+    if(!service){line("P21PROBE stage=lookup found=0");report(c,"nosvc",0);return 3;}
+    line("P21PROBE stage=lookup found=1");
+    // Marker open: proves the service was found and the open path reached the
+    // driver even if the real connection is refused. The driver counts the
+    // type and returns unsupported.
+    {io_connect_t marker=0;if(IOServiceOpen(service,mach_task_self(),0x41470001,&marker)==KERN_SUCCESS&&marker){IOServiceClose(marker);line("P21PROBE stage=marker ok=1");}else line("P21PROBE stage=marker ok=0");}
+    kern_return_t opened=IOServiceOpen(service,mach_task_self(),kOpenType,&c.conn);
+    line("P21PROBE stage=open rc=%d conn=%u",(int)opened,c.conn);
+    if(opened!=KERN_SUCCESS||!c.conn){
+        IOObjectRelease(service);report(c,"noopen",(int)opened);return 4;
     }
     IOObjectRelease(service);
 
     NativeAdrenoAbiParams params={};
     if(!checked(c,callOut(c,NativeAdrenoMethodQuery,&params),"query"))return 5;
+    line("P21PROBE stage=query abi=%u in=%u out=%u max=%llu",params.abi_version,params.input_bits,params.output_bits,(unsigned long long)params.max_bo_bytes);
     if(params.abi_version!=NativeAdrenoAbiVersion){c.error=params.abi_version;report(c,"abiver",0);return 6;}
 
     NativeAdrenoAbiDeviceInfo info={};
     if(!checked(c,callOut(c,NativeAdrenoMethodGetDeviceInfo,&info),"devinfo"))return 7;
+    line("P21PROBE stage=devinfo chip=%x va=%llx size=%llu",info.chip_id,(unsigned long long)info.va_start,(unsigned long long)info.va_size);
     if(!info.va_start||info.va_size<0x2000){c.error=0xbad0;report(c,"vawin",0);return 8;}
 
     NativeAdrenoAbiBoAlloc alloc={4096,12,1},allocReplyStart={4096,12,1};
     NativeAdrenoAbiBoAllocReply ib={},tgt={};
     if(!checked(c,call(c,NativeAdrenoMethodBoAlloc,&alloc,&ib),"alloc-ib"))return 9;
     if(!checked(c,call(c,NativeAdrenoMethodBoAlloc,&allocReplyStart,&tgt),"alloc-tgt"))return 10;
+    line("P21PROBE stage=bo ib=%llx tgt=%llx",(unsigned long long)ib.handle,(unsigned long long)tgt.handle);
 
     const uint64_t ibIova=info.va_start,tgtIova=info.va_start+0x1000;
     NativeAdrenoAbiBoMap mapIb={ib.handle,ibIova,1,0,2,0},mapTgt={tgt.handle,tgtIova,3,0,2,0};
     NativeAdrenoAbiBoMapReply mr={};
     if(!checked(c,call(c,NativeAdrenoMethodBoMap,&mapIb,&mr),"map-ib"))return 11;
     if(!checked(c,call(c,NativeAdrenoMethodBoMap,&mapTgt,&mr),"map-tgt"))return 12;
+    line("P21PROBE stage=map ib=%llx tgt=%llx",(unsigned long long)mr.iova,(unsigned long long)mr.iova);
 
     NativeAdrenoAbiBoCpuMap cmIb={ib.handle},cmTgt={tgt.handle};
     NativeAdrenoAbiBoCpuMapReply crIb={},crTgt={};
     if(!checked(c,call(c,NativeAdrenoMethodBoCpuMap,&cmIb,&crIb),"cpumap-ib"))return 13;
     if(!checked(c,call(c,NativeAdrenoMethodBoCpuMap,&cmTgt,&crTgt),"cpumap-tgt"))return 14;
+    line("P21PROBE stage=cpumap ib=%u tgt=%u bytes=%llu/%llu",crIb.token,crTgt.token,(unsigned long long)crIb.bytes,(unsigned long long)crTgt.bytes);
 
     mach_vm_address_t ibAddr=0,tgtAddr=0;
     mach_vm_size_t ibLen=0,tgtLen=0;
     if(!checked(c,IOConnectMapMemory64(c.conn,crIb.token,mach_task_self(),&ibAddr,&ibLen,1),"mapmem-ib"))return 15;
     if(!checked(c,IOConnectMapMemory64(c.conn,crTgt.token,mach_task_self(),&tgtAddr,&tgtLen,1),"mapmem-tgt"))return 16;
+    line("P21PROBE stage=memmap ib=%llx/%llu tgt=%llx/%llu",(unsigned long long)ibAddr,(unsigned long long)ibLen,(unsigned long long)tgtAddr,(unsigned long long)tgtLen);
     if(ibLen<4096||tgtLen<4096){c.error=0xbad1;report(c,"maplen",0);return 17;}
 
     volatile uint32_t *iw=reinterpret_cast<volatile uint32_t *>(ibAddr);
@@ -130,11 +157,15 @@ int main(){
     submit.buffers[0]={ib.handle,ibIova,sizeof words};
     NativeAdrenoAbiSubmitReply sr={};
     if(!checked(c,call(c,NativeAdrenoMethodSubmit,&submit,&sr),"submit"))return 18;
+    line("P21PROBE stage=submit fence=%llu",(unsigned long long)sr.fence);
     NativeAdrenoAbiWaitFence wait={sr.fence,200000000ull};
     if(!checked(c,call(c,NativeAdrenoMethodWaitFence,&wait,(NativeAdrenoAbiTimestamp*)nullptr),"wait"))return 19;
+    line("P21PROBE stage=wait ok=1");
     __asm__ volatile("dsb sy":::"memory");
 
     const int verified=(tw[0]==values[0])+(tw[1]==values[1])+(tw[2]==values[2])+(tw[3]==0xdeadbeef);
+    line("P21PROBE stage=values %08x/%08x/%08x/%08x verified=%d",
+        (unsigned)tw[0],(unsigned)tw[1],(unsigned)tw[2],(unsigned)tw[3],verified);
     NativeAdrenoAbiTimestamp ts={};
     callOut(c,NativeAdrenoMethodGetTimestamp,&ts);
     c.ticks=ts.ticks;
@@ -159,6 +190,8 @@ int main(){
     NativeAdrenoAbiBoFree fi={ib.handle},ft={tgt.handle};
     call(c,NativeAdrenoMethodBoFree,&fi,(NativeAdrenoAbiTimestamp*)nullptr);
     call(c,NativeAdrenoMethodBoFree,&ft,(NativeAdrenoAbiTimestamp*)nullptr);
+    line("P21PROBE stage=cleanup done verified=%d",verified);
     IOServiceClose(c.conn);
+    line("P21PROBE stage=exit code=%d",verified==4?0:20);
     return verified==4?0:20;
 }

@@ -36,16 +36,31 @@ CP 启动、GPMU、submit 单 IB、ring 回绕 700 次、非法 IB、kick 失败
 | gpuaddon（原始 trust） | `e5f5a38a` / `6709fdf0` | 无新日志、约 2 分钟 watchdog 回；启动期安装卡死 |
 | owner trust + gpuaddon（自建模块第 0） | `d736c869` / `6709fdf0` | 无新日志；第 0 模块按 static 加载，失败会 panic（`kern_trustcache.c`） |
 | 种子预置 daemon + `sgam=1`（plist 目录挂载） | `9618d685` / `5d512094` | boot `0x3dbb858b`：GADDON `ext=1/2 daem=4/2`；launchd 仍执行原 `bluetoothd`，`GPSVC open=0`；日志线程约 105 s 停（seed identity 变化触发 reseed，`DATA state=3`） |
-| 文件影子挂载 `/usr/sbin/bluetoothd`（`sgam=2`） | `79a9a130` / `d14cfb76` | boot `0x3db104c8`：GADDON `ext=2/20`（mount 返回 ENOTDIR）；`bluetoothd` 原二进制运行；`GPSVC open=0` |
+| 文件影子挂载 `/usr/sbin/bluetoothd`（`sgam=2`） | `79a9a130` / `d14cfb76` | boot `0x3db104c8`：GADDON `ext=2/20`（`mount()` 在 stage 2 返回 ENOTDIR）；`bluetoothd[80]` 原二进制运行；`GPSVC open=0` |
+
+### 3.1 诊断覆盖（boot `0x3db104c8`）
+
+- 快照 `rounds=17`（约 85 s），但 CBHB 心跳到 `sec=350 tag=smc`；心跳tag 含
+  `zapdone/submit/submitdone/fencedone`（sec 52），说明内核 fence 确实执行，
+  快照停止不等于内核停止。
+- `GADDON ext=2/20` 的实际调用点：`sgam=2` 分支调用
+  `native_gpu_addon_mount(source=/private/var/mobile/ngpu/bin/adrenoprobed,
+  point=/usr/sbin/bluetoothd)`；函数在 stage 2 调用 `mount()`，返回 ENOTDIR。
+- 同一轮 `lookup of /System/Library/LaunchDaemons/com.apple.backboardd.plist`
+  不存在，说明 launchd 的 job 目录不是该路径（SystemOS cryptex），因此目录挂载
+  也选错了目标；`bluetoothd` 仍按启动时的 plist 执行。
 
 ## 4. 阻塞点（日志 + 源码审计）
 
 1. **addon 启动期安装**：`native_gpu_addon_install` 在 Data 挂载内部写 4 个文件时卡死，
    持久日志线程尚未落盘；失败表现为无新日志、约 2 分钟 watchdog 复位。
 2. **bindfs 不是 union**：`bsd/miscfs/bindfs/bind_vfsops.c` 没有 `MNT_UNION` 处理；
-   目录挂载只会显示源目录。日志中 `lookup of /System/Library/LaunchDaemons/
-   com.apple.backboardd.plist` 返回 ENOENT，说明该路径不是本机 launchd 的 job 来源
-   （job 在 SystemOS cryptex 中），挂载点选错；launchd 仍运行缓存的原 job。
+   目录挂载只会显示源目录。boot `0x3db45895` 的 `GJOBS` 已确认
+   `/System/Library/LaunchDaemons` 存在且 `com.apple.backboardd.plist` 存在
+   （`ld=0 ldb=0`），SystemOS cryptex 路径不存在（`cx=2 cxb=2`）。因此之前的
+   ENOENT 是**非 union 挂载盖住下层**后的可见性检查结果，不是路径选错；launchd
+   仍运行原 job，说明挂载对其 job 列表/缓存未生效。最小差异应查官方 bindfs 的
+   union 支持与挂载时机，而不是更换路径。
 3. **文件挂载被拒**：bindfs 对文件挂载点返回 `ENOTDIR`（GADDON `ext=2/20`），
    无法用 shadow binary 方式注入。
 4. **种子改动副作用**：新 seed identity 触发 Data reseed（`state=3`、3 万块写入），
@@ -57,14 +72,17 @@ CP 启动、GPMU、submit 单 IB、ring 回绕 700 次、非法 IB、kick 失败
 
 | 顺序 | 方案 | 关键改动 | 判据 |
 |---|---|---|---|
-| A | 找对 launchd 的 cryptex job 目录 | 在挂载前枚举 `/System/Cryptexes/OS/System/Library/LaunchDaemons` 或 launchd 实际读取的 vnode；`visible` 用存在的 plist 验证 | GADDON 挂载 stage 4，`GPSVC open=1` |
+| A | 确认 launchd 路径/时机（已完成一半） | `GJOBS` 已证明路径是 `/System/Library/LaunchDaemons`；下一步查挂载是否先于 launchd 的 job 读取，以及官方 bindfs 的 union 支持 | 挂载后 launchd 读到我们的 plist（`GPSVC open=1`） |
 | B | 让 launchd 重新扫描 | 挂载后在 launchd 启动前完成（现有 Data 挂载点已早于 launchd？需确认），或触发 `launchctl load` 等价路径 | job 出现在进程表 |
 | C | 实现 bindfs union / 启用 unionfs | 在 `bind_vnops` 中合并 lower 层 `lookup/readdir`，或在配置中启用 `union` | 目录挂载 stage 5，plist 生效 |
 | D | 延迟安装 + 无沙箱 job | 把安装移出 Data 挂载（内核线程 + VFS mkdir），文件落到 mobile/ngpu；不使用 seed 改动 | 安装不再卡死，Data 不 reseed |
 | E | Metal/AGX 前端的标准路径 | 发布 `IOAcceleratorES`、AdrenoMetal/Turnip a5xx 插件、显示交接 | 属于 P3，依赖 A–D 的用户态注入 |
 
-P1 的“用户态 post + fence”目前只差 **launchd 注入**；内核 ABI、BO、submit、fence 已由对照组和
-宿主机模型证明。没有 launchd 注入就不能宣称 P1 完成，也不能开始 Metal/UI 的 P3。
+内核 ABI、BO、submit、fence 已由宿主机模型和对照组启动证明；**用户态提交仍未验证**
+（`GPSVC open=0/sub=0/fence=0`）。launchd 注入是必要条件，但注入路径尚未成立，
+因此不能把 P1 描述为“只差一次启动”。P1 的成功链必须逐步记录：进程启动 → 找到服务 →
+`IOServiceOpen` 成功 → 两个 BO 分配/映射 → 提交 → fence → CPU 读回四个值 → 安全清理，
+且每步带同一 boot ID 和真实返回值。
 
 ## 6. 约束
 
@@ -72,3 +90,28 @@ P1 的“用户态 post + fence”目前只差 **launchd 注入**；内核 ABI�
 - 不关闭 AMFI/ZAP/PAS；owner trust 只增加自己的 CDHash。
 - 每次启动前写 misc BCB；400 s 自动回；保留 10 GiB Data、P8 静默控制台、低池与 BIMC 时钟。
 - boot args 总量（含 DarwinBoot 池参数）保持在约 700 B 以下；本候选 644 B + 池约 34 B。
+
+## 7. 最小修正候选（2026-11-01 晚）
+
+- 镜像 `2d1b4d3e…`，内核 `80474673…`，firmware `84fbbe2c…`，payload `067f0b07…`，args 612 B。
+- 输入：已验证 10 GiB seed `b41a46e4…`、原始 Apple trust（无 owner 模块）、无 gpuaddon、
+  `cheeseburger-gpu-service=1`；未改 UEFI、时钟、硬件参数。
+- 修正：
+  - `CheeseburgerGpuWait.h`：fence 轮询统一为 ns 预算，`IODelay(50)` 对应 50000 ns；
+    宿主 `gpu_wait_model` 覆盖立即成功、轮询后成功、超时和零轮询。
+  - 服务单客户端；BO map 拒绝 IOVA 重叠；页表更新在客户端锁内串行；`BoFree` 先要求
+    `cheeseburger_gpu_engine_idle()`（RPTR==WPTR + idle status），SMMU unmap/TLB 成功
+    才释放；失败保留对象。
+  - `GPSV2`：marker 计数/最后类型、CPU map options、被拒绝的 open。
+  - `GJOBS`：在 GPU 探针中只读查找 `/System/Library/LaunchDaemons`、
+    `.../com.apple.backboardd.plist`、`/System/Cryptexes/OS/...`、Extensions 和
+    `/private/preboot`，记录 errno；用于确定 launchd 实际 job 目录。
+  - 用户态探针：每个阶段写 `/dev/console`（独立于 GPU 连接），并在服务找到后先发
+    0x41470001 marker open；真实 open 失败也有记录。
+- 本轮实机（boot `0x3db45895`，镜像 `2d1b4d3e…`）：快照 70 rounds 到 400 s；CBHB 含
+  `fencedone`；`fence OK seq=1`、`publish rc=0`、`AUTORESET issued=1`；
+  `GJOBS ld=0 ldb=0 cx=2 cxb=2 ext=0 extx=2 pre=0`；`GPSVC open=0`、`GPSV2 markers=0`；
+  `DATA state=3`（从 staging seed 退回已验证 10 GiB seed 的一次 reseed，writes=150585）。
+  DISPLAY stage=10 frames=4 clients=25 SWAP=4；TOUCH stage=4 error=0 HID=0（触摸无响应仍是
+  独立问题）；PosterBoard crash 循环仍在。**用户态提交仍未验证**。
+- 本轮不作为：bluetoothd 替换、文件影子挂载、完整 unionfs、改种子绕安装。

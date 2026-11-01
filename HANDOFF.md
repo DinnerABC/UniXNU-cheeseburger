@@ -1,11 +1,28 @@
-## 2026-11-01 GPU 用户态提交（sheng NativeAdreno 标准，P1 进行中）
+## 2026-11-01 GPU 用户态提交（最小修正轮，用户态仍未验证）
 
-- **已实现**：sheng `NativeAdrenoABI.h`、持久 `NativeAdrenoGpuService` + `AGXDeviceUserClient`（BO/映射/Submit/WaitFence/SetMetadata）、CP IB 提交（INDIRECT_BUFFER + fence、ring 回绕）、SMMU unmap、用户态 `adrenoprobed`、owner trust bundle、Data 种子预置与 addon 开关补丁。详见 `docs/P21_GPU_USER_SUBMIT_20261101.md`。
-- **已实机证明**：对照组（新内核+服务，原始 trust、无 addon，镜像 `132b2ad1`，内核 `6709fdf0`，boot `0x3db53bd3`）`fence OK seq=1`、`CB GPU service: publish rc=0`、400 s 自动回、UI 正常；owner trust 三模块 `loaded module: 0/1/2`（boot `0x3dc2364e`）。
-- **P1 仍差 launchd 注入**：gpuaddon 启动期安装会在 Data 挂载内卡死（无日志、2 分钟 watchdog）；本机 bindfs 没有 union；`/System/Library/LaunchDaemons` 不是本机 launchd 的 job 来源（可见检查 ENOENT，job 在 SystemOS cryptex）；文件影子挂载返回 ENOTDIR；改 Data 种子触发 reseed 并让日志线程约 105 s 停。没有用户态进程打开服务，不能宣称 P1 完成。
-- **下一步**：先定位 launchd 实际读取的 cryptex job 目录并验证挂载点（GADDON stage 4 + `GPSVC open=1`），或实现 bindfs union/提前挂载；之后再 IOSurface/2D（P2）、Metal/AGX（P3）。
-- 自建 trust 模块必须放 Apple 两个模块之后（engineering）；放第 0 会按 static 加载，失败即 panic。
-- 当前约束不变：一次构建/一次启动、preboot gate、misc BCB、400 s 自动回、10 GiB Data、P8 静默控制台、boot args <约 700 B。
+- 设备 `3b25cc7c` 在 Recovery；本轮镜像 `2d1b4d3e…`、内核 `80474673…`、firmware `84fbbe2c…`、
+  payload `067f0b07…`、boot `0x3db45895`，日志 `out/p21/persistent-logs/20261101T135707Z/`。
+- **已验证**：宿主模型 5 组 PASS（含 fence 等待成功/超时）；Fastboot 接受；内核
+  `fence OK seq=1`、`CB GPU service: publish rc=0`；CBHB 含 `zapdone/submit/submitdone/fencedone`；
+  快照 70 rounds 到 400 s；`AUTORESET issued=1` 自动回；UI/显示路径仍在
+  （DISPLAY stage=10 frames=4 clients=25 SWAP=4）。
+- **未验证**：用户态进程没有启动/打开服务（`GPSVC open=0`、`GPSV2 markers=0`）；
+  像素、Metal、GPU 合成均未验证。不能宣称 P1 完成，也不是“只差一次启动”。
+- **本轮修正**：`CheeseburgerGpuWait.h` 统一 ns 预算（IODelay(50)=50000 ns）；服务单客户端、
+  IOVA 重叠拒绝、页表更新串行、BoFree 需 engine idle + SMMU unmap/TLB 成功；CPU map options
+  记录在 `GPSV2`；内核 `GJOBS` 只读探测 launchd/Extensions 路径；用户态探针每个阶段写
+  `/dev/console` 并先发 marker open（不依赖 SetMetadata）。
+- **关键纠正**：`GJOBS` 证明 launchd job 目录是 `/System/Library/LaunchDaemons`
+  （`ld=0 ldb=0`，`com.apple.backboardd.plist` 存在），SystemOS cryptex 路径不存在
+  （`cx=2 cxb=2`）。之前的 ENOENT 是非 union 挂载盖住下层目录的可见性结果；本机 bindfs
+  是普通 bind（无 MNT_UNION）、文件挂载 ENOTDIR，launchd 仍用原 job。最小差异应查官方
+  bindfs union 支持与挂载时机，不要重复换路径/文件影子挂载。
+- **Data**：为回到已验证 10 GiB seed（`b41a46e4…`），本轮发生一次 reseed
+  （`DATA state=3`、writes=150585、loaded=2691），快照仍完整；此后保持该 seed。
+- 显示/触摸/crash 仍是独立问题：TOUCH stage=4 error=0 但 HID=0（用户报告无响应），
+  PosterBoard crash 循环仍在；不要归因 GPU，也不要为 GPU 测试关闭日志/触摸。
+- 详细证据与差异清单：`docs/P21_GPU_USER_SUBMIT_20261101.md`、
+  `docs/P21_OFFICIAL_MIGRATION_DIFF_20261101.md`。
 
 ## 2026-11-01 GPU 当前状态（CP + GPMU + fence 已实机验证）
 

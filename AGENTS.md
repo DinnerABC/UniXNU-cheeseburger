@@ -228,6 +228,17 @@ Images, private logs and signing material stay out of Git.
 - GPU addon：`native_gpu_addon_install` 在 Data 挂载内部写文件会卡死（无日志、约 2 分钟
   watchdog 复位）；`sgai/sgam` 可分别关闭安装/挂载。Data 种子任何改动都会改变 seed
   identity，触发 reseed 并使日志线程约 105 s 停止；不要用改种子来绕安装。
-- 本机 bindfs 是普通 bind，不支持 union；`/System/Library/LaunchDaemons` 不是本机 launchd
-  的 job 来源（可见 plist 检查 ENOENT，job 在 SystemOS cryptex）；对文件路径做 bindfs
-  挂载返回 ENOTDIR。注入 launchd 前先确认实际 job 目录，不能重复这两条失败路径。
+- launchd job 目录已确认是 `/System/Library/LaunchDaemons`（boot `0x3db45895` 的 `GJOBS`
+  `ld=0 ldb=0`，`com.apple.backboardd.plist` 存在）；SystemOS cryptex 路径不存在
+  （`cx=2 cxb=2`）。之前可见检查的 ENOENT 是**非 union 挂载盖住下层目录**造成的，不是
+  路径选错。本机 bindfs 是普通 bind（无 `MNT_UNION`），文件挂载返回 ENOTDIR；launchd
+  仍运行原 job，说明挂载未影响其 job 列表/缓存。下一步查官方 bindfs 的 union 支持与
+  挂载时机，不要重复“换 cryptex 路径”或“文件影子挂载”。
+- fence 等待的 `IODelay(50)` 代表 50000 ns；单位换算集中在 `CheeseburgerGpuWait.h`，
+  宿主测试覆盖成功/超时。用户 BO 只允许单客户端；map 拒绝 IOVA 重叠；页表更新在客户端
+  锁内串行；`BoFree` 必须先通过 `cheeseburger_gpu_engine_idle()` 且 SMMU unmap/TLB
+  成功才释放，失败保留对象。
+- CPU BO 视图由 `clientMemoryForType` 返回 `kIOMapInhibitCache`，GPU PTE 非缓存；
+  `dsb` 只作顺序屏障，不是 DMA 一致性证明，cache 属性要单独记录（`GPSV2 mapopt`）。
+- 快照 rounds 可能停止，CBHB 心跳继续；内核 fence 以 CBHB 的
+  `zapdone/submit/submitdone/fencedone` 标记和心跳为准，不能因快照停止就判定内核停止。

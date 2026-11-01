@@ -46,7 +46,8 @@ extern unsigned long vm_kernel_slide;
 extern volatile uint64_t native_gop_wait_stats[7] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_fence_wait[8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak_import));
-extern volatile uint64_t native_adreno_service_stats[16] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_service_stats[20] __attribute__((weak_import));
+extern volatile uint64_t cb_gpu_paths[8] __attribute__((weak_import));
 extern char native_adreno_service_text[64] __attribute__((weak_import));
 extern volatile int native_adreno_service_ready __attribute__((weak_import));
 extern volatile int native_gpu_addon_stage __attribute__((weak_import));
@@ -439,6 +440,21 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   char txt[112];
   snprintf(txt,sizeof txt,"GPSTXT %s bid=%llx",native_adreno_service_text,cb_boot_id);
   at=put(out,at,cap,txt,sizeof txt);
+  char v2[160];
+  snprintf(v2,sizeof v2,"GPSV2 markers=%llu last=%llx mapopt=%llx refused=%llu bid=%llx",
+    native_adreno_service_stats[16],native_adreno_service_stats[17],
+    native_adreno_service_stats[18],native_adreno_service_stats[19],cb_boot_id);
+  at=put(out,at,cap,v2,sizeof v2);
+ }
+ if (&cb_gpu_paths[0] && cb_gpu_paths[7]==0x5a5a) {
+  /* Existence probes for the launchd and kext directories (0 exists, positive
+   * errno, 0xdeadbeef not probed): plain paths and the SystemOS cryptex. */
+  char jobs[200];
+  snprintf(jobs,sizeof jobs,"GJOBS ld=%lld ldb=%lld cx=%lld cxb=%lld ext=%lld extx=%lld pre=%lld bid=%llx",
+    (long long)cb_gpu_paths[0],(long long)cb_gpu_paths[1],(long long)cb_gpu_paths[2],
+    (long long)cb_gpu_paths[3],(long long)cb_gpu_paths[4],(long long)cb_gpu_paths[5],
+    (long long)cb_gpu_paths[6],cb_boot_id);
+  at=put(out,at,cap,jobs,sizeof jobs);
  }
  if (&native_gpu_addon_files) {
   /* GPU addon install/mount status from the boot-time exec hook: files found

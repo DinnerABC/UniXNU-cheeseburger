@@ -20,12 +20,13 @@
 #include "NativeAdrenoABI.h"
 
 extern "C" {
-volatile uint64_t native_adreno_service_stats[16];
+volatile uint64_t native_adreno_service_stats[20];
 char native_adreno_service_text[64];
 volatile int native_adreno_service_ready;
 int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
 int cheeseburger_gpu_engine_wait(uint32_t,uint64_t);
 int cheeseburger_gpu_engine_window(uint64_t *,uint64_t *);
+int cheeseburger_gpu_engine_idle(void);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
@@ -34,6 +35,7 @@ void flush_dcache(vm_offset_t,unsigned,boolean_t);
 namespace {
 enum : uint32_t {OpenType=0x4147, BoTokenBase=0x100, MaxBo=64, AbiInputBits=36, AbiOutputBits=36};
 IOService *gService=nullptr;
+volatile int gClientOpen=0;
 }
 
 class AGXDeviceUserClient : public IOUserClient {
@@ -62,7 +64,7 @@ class AGXDeviceUserClient : public IOUserClient {
     IOReturn waitFence(const NativeAdrenoAbiWaitFence &);
     Bo *find(uint64_t);
     void dropView(Bo &);
-    void freeBo(Bo &);
+    bool freeBo(Bo &);
 public:
     bool initWithTask(task_t,void *,UInt32,OSDictionary *) override;
     bool start(IOService *) override;
@@ -86,15 +88,42 @@ IOReturn NativeAdrenoGpuService::newUserClient(task_t owningTask,void *securityI
     OSDictionary *properties,IOUserClient **handler) {
     if(handler)*handler=nullptr;
     if(!handler)return kIOReturnBadArgument;
+    // Progress markers: an open type of 0x4147xxxx with a nonzero low half is
+    // not a connection. It lets the userland probe record "service found" and
+    // "open path reached" even when the real open would be refused, without a
+    // SetMetadata connection.
+    if((type>>16)==OpenType&&(type&0xffff)){
+        native_adreno_service_stats[16]=native_adreno_service_stats[16]+1;
+        native_adreno_service_stats[17]=type&0xffff;
+        return kIOReturnUnsupported;
+    }
     // Only the native driver's open type is served. The original IOGPU
     // library uses type 1 for an IOGPUDeviceUserClient, which this is not.
-    if(type!=OpenType)return kIOReturnUnsupported;
-    if(!native_adreno_service_ready)return kIOReturnNotReady;
+    if(type!=OpenType){
+        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
+        return kIOReturnUnsupported;
+    }
+    if(!native_adreno_service_ready){
+        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
+        return kIOReturnNotReady;
+    }
+    // One client at a time: the ring, the SMMU mappings and the CPU views are
+    // shared, so a second connection could overwrite an IOVA or race a submit
+    // with a teardown. Fail closed instead.
+    if(__atomic_exchange_n(&gClientOpen,1,__ATOMIC_ACQ_REL)){
+        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
+        return kIOReturnBusy;
+    }
     AGXDeviceUserClient *client=new AGXDeviceUserClient;
-    if(!client)return kIOReturnNoMemory;
+    if(!client){
+        __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
+        return kIOReturnNoMemory;
+    }
     if(!client->initWithTask(owningTask,securityID,type,properties) ||
        !client->attach(this) || !client->start(this)) {
         client->release();
+        __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
+        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
         return kIOReturnNoResources;
     }
     *handler=client;
@@ -128,19 +157,26 @@ void AGXDeviceUserClient::dropView(Bo &bo) {
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
     }
 }
-void AGXDeviceUserClient::freeBo(Bo &bo) {
-    if(!bo.handle)return;
+bool AGXDeviceUserClient::freeBo(Bo &bo) {
+    if(!bo.handle)return true;
     dropView(bo);
     if(bo.mapped) {
         int rc=cheeseburger_gpu_smmu_unmap(bo.iova,unsigned(bo.bytes/4096));
-        if(rc)native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
-        else native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
+        if(rc){
+            // The pages may still be reachable from the GPU: keep the object
+            // and its mapping instead of returning memory under a live PTE.
+            native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
+            return false;
+        }
+        native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
     }
     OSSafeReleaseNULL(bo.desc);
     OSSafeReleaseNULL(bo.buf);
     bo=Bo();
+    return true;
 }
 void AGXDeviceUserClient::free() {
+    __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
     if(task_){task_deallocate(task_);task_=TASK_NULL;}
     if(bos_) {
         for(unsigned i=0;i<MaxBo;++i)freeBo(bos_[i]);
@@ -152,6 +188,7 @@ void AGXDeviceUserClient::free() {
 IOReturn AGXDeviceUserClient::clientClose() {
     if(bos_)for(unsigned i=0;i<MaxBo;++i)freeBo(bos_[i]);
     if(live_){live_=false;native_adreno_service_stats[1]=native_adreno_service_stats[1]+1;}
+    __atomic_store_n(&gClientOpen,0,__ATOMIC_RELEASE);
     terminate();
     return kIOReturnSuccess;
 }
@@ -170,6 +207,7 @@ IOReturn AGXDeviceUserClient::clientMemoryForType(UInt32 type,IOOptionBits *opti
     bo->desc->retain();
     *memory=bo->desc;
     *options=kIOMapAnywhere|kIOMapInhibitCache;
+    native_adreno_service_stats[18]=*options;
     bo->cpuMapped=true;
     IOLockUnlock(lock_);
     return kIOReturnSuccess;
@@ -245,6 +283,14 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
     if(!(m.permissions&1)||m.reserved||(m.iova&4095)||m.iova<start||m.iova+bo->bytes>start+window)
         return kIOReturnBadArgument;
     if(bo->mapped)return bo->iova==m.iova?kIOReturnSuccess:kIOReturnBusy;
+    // No two live BOs may claim the same GPU addresses: the SMMU leaf entries
+    // are updated under this client's lock, and a duplicate range would let a
+    // later free tear down another object's mapping.
+    for(unsigned i=0;i<MaxBo;++i){
+        const Bo &o=bos_[i];
+        if(!o.handle||!o.mapped)continue;
+        if(m.iova<o.iova+o.bytes&&o.iova<m.iova+bo->bytes)return kIOReturnBusy;
+    }
     IOByteCount span=0;
     uint64_t pa=bo->buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
     if(!pa||span<bo->bytes)return kIOReturnNoMemory;
@@ -263,7 +309,17 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
 IOReturn AGXDeviceUserClient::boFree(uint64_t handle) {
     Bo *bo=find(handle);
     if(!bo)return kIOReturnBadArgument;
-    freeBo(*bo);
+    // Every submit waits for its own fence; the idle gate is the explicit
+    // proof that the CP has consumed the ring before the leaf entries are torn
+    // down.
+    if(bo->mapped && cheeseburger_gpu_engine_idle()!=0){
+        native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
+        return kIOReturnBusy;
+    }
+    if(!freeBo(*bo)){
+        native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
+        return kIOReturnIOError;
+    }
     native_adreno_service_stats[3]=native_adreno_service_stats[3]+1;
     return kIOReturnSuccess;
 }

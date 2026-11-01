@@ -15,6 +15,7 @@
 #if __has_include("CheeseburgerGpuFirmware.h")
 #include "CheeseburgerGpuFirmware.h"
 #include "CheeseburgerGpuStart.h"
+#include "CheeseburgerGpuWait.h"
 #define CB_GPU_FW 1
 #else
 static const unsigned char gpu_firmware_blob[1]={0};
@@ -29,6 +30,10 @@ extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_service_publish(void);
+volatile uint64_t cb_gpu_paths[8];
+int vnode_lookup(const char *,int,void **,void *);
+void vnode_put(void *);
+void *vfs_context_current(void);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
@@ -107,6 +112,27 @@ static bool mapBuf(Buf &b,uint64_t gva,unsigned &seq){
  if(r==0)cb_cp[8]|=uint64_t(1)<<seq;
  else {cb_cp[0]=10+seq;cb_cp[30]=uint64_t(int32_t(r));}
  ++seq;return r==0;
+}
+// Which directories launchd and kext loading actually use on this image. The
+// sheng addon mount assumes /System/Library/LaunchDaemons; the visible check
+// fails here, so record existence of both the plain and the SystemOS cryptex
+// paths before changing any mount target. 0 exists, positive errno, 0xdeadbeef
+// not probed.
+static void lookupPath(unsigned i,const char *p){
+ if(i>=8)return;
+ void *vp=nullptr;int e=vnode_lookup(p,0,&vp,vfs_context_current());
+ cb_gpu_paths[i]=uint64_t(unsigned(e));
+ if(!e&&vp)vnode_put(vp);
+}
+static void probePaths(){
+ lookupPath(0,"/System/Library/LaunchDaemons");
+ lookupPath(1,"/System/Library/LaunchDaemons/com.apple.backboardd.plist");
+ lookupPath(2,"/System/Cryptexes/OS/System/Library/LaunchDaemons");
+ lookupPath(3,"/System/Cryptexes/OS/System/Library/LaunchDaemons/com.apple.backboardd.plist");
+ lookupPath(4,"/System/Library/Extensions");
+ lookupPath(5,"/System/Cryptexes/OS/System/Library/Extensions");
+ lookupPath(6,"/private/preboot");
+ cb_gpu_paths[7]=0x5a5a;
 }
 static void reset(){for(unsigned i=0;i<32;++i)cb_cp[i]=0xdeadbeef;for(unsigned i=32;i<128;++i)cb_cp[i]=0xdeadbeef;cb_cp[31]=0x0c9;}
 // The reset/configure/start state machine lives in CheeseburgerGpuStart.h so a
@@ -214,6 +240,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  IOLog("CB GPU CP gpmu: ready=%x err=%x cm3rst=%x prot=%x swrst=%x ahb=%x\n",
   uint32_t(cb_cp[32]),uint32_t(cb_cp[33]),uint32_t(cb_cp[34]),uint32_t(cb_cp[35]),
   uint32_t(cb_cp[36]),uint32_t(cb_cp[37]));
+ probePaths();
  IOSleep(8000); // let one BootLog round persist the state before any map
  // Persist each map result before the next step: the panel may black here and
  // the run is often returned manually, so a quick all-at-once map could be lost.
@@ -442,15 +469,25 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
 }
 extern "C" int cheeseburger_gpu_engine_wait(uint32_t seq,uint64_t timeout_ns){
  if(!gFence||!seq)return -1;
- uint64_t waited=0;
- for(;;){
+ auto read=[](){
   __asm__ volatile("dsb sy":::"memory");
   flush_dcache((vm_offset_t)gFence,4,FALSE);
   __asm__ volatile("dsb sy":::"memory");
-  if(*gFence>=seq)return 0;
-  if(waited>=timeout_ns)return -2;
-  IODelay(100);waited+=100;
- }
+  return *gFence;
+ };
+ // One IODelay(50) represents 50000 ns; the helper owns the conversion.
+ auto delay=[](){ IODelay(50); };
+ return CheeseburgerGpu::waitFenceValue(read,delay,seq,timeout_ns,50000ull);
+}
+// Idle gate for buffer teardown: only a running engine that has consumed the
+// whole ring and reports the reset idle status may release a mapped BO.
+extern "C" int cheeseburger_gpu_engine_idle(void){
+ if(!gEngine||!gMmio||!gSubmitLock||!gEngine->running()||gEngine->abandoned())return -1;
+ IOLockLock(gSubmitLock);
+ uint32_t r=gMmio->read(CheeseburgerGpu::RBRead),w=gMmio->read(CheeseburgerGpu::RBWrite);
+ uint32_t st=gMmio->read(CheeseburgerGpu::Status),st3=gMmio->read(CheeseburgerGpu::Status3);
+ IOLockUnlock(gSubmitLock);
+ return (r==w && CheeseburgerGpu::idleStatus(st) && !(st3&(1u<<24)))?0:-2;
 }
 // Address window the user client may map BOs into. One 16 MiB window keeps
 // the 4 KiB leaf tables inside the preallocated table cap; a larger aperture
