@@ -4,6 +4,7 @@
 // register is invalid. Hardware success is still a separate observation.
 #include "../package/BoardRuntime/CheeseburgerSmmuMicro.h"
 #include "../package/BoardRuntime/CheeseburgerSmmuId.h"
+#include "../package/BoardRuntime/CheeseburgerAtosGate.h"
 #include <cstdio>
 
 using namespace CheeseburgerGpu;
@@ -29,6 +30,11 @@ static void check(bool ok, const char *name) {
 }
 
 int main() {
+    check(CheeseburgerGpu::atosMatches(0, 0x12099b000ULL, 0x12099b000ULL), "atos/match");
+    check(!CheeseburgerGpu::atosMatches(-2, ~0ULL, 0x12099b000ULL), "atos/timeout");
+    check(!CheeseburgerGpu::atosMatches(0, 0x12099b001ULL, 0x12099b000ULL), "atos/fault");
+    check(!CheeseburgerGpu::atosMatches(0, 0x12099c000ULL, 0x12099b000ULL), "atos/wrong-page");
+    check(!CheeseburgerGpu::atosMatches(0, 0x12099b000ULL, 0x12099b001ULL), "atos/unaligned");
     {
         CheeseburgerGpu::IdWidths w;
         check(CheeseburgerGpu::decodeIdWidths(0x7511, w) && w.ias == 36 && w.oas == 36,

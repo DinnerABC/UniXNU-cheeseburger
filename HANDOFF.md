@@ -1,5 +1,10 @@
 # UniXNU-cheeseburger · iPadOS 17.7.11 交接
 
+## 2026-11-01：ATOS 门禁源码修复
+
+- round 15 ATOS 超时为 -2，但旧 CP 门禁仅拦截 <=-3，因此超时后仍然 kick；此前声称超时阻止 kick 是错误的。修复为仅在 ATOS 返回 0、PAR 非 fault 且转换页与 ring PA 一致时允许 CP 启动；其余记录 stage=6 并停止。这个修复防止已知无效转换继续 kick，**不能使 ATOS 本身成功**。
+- 宿主模型（匹配、超时、fault、错误页、不对齐）和既有四套模型通过，证据 `out/p21/gpu-cp/host-tests/20261101T044216Z/`。尚未构建内核或实机测试；候选树必须同步新增 `CheeseburgerAtosGate.h`。UEFI 低地址池与本轮源码修复是不同工作，尚未实现。
+
 **GPU 推进实施入口：`docs/P21_ADRENO540_EXECUTION_PLAN.md`；合并 SMMU 修正、心跳修复和 CP 初始化核对后一次构建/实测，目标是首个真实 GPU 任务。**
 
 **第二次 GPU 审计勘误：D 轮后续 tick 属于旧 boot，不能证明 D 仍活跃；详情与决策见 `docs/P21_GPU_CP_SECOND_REVIEW_20261031.md`。**

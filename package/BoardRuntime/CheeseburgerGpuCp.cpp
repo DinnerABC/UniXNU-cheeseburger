@@ -11,6 +11,7 @@
 #include <kern/sched_prim.h>
 #include <pexpert/pexpert.h>
 #include <string.h>
+#include "CheeseburgerAtosGate.h"
 #if __has_include("CheeseburgerGpuFirmware.h")
 #include "CheeseburgerGpuFirmware.h"
 #include "CheeseburgerGpuStart.h"
@@ -250,7 +251,12 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   // reach a CP kick in that state. The same applies when the ATOS fallback
   // could not halt or resume the micro-MMU.
   if((int64_t)cb_smmu[19]<0){cb_cp[38]=7;cb_cp[39]=uint64_t(int64_t(cb_smmu[19]));IOSleep(8000);return;}
-  if((int64_t)cb_cp[110]<=-3){cb_cp[38]=6;cb_cp[39]=cb_cp[110];IOSleep(8000);return;}
+  if(!CheeseburgerGpu::atosMatches((int)(int64_t)cb_cp[110],cb_cp[109],ring.pa)){
+   cb_cp[38]=6;cb_cp[39]=cb_cp[110] ? cb_cp[110] : uint64_t(int64_t(-6));
+   IOLog("CB GPU: CP start blocked by ATOS rc=%lld par=%llx expected=%llx\n",
+    (int64_t)cb_cp[110],cb_cp[109],ring.pa);
+   IOSleep(8000);return;
+  }
   // Android a5xx_pm_resume cores first; without them the CP cannot execute
   // even though every RBBM read succeeds. Log before the first write.
   powerCore(gp,&cb_cp[83]);

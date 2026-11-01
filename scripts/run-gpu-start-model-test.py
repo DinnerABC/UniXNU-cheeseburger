@@ -22,6 +22,7 @@ TESTS = [
     ('qcom_smmu_model', 'tests/qcom_smmu_model.cpp'),
 ]
 HEADERS = [
+    'package/BoardRuntime/CheeseburgerAtosGate.h',
     'package/BoardRuntime/CheeseburgerGpuStart.h',
     'package/BoardRuntime/CheeseburgerGpuWalk.h',
     'package/BoardRuntime/QcomPAS.h',
