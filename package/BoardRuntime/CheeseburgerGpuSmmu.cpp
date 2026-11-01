@@ -12,6 +12,7 @@
 #include <string.h>
 #include "CheeseburgerGpuWalk.h"
 #include "CheeseburgerSmmuMicro.h"
+#include "CheeseburgerSmmuId.h"
 extern "C" {
 volatile uint64_t cb_smmu[24];
 volatile uint64_t cb_map[4];
@@ -31,6 +32,13 @@ static bool mapw(W &w,uint64_t pa,unsigned size){
 }
 static uint32_t rd(W &w,unsigned off){uint32_t x=w.v[off/4];__asm__ volatile("dmb sy":::"memory");return x;}
 static void wr(W &w,unsigned off,uint32_t x){__asm__ volatile("dsb sy":::"memory");w.v[off/4]=x;__asm__ volatile("dsb sy":::"memory");}
+// 64-bit MMIO registers (TTBR0, ATS1PR) must be written as one store, as the
+// vendor smmu_writeq does on 64-bit; two 32-bit halves can land non-atomically.
+static void wr64(W &w,unsigned off,uint64_t value){
+ __asm__ volatile("dsb sy":::"memory");
+ *reinterpret_cast<volatile uint64_t *>(reinterpret_cast<uintptr_t>(w.v)+off)=value;
+ __asm__ volatile("dsb sy":::"memory");
+}
 static bool tlbSync(W &s,unsigned ctx,bool allASIDs){
  wr(s,ctx+(allASIDs?0x618:0x610),0);
  wr(s,ctx+0x7f0,0xffffffffu);
@@ -56,20 +64,42 @@ struct MicroIo {
  void delay(unsigned us){IODelay(us);}
  void mark(const char *){if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step("smresume");}
 };
-static void reset(){for(unsigned i=0;i<24;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;}
+static void reset(){for(unsigned i=0;i<24;++i)cb_smmu[i]=0xdeadbeef;cb_smmu[15]=0x5e7;cb_smmu[22]=0;cb_smmu[23]=0;}
+static unsigned gLowTables=0,gHighTables=0;
 static IOBufferMemoryDescriptor *gRootBuf=nullptr;
 static uint64_t gRootPA=0;
 static volatile uint64_t *gRootVA=nullptr;
 static unsigned gIovaBits=0,gPaBits=0,gStartLevel=0;
-static bool allocTable(uint64_t &pa,volatile uint64_t *&va){
- IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+// Try the restricted low-physical pool first and verify the returned PA is
+// really below 4 GiB; the mask is a placement request, not a guarantee. Fall
+// back to the normal pool and record the split so a low-table result is never
+// mistaken for a high-table one.
+static IOBufferMemoryDescriptor *allocPage(uint64_t &pa,void *&va,bool &low){
+ low=false;
+ IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,0x00000000fffff000ull);
+ if(b){
+  IOByteCount span=0;uint64_t p=b->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+  void *v=b->getBytesNoCopy();
+  if(p&&!(p&4095)&&span>=4096&&v&&p<0x100000000ull){pa=p;va=v;low=true;return b;}
+  b->release();
+ }
+ b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
    kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
- if(!b)return false;
+ if(!b)return nullptr;
  IOByteCount span=0;uint64_t p=b->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
  void *v=b->getBytesNoCopy();
- if(!p||(p&4095)||span<4096||!v||(p>>36))return false;
+ if(!p||(p&4095)||span<4096||!v||(p>>36)){b->release();return nullptr;}
+ pa=p;va=v;return b;
+}
+static bool allocTable(uint64_t &pa,volatile uint64_t *&va){
+ void *v=nullptr;bool low=false;
+ if(!allocPage(pa,v,low))return false;
  memset(v,0,4096);flush_dcache((vm_offset_t)v,4096,FALSE);
- pa=p;va=(volatile uint64_t*)v;return true;
+ va=(volatile uint64_t*)v;
+ if(low)++gLowTables;else ++gHighTables;
+ cb_smmu[22]=gLowTables;cb_smmu[23]=gHighTables;
+ return true;
 }
 static void cleanTable(volatile uint64_t *v){flush_dcache((vm_offset_t)v,4096,FALSE);}
 struct Tbl {uint64_t pa;volatile uint64_t *va;};
@@ -177,16 +207,20 @@ extern "C" int cheeseburger_gpu_smmu_atos(uint64_t iova,uint64_t *par,volatile u
  for(;i<30000;++i){idle=rd(s,0x6000);if(idle&(1u<<3))break;IODelay(1);}
  ctl0=idle;
  if(diag)diag[1]=ctl0;
- if(!(ctl0&(1u<<3))){
+ // Require both the request and the idle acknowledgement. Idle alone may be
+ // the running quiescent state, not the halted state ATOS expects.
+ if((ctl0&((1u<<2)|(1u<<3)))!=((1u<<2)|(1u<<3))){
   wr(s,0x6000,rd(s,0x6000)&~(1u<<2));
   return -3;
  }
+ if(diag){diag[8]=rd(s,cb+0x58);diag[9]=rd(s,cb+0x68);diag[10]=rd(s,cb+0x60);
+  diag[11]=rd(s,cb+0x20);diag[12]=rd(s,cb+0x24);diag[13]=rd(s,cb+0x30);diag[14]=gRootPA;}
  wr(s,cb+0x08,1);                    // CB_RESUME = TERMINATE
  wr(s,cb+0x58,0xffffffffu);          // clear FSR before ATOS
  uint32_t sctlr=rd(s,cb);            // ours already has CFCFG=0
  wr(s,cb,sctlr&~(1u<<7));            // disable stall mode for the probe
  if(diag)diag[7]=sctlr;
- wr(s,cb+0x800,uint32_t(va));wr(s,cb+0x804,uint32_t(va>>32));
+ wr64(s,cb+0x800,va);
  uint32_t atsr=0;unsigned j=0;
  for(;j<10000;++j){atsr=rd(s,cb+0x8f0);if(!(atsr&1))break;IODelay(1);}
  if(diag)diag[2]=atsr;
@@ -215,16 +249,19 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  cb_smmu[10]=id0;cb_smmu[11]=id1;cb_smmu[12]=id2;
  if(id0==0xffffffffu||id1==0xffffffffu||id2==0xffffffffu){cb_smmu[0]=2;return;}
  // Same fixed-width checks as sagit QcomSMMU::SMMUStartup::probe.
- const unsigned widths[]={32,36,40,42,44,48,52};
  unsigned pages=1u<<(((id1>>28)&7)+1);
  unsigned groups=id0&255,sidBits=(id0>>9)&15;
- // Vendor ID2 layout: IAS bits 0..3, OAS bits 4..7, UBS bits 8..11. The
- // earlier port read UBS as the input size and programmed a 40-bit IA with a
- // 4-level table on a 36-bit IAS SMMU; the hardware walk never completed.
- unsigned ias=widths[id2&15],oas=widths[(id2>>4)&15];
+ // Vendor ID2 layout: IAS bits 0..3, OAS bits 4..7, UBS bits 8..11. Values
+ // 7..15 are reserved; validate before indexing the supported-width table.
+ CheeseburgerGpu::IdWidths iw;
+ if(!CheeseburgerGpu::decodeIdWidths(id2,iw)){
+  cb_smmu[0]=11;
+  IOLog("CB GPU SMMU: reserved ID2 width code id2=%x\n",id2);
+  return;
+ }
+ unsigned ias=iw.ias,oas=iw.oas;
  if(ias>40)ias=40;
  if(oas>40)oas=40;
- if(ias<32||oas<32){cb_smmu[0]=11;return;}
  gIovaBits=ias;gPaBits=oas;gStartLevel=ias>39?0:1;
  if((id0&((1u<<30)|(1u<<27)))!=((1u<<30)|(1u<<27))||!(id2&(1u<<12))||
     (id1&(1u<<31))||pages!=8||!groups||groups>128||!sidBits||
@@ -235,12 +272,12 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  if(rd(s,0x800)||rd(s,0xc00)!=0x000200ffu){cb_smmu[0]=5;return;}
  // One physically contiguous, cache-cleaned, zero root table. Keep it for the
  // boot; the mapper that adds leaf entries will reuse it.
- gRootBuf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
-   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
- if(!gRootBuf){cb_smmu[0]=6;return;}
- IOByteCount span=0;gRootPA=gRootBuf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
- gRootVA=(volatile uint64_t*)gRootBuf->getBytesNoCopy();
- if(!gRootPA||(gRootPA&4095)||span<4096||!gRootVA||(gRootPA>>36)){cb_smmu[0]=7;return;}
+ {void *rootVA=nullptr;bool rootLow=false;
+  gRootBuf=allocPage(gRootPA,rootVA,rootLow);
+  gRootVA=(volatile uint64_t*)rootVA;
+  if(rootLow)++gLowTables;else if(gRootBuf)++gHighTables;
+  cb_smmu[22]=gLowTables;cb_smmu[23]=gHighTables;}
+ if(!gRootBuf||!gRootPA||(gRootPA&4095)||!gRootVA||(gRootPA>>36)){cb_smmu[0]=7;return;}
  memset((void*)gRootVA,0,4096);flush_dcache((vm_offset_t)gRootVA,4096,FALSE);
  cb_smmu[1]=gRootPA;cb_smmu[13]=(oas<<8)|ias;
  // Global setup, then bank 0, exactly as the sagit non-secure sequence.
@@ -248,8 +285,8 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  wr(s,0x800,0);wr(s,ctx,0);wr(s,0x1800,1);wr(s,0x1000,0x1f300);
  wr(s,ctx+0x10,(7u<<15)|(1u<<4)|(oas==40?2u:oas==36?1u:0u));
  wr(s,ctx+0x30,(1u<<23)|(2u<<12)|(64-ias));
- wr(s,ctx+0x20,(uint32_t)gRootPA);wr(s,ctx+0x24,(uint32_t)(gRootPA>>32));
- wr(s,ctx+0x28,0);wr(s,ctx+0x2c,0);wr(s,ctx+0x34,0);wr(s,ctx+0x38,0x44);wr(s,ctx+0x3c,0);
+ wr64(s,ctx+0x20,gRootPA);
+ wr64(s,ctx+0x28,0);wr(s,ctx+0x34,0);wr(s,ctx+0x38,0x44);wr(s,ctx+0x3c,0);
  if(!tlbSync(s,ctx,true)){cb_smmu[0]=8;cb_smmu[5]=rd(s,ctx);return;}
  // sagit's proven GPU control value. Per arm-smmu.h CB SCTLR bits:
  // 0x1027 = M(0)|TRE(1)|AFE(2)|CFRE(5)|S1_ASIDPNE(12); 0x1167 adds

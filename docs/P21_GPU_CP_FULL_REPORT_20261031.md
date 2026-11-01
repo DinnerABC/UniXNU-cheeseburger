@@ -503,3 +503,17 @@ CP 固件（PM4/PFP）加载与 `CP_ME_INIT` → GPMU → ring/PM4 提交 → XN
 - 下一步方向（不再尝试 bypass）：从 **SMMU walk 的存储/NoC 路径**（页表 PA 均 >4 GiB、SMMU master
   的 BIMC QoS/NoC 投票）或 **ATOS 引擎语义** 入手；用低物理地址页表（若可分配）或 vendor 的
   NoC/QoS 配置做对照。任何新候选恢复 `smmu=1`。
+
+### 11.22 round 15：ID2 边界、64 位 ATOS 写入与低地址页表对照
+
+- ID2 位宽解码抽出为宿主可测的 `CheeseburgerSmmuId.h`：IAS bits 0..3、OAS bits 4..7，
+  合法编码仅 0..6（32/36/40/42/44/48/52）；保留值 7..15 直接报错停止，不再越界索引 7 元数组。
+  宿主新增 7 个用例（本机 0x7511→36/36、上下界、保留值）。
+- **TTBR0 与 ATS1PR 改为单次 64 位写入**（vendor 64 位 `smmu_writeq`）：此前两次 32 位半写不是
+  原子操作，ATOS 请求可能未完整锁存；DSB 顺序保持。
+- ATOS 在清 FSR 前先记录 FSR/FSYNR/FAR，并要求 **halt 请求位 + IDLE 确认位同时为 1**；TTBR0/TCR/
+  root PA 一并记录（GCP15）。
+- 页表分配改为 **低地址优先**：用受限物理掩码申请 4 KiB 页，校验返回 PA 确实 <4 GiB 才采用，
+  否则释放并回退普通池；记录低/高页数量（`SMICRO lt/ht`），不把高地址结果当低地址。
+- 目标：低地址 root/各级表 + 64 位 ATOS 写入后，若 ATOS 返回期望 PA，则硬件 walk 成立；再看
+  CP `ME_INIT`/`RPTR`。若仍超时，按 GCP14/GCP15 的原始状态定位。

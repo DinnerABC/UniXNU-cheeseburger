@@ -27,6 +27,7 @@ HEADERS = [
     'package/BoardRuntime/QcomPAS.h',
     'package/BoardRuntime/CheeseburgerZap.h',
     'package/BoardRuntime/CheeseburgerSmmuMicro.h',
+    'package/BoardRuntime/CheeseburgerSmmuId.h',
 ]
 
 

@@ -3,6 +3,7 @@
 // is cleared, a write that does not stick is a timeout, and an unreadable
 // register is invalid. Hardware success is still a separate observation.
 #include "../package/BoardRuntime/CheeseburgerSmmuMicro.h"
+#include "../package/BoardRuntime/CheeseburgerSmmuId.h"
 #include <cstdio>
 
 using namespace CheeseburgerGpu;
@@ -28,6 +29,19 @@ static void check(bool ok, const char *name) {
 }
 
 int main() {
+    {
+        CheeseburgerGpu::IdWidths w;
+        check(CheeseburgerGpu::decodeIdWidths(0x7511, w) && w.ias == 36 && w.oas == 36,
+              "id2/device-36-36");
+        check(CheeseburgerGpu::decodeIdWidths(0x66, w) && w.ias == 52 && w.oas == 52,
+              "id2/max-52-52");
+        check(CheeseburgerGpu::decodeIdWidths(0x0, w) && w.ias == 32 && w.oas == 32,
+              "id2/min-32-32");
+        check(!CheeseburgerGpu::decodeIdWidths(0x7, w), "id2/reserved-ias-7");
+        check(!CheeseburgerGpu::decodeIdWidths(0x70, w), "id2/reserved-oas-7");
+        check(!CheeseburgerGpu::decodeIdWidths(0xff, w), "id2/reserved-all");
+        check(!CheeseburgerGpu::decodeIdWidths(0xffffffffu, w), "id2/all-ones");
+    }
     {
         Mock m; m.reg[0x6000 / 4] = 0x178;  // request clear, idle set
         const auto s = resumeMicroMmu(m, 3000);

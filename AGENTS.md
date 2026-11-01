@@ -169,3 +169,14 @@ Images, private logs and signing material stay out of Git.
   bits 8..11 and must not size the input). This board reports IAS=OAS=36, so
   program T0SZ=28 and start the table walk at level 1 (3 levels). A 40-bit
   IA/4-level table on this 36-bit SMMU never completes a hardware walk.
+- Validate SMMU ID2 width codes before indexing: IAS/OAS are 4-bit fields
+  (codes 0..6 only); reserved codes must fail the setup, never read past the
+  7-entry width table.
+- Write 64-bit SMMU registers (TTBR0, ATS1PR) as a single aligned 64-bit store
+  as the vendor smmu_writeq does; two 32-bit halves are not atomic.
+- SMMU page tables are allocated low-first through the restricted physical
+  mask, validating the returned PA (<4 GiB) and recording low/high counts; a
+  mask is a request, not a guarantee. Never present a high allocation as low.
+- ATOS records FSR/FSYNR/FAR before clearing them, requires both the halt
+  request bit and the IDLE acknowledgement, and gates the CP kick on
+  halt/resume/timeout failures.

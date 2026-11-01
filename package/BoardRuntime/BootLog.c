@@ -342,8 +342,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   snprintf(sm,sizeof sm,"SSETUP st=%llu root=%llx sctlr=%llx smr=%llx s2cr=%llx cb=%llx tcr=%llx fsr=%llx ids=%llx/%llx/%llx",
     cb_smmu[0],cb_smmu[1],cb_smmu[2],cb_smmu[3],cb_smmu[4],cb_smmu[5],cb_smmu[8],cb_smmu[9],
     cb_smmu[10],cb_smmu[11],cb_smmu[12]);at=put(out,at,cap,sm,sizeof sm);
-  snprintf(sm,sizeof sm,"SMICRO before=%llx after=%llx impl0=%llx result=%lld bid=%llx",
-    cb_smmu[16],cb_smmu[17],cb_smmu[18],(long long)cb_smmu[19],cb_boot_id);
+  snprintf(sm,sizeof sm,"SMICRO before=%llx after=%llx impl0=%llx result=%lld lt=%llu ht=%llu bid=%llx",
+    cb_smmu[16],cb_smmu[17],cb_smmu[18],(long long)cb_smmu[19],cb_smmu[22],cb_smmu[23],cb_boot_id);
   at=put(out,at,cap,sm,sizeof sm);
   if (&cb_map[0] && cb_map[0]!=0xdeadbeef) {
    snprintf(sm,sizeof sm,"SMAP st=%llu va=%llx pa=%llx pte=%llx",
@@ -395,6 +395,9 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    snprintf(cp,sizeof cp,"GCP14 atos par=%llx rc=%lld expect=%llx ctl=%llx haltctl=%llx atsr=%llx fsr=%llx fsynr=%llx far=%llx sctlr=%llx resume=%llx bid=%llx",
      cb_cp[109],(long long)cb_cp[110],cb_cp[111],cb_cp[112],cb_cp[113],cb_cp[114],
      cb_cp[115],cb_cp[116],cb_cp[117],cb_cp[119],cb_cp[118],cb_boot_id);
+   at=put(out,at,cap,cp,sizeof cp);
+   snprintf(cp,sizeof cp,"GCP15 fsrb=%llx fsynrb=%llx farb=%llx ttbr=%llx/%llx tcr=%llx root=%llx bid=%llx",
+     cb_cp[120],cb_cp[121],cb_cp[122],cb_cp[123],cb_cp[124],cb_cp[125],cb_cp[126],cb_boot_id);
    at=put(out,at,cap,cp,sizeof cp);
    snprintf(cp,sizeof cp,"KEY bid=%llx clk=%x/%x/%x trust=%x stg=%llu rc=%llx r=%llx w=%llx cpfsr=%llx gfsr=%llx hberr=%u frames=%llu",
      cb_boot_id,(uint32_t)(cb_cp[56]),(uint32_t)(cb_cp[57]),(uint32_t)(cb_cp[58]),(uint32_t)(cb_cp[48]),
