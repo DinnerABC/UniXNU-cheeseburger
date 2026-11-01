@@ -10,6 +10,8 @@
 - **copyback 池实机结果（boot `0x3f3758ae`，70 rounds）**：`SMPOOL pa=fff40000 bytes=65536 used=12288`，`SMICRO lt=3 ht=0`，root=`fff40000`；**低池完全生效，panic 消失**。但 `GCP14 ATOS rc=-2 par=ffffffffffffffff expect=10a250000 atsr=1 fsr=400`，门禁 stage=6，未 kick。**结论：高地址页表不是 ATOS 超时的根因**；低池只是排除了一个假设。
 - `AUTORESET requested=400 elapsed=53 issued=1 rc=0`：**400 s 自动返回已由日志确认**，本轮系统正常、Data/touch 正常。
 - 下一诊断轮：显式 `cheeseburger-gpu-atos-gate=0`（默认仍为 1），保留 ZAP/PAS、低池、失败清理，测试 ATOS 超时下 CP 是否仍能取 ring；候选 kernel `03f22cdb…`、image `10e77641…`、args 628（加池参数约 663 B）。若 CP kick 后 RPTR 前进，说明 ATOS 探针本身不可用；若仍 -4，则转向低地址 GPU buffer/NoC/XPU。
+- **CP 诊断结果（boot `0x3ec9e90e`，70 rounds）**：低池生效（`SMPOOL pa=fff40000 used=12288`、`lt=3 ht=0`），ATOS 仍 `rc=-2`；跳过 ATOS 门禁后 CP 仍 `GCP5 stage=3 rc=-4`、`GCP12 rptr=0`、`GCP7 st=1 me=404 vbif=e0000`、`GCP11 rbccu=778001/1 sp=778001/1`、`GCP6 trust=1 cpcnl=0`。结论：**高页表地址和 ATOS 门禁都不是 CP 不取 ring 的根因**；系统正常、`AUTORESET issued=1`。
+- 新的具体线索：DTS `arm,smmu-kgsl@5040000` 的 clocks 为 `gcc_gpu_cfg_ahb_clk`、`gcc_bimc_gfx_clk`、`gcc_gpu_bimc_gfx_clk`，但 UEFI `UniXNUGpuClock.c` 的 `mGpuClocks[]` 只使能第一个和第三个，**缺 `gcc_bimc_gfx_clk`**。该 BIMC GFX 时钟很可能就是 SMMU/CP 读写内存卡住的原因。已在 UEFI 源（`out/p21/atos-gate/uefi-src/UniXNUGpuClock.c.final`）加入该名称并重建 firmware `57e20a9b…`、image `2f62fe35…`；本轮正在启动验证。若仍无 ATOS/CP，下一步是低地址 GPU buffers/NoC/XPU，而不是继续调页表。
 - 结论纪律：日志停在 55 s 不等于内核停；用户观察到的 450 s 运行是权威现场。低池结果以本轮 `SMPOOL`/ATOS 行为准，不能拿上一轮推断。
 
 ## 2026-11-01：10 GiB Data 生效 + 屏幕日志根因（P1）
