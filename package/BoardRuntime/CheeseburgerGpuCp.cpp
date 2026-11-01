@@ -299,6 +299,21 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     IOSleep(8000);
     return;
    }
+   // sagit order: ME_INIT -> GPMU firmware upload -> ZAP. The GPMU command
+   // stream is built into the gpmu buffer and must complete before the CP
+   // fetches the first indirect buffer.
+   bool gok=engine.gpmu(gpmu.gva,fw.gpmuWords(),800000,257000000,rec);
+   cb_cp[94]=gok?1:0;
+   if(!gok){
+    cb_cp[38]=11;cb_cp[39]=uint64_t(int32_t(rec.rc));
+    IOLog("CB GPU start: GPMU failed rc=%d; engine halted\n",rec.rc);
+    IOSleep(8000);
+    return;
+   }
+   cb_cp[38]=4;cb_cp[39]=0;
+   IOLog("CB GPU start: gpmu OK ready=%x err=%x rptr=%x\n",
+    uint32_t(m.read(CheeseburgerGpu::GPMUReady)),uint32_t(m.read(CheeseburgerGpu::GPMUError)),
+    uint32_t(m.read(CheeseburgerGpu::RBRead)));
    // The CP engine is initialized (RBRead advanced). Both the device vendor
    // driver and sagit authenticate the ZAP after CP_ME_INIT/engine start and
    // only then submit CP_SET_SECURE_MODE; running the PAS chain before the

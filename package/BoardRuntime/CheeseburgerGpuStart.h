@@ -21,6 +21,10 @@ enum : uint32_t {
     TrustControl = 0xf400 * 4, GPMUReady = 0xa8e0 * 4, GPMUError = 0xa8e1 * 4,
     VBIFHalt = 0x3080 * 4, VBIFHalted = 0x3081 * 4, RBBMSwReset = 0x43 * 4,
     GPMUCM3SysReset = 0xa8d8 * 4,
+    // A5xx GPMU bring-up registers (sagit AdrenoStartup.h, dword -> byte).
+    GPMUVoltage = 0xac60 * 4, GPMUPwrThreshold = 0xac80 * 4,
+    GPMUPwrColInterFrameCtrl = 0xa892 * 4, GPMUPwrColBinningCtrl = 0xa894 * 4,
+    GPMUPwrColInterFrameHyst = 0xa893 * 4, GPMUPwrColStaggerDelay = 0xa891 * 4,
     CPAddrModeCntl = 0x860 * 4, CPProtectCntl = 0x8a0 * 4, CPHwFault = 0xb1a * 4,
     CPProtectStatus = 0xb1c * 4, CPAhbFault = 0xb1b * 4, CPControl = 0x831 * 4,
     Halt = 0x303u,
@@ -59,6 +63,8 @@ struct Record {
 template <class R> class Startup {
     R &r;
     bool resetDone = false, abandonedFlag = false, runningFlag = false;
+    volatile uint32_t *ringPtr = nullptr;
+    unsigned ringCursor = 0;
 
     void wr(uint32_t off, uint32_t value) { r.write(off, value); }
     uint32_t rd(uint32_t off) { return r.read(off); }
@@ -106,6 +112,37 @@ template <class R> class Startup {
         wr(CPAddrModeCntl, 1); wr(0xbc1 * 4, 1); wr(0xc81 * 4, 1); wr(0xcc5 * 4, 1);
         wr(0xd01 * 4, 1); wr(0xe05 * 4, 1); wr(0xe41 * 4, 1); wr(0xe61 * 4, 1);
         wr(0xe80 * 4, 1); wr(0xec1 * 4, 1); wr(0xf01 * 4, 1); wr(0xf810 * 4, 1);
+    }
+
+    int kickTo(Record &rec, unsigned target) {
+        auto poll = [&](unsigned budget) {
+            for (unsigned waited = 0; waited < budget; waited += 10) {
+                const uint32_t irq = rd(InterruptStatus), cpirq = rd(CPInterruptStatus);
+                if ((irq & ErrorIRQs) || (cpirq & 0x3f)) { rec.irq = irq; rec.cpIrq = cpirq; return -3; }
+                const uint32_t read = rd(RBRead);
+                if (read == target && idleStatus(rd(Status)) && !(rd(Status3) & (1u << 24))) {
+                    rec.read = read; rec.write = rd(RBWrite); rec.stage = 4; rec.rc = 0;
+                    r.mark("done");
+                    runningFlag = true; resetDone = false;
+                    return 0;
+                }
+                r.delay(10);
+            }
+            return 1;
+        };
+        int polled = poll(300000);
+        if (polled == 1) {
+            // A doorbell can be lost while the CP is still coming out of reset;
+            // retry once before declaring the kick failed.
+            r.publish(); wr(RBWrite, target);
+            polled = poll(100000);
+        }
+        rec.read = rd(RBRead); rec.write = rd(RBWrite);
+        rec.irq = rd(InterruptStatus); rec.cpIrq = rd(CPInterruptStatus);
+        rec.status3 = rd(Status3); rec.status = rd(Status);
+        rec.me = rd(MEControl); rec.vbif = rd(VBIFHalted);
+        if (polled == 0) return 0;
+        return fail(rec, polled == -3 ? -3 : -4, 3);
     }
 
 public:
@@ -212,37 +249,47 @@ public:
         static const uint32_t init[] = {0x2f, 3, 0x20000000, 0, 0, 0, 0, 0};
         for (unsigned i = 0; i < sizeof init / sizeof init[0]; ++i) ring[cursor++] = init[i];
         r.clean((volatile void *)ring, ringDwords * 4);
+        ringPtr=ring;ringCursor=cursor;
         r.mark("kick");
         r.publish(); wr(RBWrite, cursor);
 
-        auto poll = [&](unsigned budget) {
-            for (unsigned waited = 0; waited < budget; waited += 10) {
-                const uint32_t irq = rd(InterruptStatus), cpirq = rd(CPInterruptStatus);
-                if ((irq & ErrorIRQs) || (cpirq & 0x3f)) { rec.irq = irq; rec.cpIrq = cpirq; return -3; }
-                const uint32_t read = rd(RBRead);
-                if (read == cursor && idleStatus(rd(Status)) && !(rd(Status3) & (1u << 24))) {
-                    rec.read = read; rec.write = rd(RBWrite); rec.stage = 4; rec.rc = 0;
-                    r.mark("done");
-                    runningFlag = true; resetDone = false;
-                    return 0;
-                }
-                r.delay(10);
-            }
-            return 1;
-        };
-        int polled = poll(300000);
-        if (polled == 1) {
-            // A doorbell can be lost while the CP is still coming out of reset;
-            // retry once before declaring the kick failed.
-            r.publish(); wr(RBWrite, cursor);
-            polled = poll(100000);
+        return kickTo(rec, cursor);
+    }
+
+    // Upload the GPMU firmware after CP_ME_INIT, before ZAP, as sagit does.
+    bool gpmu(uint64_t commandsVA, uint32_t words, uint32_t microvolts, uint32_t frequency, Record &rec) {
+        if (!runningFlag || !ringPtr || ringCursor != 9 || !commandsVA || (commandsVA & 3) || !words || words > 0x1021) {
+            fail(rec, -20, 4); return false;
         }
-        rec.read = rd(RBRead); rec.write = rd(RBWrite);
-        rec.irq = rd(InterruptStatus); rec.cpIrq = rd(CPInterruptStatus);
-        rec.status3 = rd(Status3); rec.status = rd(Status);
-        rec.me = rd(MEControl); rec.vbif = rd(VBIFHalted);  // live, not the reset snapshot
-        if (polled == 0) return 0;
-        return fail(rec, polled == -3 ? -3 : -4, 3);
+        if (rd(GPMUCM3SysReset) != 1 || rd(GPMUReady) || rd(GPMUError)) { fail(rec, -21, 4); return false; }
+        wr(GPMUVoltage, 0x80000000); wr(GPMUPwrThreshold, 0x80000000 | 6000);
+        const unsigned msg = 0x9800 + 7, payload = msg + 5;
+        for (unsigned i = 0; i < 36; ++i) wr((payload + i) * 4, 0);
+        wr(msg * 4, 0x80000001); wr((msg + 1) * 4, 1);
+        wr(payload * 4, 5448); wr((payload + 1) * 4, 1);
+        wr((payload + 2) * 4, microvolts / 1000); wr((payload + 3) * 4, frequency / 1000000);
+        wr((payload + 34) * 4, (1u << 24) | (1u << 17) | (2u << 8));
+        wr((payload + 35) * 4, ~0x303u); wr((msg + 3) * 4, 36 * 4);
+        wr((0x9800 + 5) * 4, 0xbabeface);
+        wr(GPMUPwrColInterFrameCtrl, 0x7f); wr(GPMUPwrColBinningCtrl, 0);
+        wr(GPMUPwrColInterFrameHyst, 0xa0080); wr(GPMUPwrColStaggerDelay, 0x600040);
+        unsigned c = ringCursor;
+        ringPtr[c++] = packet7(0x5f, 1); ringPtr[c++] = 0;
+        ringPtr[c++] = packet7(0x3f, 3); ringPtr[c++] = uint32_t(commandsVA);
+        ringPtr[c++] = uint32_t(commandsVA >> 32); ringPtr[c++] = words;
+        ringPtr[c++] = packet7(0x5f, 1); ringPtr[c++] = 1;
+        r.clean((volatile void *)ringPtr, c * 4);
+        r.mark("gpmukick"); r.publish(); wr(RBWrite, c);
+        if (kickTo(rec, c)) return false;
+        wr(GPMUCM3SysReset, 0);
+        for (unsigned elapsed = 0; elapsed < 100000; elapsed += 10) {
+            if ((rd(InterruptStatus) & ErrorIRQs) || (rd(CPInterruptStatus) & 0x3f) || rd(GPMUError)) {
+                fail(rec, -22, 4); return false;
+            }
+            if (rd(GPMUReady) == 0xbabeface) { rec.stage = 5; rec.rc = 0; r.mark("gpmudone"); return true; }
+            r.delay(10);
+        }
+        fail(rec, -23, 4); return false;
     }
 };
 

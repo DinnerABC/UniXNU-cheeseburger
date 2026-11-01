@@ -39,7 +39,7 @@ struct Mock {
         if (o == MEControl) return fail == MeNotHalt ? 0 : reg[o / 4];
         if (o == RBBMSwReset) return fail == SwReset ? 1 : 0;
         if (o == GPMUCM3SysReset) return fail == Cm3 ? 0 : 1;
-        if (o == GPMUReady || o == GPMUError) return 0;
+        if (o == GPMUReady || o == GPMUError) return reg[o / 4];
         if (o == InterruptStatus && fail == ErrorIrq) return ErrorIRQs;
         return reg[o / 4];
     }
@@ -50,11 +50,12 @@ struct Mock {
         if (o == RBWrite) {
             ++rbWriteWrites;
             if (value == 9) ++submitWrites;
-            if (value == 9 && fail != Kick) {
+            if (fail != Kick) {
                 running = true;
-                reg[RBRead / 4] = 9;
+                reg[RBRead / 4] = value;
             }
         }
+        if (o == GPMUCM3SysReset && value == 0) reg[GPMUReady / 4] = 0xbabeface;
     }
     void writePosted(uint32_t o, uint32_t value) { ++posted; write(o, value); }
     void delay(unsigned) { ++delays; }
@@ -148,6 +149,21 @@ static void case_reset_failure(Mock::Fail fail, int expected, const char *name) 
 }
 
 int main() {
+    // GPMU upload follows ME_INIT and must reach ready before ZAP.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        check(engine.reset(rec) == 0, "gpmu/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "gpmu/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "gpmu/success");
+        check(rec.stage == 5 && engine.running(), "gpmu/flags");
+        check(m.reg[GPMUCM3SysReset / 4] == 0 && m.reg[GPMUReady / 4] == 0xbabeface, "gpmu/ready");
+        check(ring[9] == packet7(0x5f, 1) && ring[10] == 0 && ring[11] == packet7(0x3f, 3) &&
+              ring[12] == 0x2012000 && ring[13] == 0 && ring[14] == 1000, "gpmu/commands");
+    }
+
     // Success path.
     {
         Mock m;
