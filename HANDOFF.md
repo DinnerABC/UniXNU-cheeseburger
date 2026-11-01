@@ -7,6 +7,9 @@
 - **panic 已符号化（boot `0x3d426cf6`，用户提供屏幕文本）**：`pc=_bzero+68` 是 `dc zva, x3`；`lr=cheeseburger_gpu_smmu_setup+972` 是 `bzero(gRootVA, 4096)`；`x20=cb_smmu`，`x0=0xfffffff78d715000` 是池映射 VA。根因是新低池用 `IODeviceMemory` 默认映射成 Device/uncached 内存，`dc zva` 在 Device 内存上触发 unaligned data abort；不是旧的随机内核问题。
 - 该系统在 panic 后仍继续运行，且**用户确认 400 s 自动重启成功**；日志写入停在 panic，但 auto-reset 路径存活。400 s 计时本身有效。
 - 修复：低池改用 `IOMemoryDescriptor::withPhysicalAddress(...)+map(kIOMapAnywhere|kIOMapCopybackCache)`（普通 RAM copyback），保留 `flush_dcache`；内核重编中。UEFI 的单参数、64 KiB 池和 args 634 B 保持不变。
+- **copyback 池实机结果（boot `0x3f3758ae`，70 rounds）**：`SMPOOL pa=fff40000 bytes=65536 used=12288`，`SMICRO lt=3 ht=0`，root=`fff40000`；**低池完全生效，panic 消失**。但 `GCP14 ATOS rc=-2 par=ffffffffffffffff expect=10a250000 atsr=1 fsr=400`，门禁 stage=6，未 kick。**结论：高地址页表不是 ATOS 超时的根因**；低池只是排除了一个假设。
+- `AUTORESET requested=400 elapsed=53 issued=1 rc=0`：**400 s 自动返回已由日志确认**，本轮系统正常、Data/touch 正常。
+- 下一诊断轮：显式 `cheeseburger-gpu-atos-gate=0`（默认仍为 1），保留 ZAP/PAS、低池、失败清理，测试 ATOS 超时下 CP 是否仍能取 ring；候选 kernel `03f22cdb…`、image `10e77641…`、args 628（加池参数约 663 B）。若 CP kick 后 RPTR 前进，说明 ATOS 探针本身不可用；若仍 -4，则转向低地址 GPU buffer/NoC/XPU。
 - 结论纪律：日志停在 55 s 不等于内核停；用户观察到的 450 s 运行是权威现场。低池结果以本轮 `SMPOOL`/ATOS 行为准，不能拿上一轮推断。
 
 ## 2026-11-01：10 GiB Data 生效 + 屏幕日志根因（P1）

@@ -251,11 +251,13 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   // reach a CP kick in that state. The same applies when the ATOS fallback
   // could not halt or resume the micro-MMU.
   if((int64_t)cb_smmu[19]<0){cb_cp[38]=7;cb_cp[39]=uint64_t(int64_t(cb_smmu[19]));IOSleep(8000);return;}
+  unsigned atosGate=1;PE_parse_boot_argn("cheeseburger-gpu-atos-gate",&atosGate,sizeof atosGate);
   if(!CheeseburgerGpu::atosMatches((int)(int64_t)cb_cp[110],cb_cp[109],ring.pa)){
    cb_cp[38]=6;cb_cp[39]=cb_cp[110] ? cb_cp[110] : uint64_t(int64_t(-6));
-   IOLog("CB GPU: CP start blocked by ATOS rc=%lld par=%llx expected=%llx\n",
-    (int64_t)cb_cp[110],cb_cp[109],ring.pa);
-   IOSleep(8000);return;
+   IOLog("CB GPU: CP start %s by ATOS rc=%lld par=%llx expected=%llx gate=%u\n",
+    atosGate?"blocked":"allowed for diagnostic",
+    (int64_t)cb_cp[110],cb_cp[109],ring.pa,atosGate);
+   if(atosGate){IOSleep(8000);return;}
   }
   // Android a5xx_pm_resume cores first; without them the CP cannot execute
   // even though every RBBM read succeeds. Log before the first write.
