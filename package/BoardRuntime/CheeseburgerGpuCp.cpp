@@ -496,7 +496,13 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  IOLockLock(gSubmitLock);
  uint32_t s=gFenceSeq+1;if(!s)s=1;
  CheeseburgerGpu::Record rec;
- int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,cheeseburger_gpu_smmu_root(),true);
+ // The probe's own streams fetch from 0x2000000 without any CP_SMMU_TABLE_UPDATE,
+ // so the SMMU CB0 TTBR0 installed by the kernel is the translation the CP uses.
+ // The sagit pageTable sequence (0x53/0x43 under a protected-mode toggle) is a
+ // per-job context switch; here it stalled the CP before the pre-IB fence ever
+ // executed (boot 0x6330fe6c, pf=0/1). sheng instead invalidates the CB TLB in
+ // the SMMU (top of submit) and sends no page-table packets per submission.
+ int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,0,true);
  if(rc==0){gFenceSeq=s;*seq=s;}
  else {
   gEngineSubmitFailed=true;
