@@ -89,9 +89,6 @@ extern volatile int native_gpu_addon2_stage __attribute__((weak_import));
 extern volatile int native_gpu_addon2_status __attribute__((weak_import));
 extern volatile int native_gpu_addon3_stage __attribute__((weak_import));
 extern volatile int native_gpu_addon3_status __attribute__((weak_import));
-/* /Developer union that serves the service cache's factory daemon path. */
-extern volatile int native_gpu_addon4_stage __attribute__((weak_import));
-extern volatile int native_gpu_addon4_status __attribute__((weak_import));
 /* Owner copy of the sealed launchd service cache: stage, last error, the
  * sealed and augmented sizes, object/daemon counts, whether the loader binary
  * carries launchd_unsecure_cache=, the union mount stage/status and rollback. */
@@ -558,15 +555,6 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     &native_gpu_addon_orig_stat[0]?native_gpu_addon_orig_stat[2]:~0ull,
     &native_gpu_addon_boot_mount?(int)native_gpu_addon_boot_mount:-1,cb_boot_id);
   at=put(out,at,cap,add3,sizeof add3);
-  if (&native_gpu_addon4_stage) {
-   /* The sealed service cache's XPC-activity job starts the App-cryptex path
-    * /System/Cryptexes/App/usr/libexec/webbookmarksd; stage 5/status 0 means
-    * that union is mounted and the owner program resolves through it. */
-   char dev[120];
-   snprintf(dev,sizeof dev,"GCRYPT stage=%d status=%d bid=%llx",
-     (int)native_gpu_addon4_stage,(int)native_gpu_addon4_status,cb_boot_id);
-   at=put(out,at,cap,dev,sizeof dev);
-  }
   if (&native_gpu_plugin_reads[0]) {
    /* The original discovery reads MetalPluginName, then the plugin class and
     * the sandbox grant name. All zero means it never looked at this accelerator. */
