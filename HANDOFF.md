@@ -1,3 +1,9 @@
+## 2026-11-02：CPU fence 候选实机结果 `0x4dcc2685`
+
+- 用户报告没有进入系统，设备自动返回 Recovery。只读回收 `out/p21/persistent-logs/20261102T135923Z/`，新 boot `0x4dcc2685`、66 rounds、write_errors=0，窗口 SHA-256 `844798851488ee5423a63e2df926983f16bc4687c0bfbde836bfead3a745497f`；对应本轮唯一临时启动镜像 `2d2ae77d8b6eee1a034f34af3c843803e1ad3c24e5c55aeefde7b3b70ceb1cbc`。回收前按用户要求已停止后台监控，本轮 Recovery 返回是用户报告，日志中复位线程没有 fire 后记录，不据此判断具体线程。
+- 内核 GPU probe fence seq=1 成功；用户态 backboardd 成功 open、2 BO 分配映射，用户 seq=2 未完成：`GSUB rc=-4 stage=3 irq=ffffffff cpirq=ffffffff pre=0/0 fenced=0 seq=2 post=0`。`ffffffff` 是本轮刻意不采样 MMIO 的占位，不表示真实 GPU 寄存器值。心跳运行到 writer sec=328，未见上轮 `kickTo` 读 MMIO panic；但持久日志不覆盖所有 panic，不能保证不存在其他 panic。
+- 显示 `clients=17 frames=0 SWAP check=0 transfer=0`，不是 SWAP 被拒；backboardd fault exits=14，首个已捕获 `sig11 PC=1ac39bf50 LR=1a499777c ESR=92000005 FAR=0`，启动进程反复更换；SpringBoard fault exits=0。backboardd 多次死亡是零帧的重要线索，但尚未符号化，不能断言由插件或 GPU 超时引起；sandbox 拒绝写 `/dev/console`、`/private/var/tmp/p21-plugin.txt`，不能从插件文本缺失推断未执行。下一步优先符号化对应同版本 dyld cache / 实际插件和首个 backboardd crash 栈、确认资源清理与发现阶段，在不关闭 AMFI 和不伪造成功的前提下修复 crash；并继续查 CP 未完成 fence 的实际原因。设备当前 Recovery；不自动重复启动。
+
 ## 2026-11-02：GPU 提交外部中止与 CPU fence 轮询修复（已临时启动）
 
 - 用户提供 panic：PC `0xfffffff00bf9d34c`、LR `0xfffffff00bf9d330`，ESR `0x96000210`，FAR 对应访问 `[x8,#0x1384]`。Recovery 已只读回收 `out/p21/persistent-logs/20261102T133308Z/`，boot `0x49a91db8`，17 rounds、0 errors，末条 CBHB `submit`；启动镜像身份应以实际启动记录复核。当前 `out/p21/atos-dev-job/kernel/kernel.macho` 的反汇编在该 PC 是 `kickTo` 中读取 GPU `InterruptStatus`（offset `0x1384`），而寄存器 x8 加 offset 与用户 FAR 一致；这说明 MMIO read 触发 external abort，不证明 GPU 卡死的根因或精确出错命令。屏幕转录的地址存在多余 f，符号化使用规范 64 位地址；候选内核身份尚须与实际启动收据关联。
