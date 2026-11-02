@@ -1,3 +1,12 @@
+## 2026-11-02 受控启动 `0x5d6a3728`：复位成功，提交仍停顿（已定位到 secure-mode 顺序）
+
+- 镜像 `9df13c4b…`、内核 `0aabfb26…` 于 08:32:19Z 临时启动；设备在约 400 s 后自行回到 Recovery（08:39:06Z），**无需手动回收**。日志 `out/p21/persistent-logs/20261102T083940Z/`（窗口 `e89bd9c9…`）。
+- 新复位路径生效：`AUTORESET requested=400 … mstart=1 gstart=1`，两个 reset 线程创建成功；设备按 400 s 返回。复位路径设计上不再写心跳/日志，因此无法从心跳区分 main 还是 guard 触发，也没有 post-fire 字段；返回位置和计时是唯一证据。
+- 用户提交仍然停顿：心跳最后一帧是 `sec=81 tag=submit`，没有 `submitdone`；`GSUB rc=-1`（提交没返回），槽位停在 `elapsed=79`，17 rounds、0 write errors。msgbuf 文本到内核 161.7 s（内核仍活），说明是提交后的 UFS/日志停写而不是整机死亡；随后 400 s PSCI 把设备带回。
+- 同轮证明 ATOS 与门铃可用：82.9 s 的 `CB GPU SMMU atos … rc=0` 之后，107 s 探测 fence `seq=1` 成功。
+- A/B：上一轮内核 `e5612490`（IB 在 `CP_SET_SECURE_MODE(0)` **之前**，无 ATOS 门禁）用户提交返回 `rc=-3` 且系统继续；本轮两个内核都改成 `SET_SECURE_MODE(0)` 在 IB 之前，均在门铃后停住。sagit 的顺序是 `SET_SECURE_MODE(0) → CP_WAIT_MEM_WRITES →` 后续 DMA。因此最小修复是在切换后、IB 前插入 `CP_WAIT_MEM_WRITES`（等待 secure-mode 转换），`SubmitFenceWords` 从 8 改为 9；宿主模型已更新并 PASS。
+- 设备当前 Recovery；misc BCB 已被本次 Recovery 消费（回读全 0），下一轮启动前必须重写。新候选已构建但**未启动**：镜像 `f61ffaac…`、内核 `ec646223…`、固件 `c71a5912…`、payload `2bc2139d…`，gate `20261102T084944Z` PASS；seed/trust 仍为 `5446b3a2…`/`e92415cc…`。宿主 `gpu_start_model` PASS（含切换 WAIT 后的环序号）。不得把本轮的“自动回 Recovery”说成 GPU 提交成功。
+
 ## 2026-11-02 GPU 失败路径硬化候选（仅构建，设备未启动）
 
 **设备与证据**：最近一次已回收日志是 boot `0x405db723`（`out/p21/persistent-logs/20261102T025610Z/`）：`CB GPU open: ok … type=4147 abi=1 name=mediaserverd`、`GPSVC sub=1 fence=0 err=5`、`CB GPU engine: submit rc=-3 stage=3 seq=2 rptr=25 wptr=25`；该内核在失败后还读取了 rptr/wptr，且没有记录 irq/cpirq，因此**不能判断错误位或是否为陈旧 IRQ**。之后启动的镜像 `4411fd8b…` 黑屏，其 boot 日志尚未回收，本轮没有向设备发送任何命令，也没有把 `0x405db723` 当作这次黑屏的证据。设备当前仍需用户手动确认/返回 Recovery。

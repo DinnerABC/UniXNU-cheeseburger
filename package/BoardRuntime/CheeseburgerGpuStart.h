@@ -333,7 +333,8 @@ public:
     // One user indirect buffer: GPU address of the command stream and its
     // length in dwords. The buffer must already be mapped in this context.
     struct Ib { uint64_t va; uint32_t dwords; };
-    static constexpr unsigned SubmitFenceWords = 8; // 0x66(2) + 0x26(1) + 0x46(5)
+    // 0x66(2) + transition wait(1) + 0x26(1) + 0x46(5)
+    static constexpr unsigned SubmitFenceWords = 9;
 
     // Append IB packets plus the non-secure fence to the ring, kick once and
     // wait for the CP to write the sequence. Every call waits for its own
@@ -371,7 +372,10 @@ public:
         unsigned c = ringCursor;
         // Leave secure mode before any user IB: the secure stream has no
         // mapping for the user window, so an IB fetched first would fault.
+        // Wait for that transition before the fetch, as sagit does; issuing
+        // the IB immediately after the switch stalled this AHB.
         ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;          // CP_SET_SECURE_MODE(0)
+        ringPtr[c++] = packet7(0x26, 0);                            // wait for the transition
         for (unsigned i = 0; i < count; ++i) {
             ringPtr[c++] = packet7(0x3f, 3);                        // CP_INDIRECT_BUFFER
             ringPtr[c++] = uint32_t(ibs[i].va);

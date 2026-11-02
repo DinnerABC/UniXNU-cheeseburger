@@ -90,6 +90,7 @@ launchd.log 在 Data 卷 `/private/var/log/com.apple.xpc.launchd/launchd.log`。
 - 每次 boot 只允许一次用户提交；失败后新 ABI open 返回 Busy，`engine_idle=-1` 保留 BO；新增 retained-IOVA 表，teardown/unmap 未能同步的 IOVA 在本 boot 内拒绝任何新连接，避免覆盖旧叶 PTE。
 - 插件只在 `mediaserverd` 内执行 P1，其它发现宿主立即返回 nil；open 重试上限 5 s。`CheeseburgerAutoReset` 主线程到点不写日志/UFS 直发 PSCI，guard 在 +10 s 只补发一次。
 - 部署约束：本轮候选沿用当前 Data seed（`5446b3a2…`）与 trust（`e92415cc…`），不触发 reseed；新插件（`c6936b5a…`）只构建未写入 seed，部署需用户明确授权一次 seed 更新。
+- 实机 `0x5d6a3728` 证明：新 reset 路径在提交卡死后仍于 400 s 返回 Recovery；但用户提交依旧停在门铃之后。上一轮 `e5612490`（IB 在 `CP_SET_SECURE_MODE(0)` 之前）能返回 `rc=-3`，本轮两个内核把切换移到 IB 之前后卡住；同轮探测的 ATOS + fence 又说明 ATOS/门铃本身可用。据此按 sagit 顺序在切换后、IB 前加入 `CP_WAIT_MEM_WRITES`，等待 secure-mode 转换完成。
 
 ## 6. 本轮不建议继续的方向
 
