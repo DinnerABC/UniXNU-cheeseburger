@@ -1,3 +1,9 @@
+## 2026-11-02 受控启动 `0x45655a90`：pageTable 更新未解决取指，改测用户 IOVA 窗口
+
+- 镜像 `bcef55af…`、内核 `3ab90dee…`（用户 IB 前发送 sagit pageTable 0x53/0x43，屏障 0x12+0x26）于 11:34:16Z 启动，11:41:06Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T114114Z/`（窗口 `74cbb9e6…`）。
+- 结果与 NOP 探针相同：心跳 `f=-1`、`tag=submit` 后无 `submitdone`，日志到 338 s 仍继续；提交线程仍卡在取指，pageTable 刷新没有让 CP 看到 `0x4000000`。
+- 现有证据把问题收敛到“CP 可访问的 IOVA 窗口”，而不是 TLB 刷新顺序：探测页 `0x2000000–0x2015fff` 一直被 CP 正常取指，用户窗口 `0x4000000` 从未成功。本轮功能实验：把 `cheeseburger_gpu_engine_window` 的起点从 `0x4000000` 移到探测页之后的 `0x2020000`（16 MiB），插件按 `deviceInfo.va_start` 自动跟随，无需改 seed。候选已构建、未启动：镜像 `1ca0ca37…`、内核 `bfd84b28…`、固件 `b81e25ad…`、payload `480ea44a…`，gate `20261102T115026Z` PASS；seed/trust 不变。设备当前 Recovery，misc BCB 已消费，启动前需重写。
+
 ## 2026-11-02 受控启动 `0x48f4c3b3`：NOP 探针证明 CP 取不到运行期 IOVA，加入 pageTable 更新
 
 - 镜像 `51841998…`、内核 `5337eb8e…`（用户 IB 临时替换为单个 `CP_NOP`、长度 1）于 11:16:56Z 启动，11:23:58Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T112404Z/`（窗口 `9ac23a5c…`）。

@@ -533,10 +533,12 @@ extern "C" int cheeseburger_gpu_engine_idle(void){
  if(r==0xffffffffu||w==0xffffffffu||st==0xffffffffu||st3==0xffffffffu)return -1;
  return (r==w && CheeseburgerGpu::idleStatus(st) && !(st3&(1u<<24)))?0:-2;
 }
-// Address window the user client may map BOs into. One 16 MiB window keeps
-// the 4 KiB leaf tables inside the preallocated table cap; a larger aperture
-// needs 2 MiB block mappings, which are not implemented yet.
+// Address window the user client may map BOs into, placed next to the probe's
+// already-fetched pages (0x2000000-0x2015fff). The CP rejected/stalled on the
+// former 0x4000000 window even after a page-table update, while the probe
+// pages work; keep the user aperture inside the same CP-visible range. One
+// 16 MiB window keeps the 4 KiB leaf tables inside the preallocated cap.
 extern "C" int cheeseburger_gpu_engine_window(uint64_t *start,uint64_t *bytes){
  if(!start||!bytes||!gEngine||!gRing)return -1;
- *start=0x4000000ULL;*bytes=0x1000000ULL;return 0;
+ *start=0x2020000ULL;*bytes=0x1000000ULL;return 0;
 }
