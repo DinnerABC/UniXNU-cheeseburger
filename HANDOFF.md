@@ -1,3 +1,12 @@
+## 2026-11-03：GPU 开发批次（已临时启动，实机日志待回收）
+
+- 当前方向：优先实现 A540 用户态提交与 Metal 接口，按仓库固定的 sheng GPU 适配及同 SoC sagit 源码移植，不把软件显示或内核 fence 当作用户态 GPU/Metal 成功。每轮尽量批量完成相关功能和必要探针。
+- 上一轮 `f804131` 实机 boot `0x4633ae0d` 日志：`out/p21/persistent-logs/20261102T165108Z/`，68 rounds、写错误 0；`GPWR` 的 RBCCU/SP 状态均 `0x140000`，micro 状态 `0x178/0`；用户提交 `GSUB rc=-4 stage=3`、`fenced=0`，显示 6 帧是 CPU 显示。`pf=0/1` 仅表示预置标记未被 CPU 看见，不证明 CP 一定未执行。
+- 本轮提交 `b9f698f`：参考 sheng `NativeAdrenoCpu.cpp` / `NativeAdrenoMemory.cpp`，GPU 自有 BO 分配时先发布缓存，再把物理页设为 `VM_WIMG_WCOMB`；GPU 安全解绑后恢复默认页属性；提交前加完整 barrier。用户 doorbell 前检查已读出的两个电源域和 micro-MMU 返回，失败时不提交并保留对象；提交次数检查移入锁中。`AGENTS.md` 已写入 GPU 开发优先和单轮请求约束。此为代码与主机编译结果，尚未证明实机 GPU 成功。
+- 本机隔离源码树 `/Users/dinnerabc/unixnu-p21/atos-gate/source-tree`；候选 `out/p21/gpu-dev-batch/`；使用 `P21_CANDIDATE=$PWD/out/p21/gpu-dev-batch /opt/homebrew/bin/python3.13 scripts/p21-compile-atos-gate.py` 增量同步并编译，内核构建通过，原有 7 组宿主模型通过；复用 Data seed `1e8b97fb…` 与现有 trust/启动配置。固件使用 p2 的独立 overlay `unixnu-up1-gpu-dev-batch`；磁盘扩到 40 GiB，固件构建、pins 和 gate `20261102T171025Z` 通过。
+- **本轮启动**：镜像 `out/p21/gpu-dev-batch/uefi/boot-p21-up1.img` SHA-256 `2cf41785989e2e23202d0075de9a056ce98adbd121639bd3146ece875a016070`；内核 `d1dbe111bffc3ad71d7bd99cbc2507f48e4f14047561465e2a00948273aeb319`，固件 `2fedc7553d713097a7c64d717be2fec9a1c4d6d3e33466db9d137a57a15b61e6`，payload `18a3f6c660ce31ba2a60d44cd25ab95ca0ef0be2a5af10043eada7027958e9f5`。对 `3b25cc7c` 仅一次 fastboot boot，Sending/Booting OKAY；`out/p21/gpu-dev-batch/boot-once.log`。misc 仅授权 command 字段变更并回读，其余首块一致。未直接写 userdata、boot 或其他分区。**本轮运行结果和新日志尚未回收**；用户要求启动后停止、不监视，由下一 agent 读取新 boot ID 的日志。
+- 下位 agent 接手前先读根 `AGENTS.md`、本文件、`docs/P21_GPU_HANDOFF_20261102.md`、官方 `.work/p21-official-framework/docs/porting/gpu.md`，并按新 boot ID 分析原始持久日志；保留未跟踪的 launchd cache 三个文件。
+
 ## 2026-11-02：热 Data 重跑同一镜像 `0x4986dc09`，画面恢复
 
 - 目的：上轮 `0x5856c881` 的 `frames=0` 与授权 reseed 后的冷 Data（`state=3`）混在一起，先用同一镜像、不改代码做热 Data 对照。镜像仍为 `out/p21/gpu-plugin-lifecycle/uefi/boot-p21-up1.img` SHA-256 `a6d0ced82788442c0949f8c44016fbd335a25d489ac0cc11dd602c3fa55fae22`（等于上轮启动收据），未重编、未改 seed/trust。新 gate `gate-20261102T153150Z.json` = `PREBOOT_GATE_P21_PASS`（644 B args，pins 复核）。
