@@ -1,3 +1,12 @@
+## 2026-11-02：热 Data 重跑同一镜像 `0x4986dc09`，画面恢复
+
+- 目的：上轮 `0x5856c881` 的 `frames=0` 与授权 reseed 后的冷 Data（`state=3`）混在一起，先用同一镜像、不改代码做热 Data 对照。镜像仍为 `out/p21/gpu-plugin-lifecycle/uefi/boot-p21-up1.img` SHA-256 `a6d0ced82788442c0949f8c44016fbd335a25d489ac0cc11dd602c3fa55fae22`（等于上轮启动收据），未重编、未改 seed/trust。新 gate `gate-20261102T153150Z.json` = `PREBOOT_GATE_P21_PASS`（644 B args，pins 复核）。
+- BCB：本轮只改已授权的 misc 首块 command 为 `boot-recovery`，备份/请求/回读在 `out/p21/gpu-plugin-lifecycle/warm-rerun-20261102T153150Z/`（before `ad7facb2…`、request=readback `8698abf4…`）。2026-11-02T15:34:04Z 对 `3b25cc7c` 一次 `fastboot boot` Sending/Booting OKAY；15:42:04Z 单次检查设备已在 Recovery（约 480 s，符合 400 s 自动复位 + BCB；具体复位线程未由日志证明）。未写 userdata、boot、recovery、GPT。
+- 只读回收 `out/p21/persistent-logs/20261102T154240Z/`：boot `0x4986dc09`、67 rounds、0 写错误，窗口 SHA-256 `a793a57247b4ce3b5dbd02105e019e36ba429e66301cd008dc2cbccfb0511b06`；冻结于 `out/p21/gpu-cp/rounds/20261102T154403Z-warm-rerun-4986dc09/`。
+- **画面恢复（本轮实测）**：`DATA persist state=2 header=0`（热 Data 恢复，未再 reseed）、`EXITS total=974`；`DISPLAY stage=10 clients=127 frames=26`、`SWAP check=26 reject=0 transfer=26 rc=0`，首次 swap 在 t=146 s；`FB2 backboardd p56 in/out=123/123 sel4/5/6=26/26/52 rc=0`；`backboardd fault exits=0`；`TOUCH publish=79 HID=79`。这证明上轮 `frames=0` 是冷 Data 首次启动的日志窗口边界（4 个 state=3 参考轮首次 swap 都在 318–338 s，而上轮窗口止于 318 s），不是显示回归；修复后的插件（仅 mediaserverd 跑探针）不阻止显示。
+- **GPU 仍未完成（本轮实测）**：内核 probe fence `seq=1` 成功；`mediaserverd` 145.29 s 以 0x4147 打开，2 BO/2 map，用户提交 `GSUB rc=-4 stage=3 seq=2 pre=0/0 fenced=0`（CPU fence 超时，按设计不读 MMIO、标记 abandoned）；`GPSVC open=1 bo=2 map=2 sub=1 fence=0 err=5 sel=5`。失败后 `GOPEN name=backboardd ostg=7` 是 discovery 的 type-1 open 被 Busy 拒绝，不是 ABI 客户端。`irq/cpirq=ffffffff` 仍为未采样占位，不是寄存器真值。
+- 下一步（GPU 单独一轮，需新候选与授权）：先做**只提交 fence、不带 IB**（`buffer_count=0`）的对照，区分“probe 后的 ring/doorbell/engine 是否还能执行”与“运行期 0x4000000 IOVA 取指”；该实验不触碰用户 IB/目标，失败后仍只读 CPU fence。不要再用 `frames=0` 归因插件或显示，也不要把本轮 `frames=26` 说成 GPU/Metal 工作。
+
 ## 2026-11-02：插件生命周期修复实机回收 `0x5856c881`
 
 - 用户报告设备已重启进入 Recovery；只读回收 `out/p21/persistent-logs/20261102T143713Z/`，新 boot `0x5856c881`、64 rounds、0 写错误。当前详细交接与下一步见 `docs/P21_GPU_HANDOFF_20261102.md`。

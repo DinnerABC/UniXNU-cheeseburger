@@ -8,12 +8,12 @@
 2. `docs/P21_LOCAL_BUILD_GPU_HANDOFF_20261102.md`：本机增量构建、NAS 回写、固件 overlay、门禁及启动流程；再看 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`：零帧和线程栈的读取与证据边界。
 3. `docs/P21_GPU_USERSPACE_INTEGRATION_20261102.md`、`docs/P21_OFFICIAL_MIGRATION_DIFF_20261101.md`：当前插件、用户客户端和官方迁移差异；`docs/P21_OFFICIAL_WORKFLOW_AUDIT.md`、`docs/P21_OFFICIAL_ADAPTATION.md`：固定上游及整体启动链。
 4. `.work/p21-official-framework/AGENTS.md` 和 `.work/p21-official-framework/docs/porting/{gpu,display,uefi-firmware,migration}.md`；查看 `.work/p21-official-framework/drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm` 的初始化与异步测试，再对照本机 `package/Userland/native_adreno_metal_plugin.mm`。硬件细节再读 `docs/upstream/reference/sagit/QcomGPU/AdrenoStartup.h`、`AdrenoSubmit.h`。
-5. 实际读取本轮 `out/p21/persistent-logs/20261102T143713Z/retrieval.json`、`decoded/cheeseburger-P21-5856c881/latest.txt`、`msgbuf.txt`、`heartbeat.json`，与能出帧的 `out/p21/persistent-logs/20261101T172951Z/` 及崩溃前轮 `20261102T135923Z/` 比较；不要只依赖自动概览。
+5. 先读最新 `out/p21/persistent-logs/20261102T154240Z/retrieval.json`、`decoded/cheeseburger-P21-4986dc09/latest.txt`、`msgbuf.txt`、`heartbeat.json`（热 Data，`frames=26`），再看 `out/p21/persistent-logs/20261102T143713Z/`（冷 Data，窗口止于 318 s），并对照能出帧的 `out/p21/persistent-logs/20261101T172951Z/`；不要只依赖自动概览。
 
-**先恢复画面，再并行推进 GPU，不把二者混为一件事：**
+**画面已由热 Data 对照恢复；当前只推进 GPU，不把显示与 GPU 混为一件事：**
 
-- 画面：本轮 backboardd 存活但 `frames=0 / swap=0 / notify72=0 / vsync arm=0`。对比成功轮对应的显示客户端、服务和线程栈，确认实际等待点、插件 nil 返回后的发现路径和 Data `state=3` 的影响；找到有源码依据的差异后进行功能修复。`state=3` 的完成状态要用实际代码定义和下轮记录核实，不把日志时间当作剩余进度。
-- GPU：沿同 SoC 案例核对用户 IB 的构造、可见性、SMMU 映射、cache 和 fence；之前的 `TLB=0`、单 NOP 停顿、`irq=ffffffff` 都不能各自证明硬件取指原因。提交必须保留原用户数据和失败资源保护；用最小可复核实验把“地址可达、执行、回写”分开。
+- 画面：`0x5856c881` 的 `frames=0` 已确认是冷 Data 首启的日志窗口边界（state=3 参考轮首次 swap 都在 318–338 s，该轮窗口止于 318 s）。热 Data 重跑 `0x4986dc09` 实测 `frames=26 / swap=26`、backboardd 存活、触摸 `publish=79/HID=79`。后续不要再用零帧归因插件或 accelerator；新 reseed 后的首启仍应留出 ≥400 s 并注意日志窗口可能提前停止。
+- GPU：沿同 SoC 案例核对用户 IB 的构造、可见性、SMMU 映射、cache 和 fence；之前的 `TLB=0`、单 NOP 停顿、`irq=ffffffff` 都不能各自证明硬件取指原因。提交必须保留原用户数据和失败资源保护；用最小可复核实验把“地址可达、执行、回写”分开。下一步候选先验证 fence-only（`buffer_count=0`）能否在 probe 后完成，以区分 ring/doorbell 与运行期 IOVA 取指。
 - 同一候选批量完成相互关联的修复和必要宿主验证，再进行一次受控启动；不要为了每条日志各编译一次。只有实际需要 GPU 执行才能区分的原因才加有界探针，不在共享系统中重复 kick；失败后不可读取故障 GPU/SMMU MMIO。
 - 测试结果分别记录 Data、backboardd、显示 swap/frames、用户态 BO/submit/fence/回读、触摸和自动恢复；用户曾明确要求停止 Recovery 自动监控，继续遵守。每次更新 `HANDOFF.md` 并提交本轮源码、文档，保留别人的未跟踪文件。
 
@@ -21,9 +21,18 @@
 
 项目：`/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger`；设备 OnePlus 5 `cheeseburger` / MSM8998 / Adreno 540，序列号 `3b25cc7c`；当前主线为 iPadOS 17.7.11（21H461）。接手先读仓库 `AGENTS.md`、`HANDOFF.md`、`docs/P21_LOCAL_BUILD_GPU_HANDOFF_20261102.md` 和本文，再查 Git、进程、设备及最新日志。`main` 当前领先远端，存在其他 agent 遗留的三个未跟踪 launchd cache 文件，不要清理或提交。不要推送、重置工作区、覆盖旧候选。
 
-用户称本轮已重启进入 Recovery；2026-11-02 本轮读取时通过设备 3b25cc7c 的系统 ADB 5037 证实 `ro.bootmode=recovery`、root。用户要求停止 Recovery 自动监控；当前没有启动该监控。返回方式（手动或自动）未由用户明确，本轮日志不能独立证明具体 reset 线程触发。下一次操作前重新确认设备状态，确保只使用一个系统 ADB 服务，不自动循环重启。
+2026-11-02 热 Data 重跑同一镜像后，设备 `3b25cc7c` 已自动回到 Recovery（15:34:04Z 启动，15:42:04Z 单次检查确认 `ro.bootmode=recovery`、root）。本轮 BCB 预置了 `boot-recovery`，返回位置是实测，但具体 reset 线程未由日志证明。用户要求停止 Recovery 自动监控；当前没有启动该监控。下一次操作前重新确认设备状态，确保只使用一个系统 ADB 服务，不自动循环重启。
 
-## 本轮实机结果（最新）
+## 2026-11-02 热 Data 重跑（最新，`0x4986dc09`）
+
+- 目的：把上轮 `0x5856c881` 的 `frames=0` 与授权 reseed 后的冷 Data（`state=3`）分开。同一镜像、不改代码、不重编：`out/p21/gpu-plugin-lifecycle/uefi/boot-p21-up1.img` SHA-256 `a6d0ced82788442c0949f8c44016fbd335a25d489ac0cc11dd602c3fa55fae22`；新 gate `gate-20261102T153150Z.json` = PASS。仅在授权的 misc 首块写 `boot-recovery` 并回读一致（`warm-rerun-20261102T153150Z/`）。15:34:04Z 一次 `fastboot boot`；15:42:04Z 单次检查已在 Recovery。
+- 回收 `out/p21/persistent-logs/20261102T154240Z/`：boot `0x4986dc09`、67 rounds、0 写错误，窗口 SHA-256 `a793a57247b4ce3b5dbd02105e019e36ba429e66301cd008dc2cbccfb0511b06`；冻结于 `rounds/20261102T154403Z-warm-rerun-4986dc09/`。
+- **画面恢复**：`DATA persist state=2 header=0`（热 Data 恢复，未再 reseed）、`EXITS total=974`；`DISPLAY stage=10 clients=127 frames=26`、`SWAP check=26 reject=0 transfer=26 rc=0`，首次 swap t=146 s；`FB2 backboardd p56 in/out=123/123 sel4/5/6=26/26/52 rc=0`；`backboardd fault exits=0`；`TOUCH publish=79 HID=79`。
+- 结论：`0x5856c881` 的 `frames=0` 是冷 Data 首启的日志窗口边界——4 个 state=3 参考轮首次 swap 都在 318–338 s，而该轮窗口止于 318 s。修复后的插件（仅 mediaserverd 跑探针）**不阻止显示**；不要把零帧再归因于插件发现或 accelerator 发布。
+- GPU 仍有同一失败：内核 probe fence `seq=1` 成功；`mediaserverd` 145.29 s 打开 0x4147、2 BO/2 map，用户提交 `GSUB rc=-4 stage=3 seq=2 pre=0/0 fenced=0`；`GPSVC open=1 bo=2 map=2 sub=1 fence=0 err=5 sel=5`。失败后 `GOPEN name=backboardd ostg=7` 是 discovery 的 type-1 open 被 Busy 拒绝，不是 ABI 客户端。`irq/cpirq=ffffffff` 仍是未采样占位。
+- 下一步：GPU 单独一轮，先做**只提交 fence、不带 IB**（`buffer_count=0`）的对照，区分“probe 后 ring/doorbell/engine 是否还能执行”与“0x4000000 运行期 IOVA 取指”；不触碰用户 IB/目标，失败后只读 CPU fence。`frames=26` 是软件显示链，不是 GPU/Metal 证据。
+
+## 上一轮实机结果（`0x5856c881`）
 
 - 本轮 boot `0x5856c881`，只读原始日志 `out/p21/persistent-logs/20261102T143713Z/`，`retrieval.json` = `BOUNDED_LOG_WINDOW_READ_PASS`，64 rounds、写错误 0，窗口 SHA-256 `9c5b2a2e1345ce0f0dccd69d2275bc77fd14adc51fee1a86111ba7a6b30d036c`。最后 heartbeat `sec=318` 是日志工作线程相对时间，不是整机停机时间。
 - 镜像 `out/p21/gpu-plugin-lifecycle/uefi/boot-p21-up1.img` SHA-256 `a6d0ced82788442c0949f8c44016fbd335a25d489ac0cc11dd602c3fa55fae22`；2026-11-02 14:13:47 UTC 临时 `fastboot boot` Sending/Booting OKAY。内核 `98ba240854d2cbd44a7d13f85efa2dc43fcc62e5aded0417bb85218fc7c3d251`，固件 `b467412111db5f333fc9c7226397b2f396c4c01fcfb56f46402ea8137d99a23f`，expanded payload `12099c8edc17189aded2ff58eb00dae937e96411fa81b56066437376b60a7a45`；`gate-20261102T141223Z.json` PASS、pins 已核对、args 644 字节。传输成功不等于进入系统。
@@ -45,7 +54,7 @@
 
 优先读取固定官方框架 `.work/p21-official-framework` 的 `AGENTS.md`、`docs/porting/gpu.md` / `display.md` / `uefi-firmware.md` / `migration.md`，以及仓库 `docs/P21_OFFICIAL_WORKFLOW_AUDIT.md`、`docs/P21_OFFICIAL_ADAPTATION.md`、`docs/P21_OFFICIAL_MIGRATION_DIFF_20261101.md`、`docs/P21_GPU_USERSPACE_INTEGRATION_20261102.md`。官方 UniXNU / sheng：`https://github.com/UniXNU/UniXNU`、`https://github.com/UniXNU/UniXNU-sheng`、`https://github.com/UniXNU/AdrenoMetal`、`https://github.com/UniXNU/Adreno740`；同 SoC A540 参考 `https://github.com/MC-XiaoXiao/ios_sagit`，本地 `docs/upstream/reference/sagit/QcomGPU/AdrenoStartup.h`、`AdrenoSubmit.h`。sheng 的 A740 可参考软件接口，寄存器/固件/电源/命令不可直接套 A540。
 
-1. 先查零帧前置：本轮 backboardd 存活、`sel4/5/6=0/0/0`、`notify72=0`、vsync arm=0，结合同 boot backboardd / SpringBoard 线程栈和显示服务状态，对照此前出画面的 `out/p21/persistent-logs/20261101T172951Z/`（`frames=6`、backboardd fault=0）；排查 Metal 发现后 nil 回退、显示初始化、等待对象及本轮 Data state=3 的影响。别假设 crash 已解决就必然出画面，或把无 swap 归因分辨率。
+1. ~~先查零帧前置~~（已完成）：`0x5856c881` 的 `frames=0` 是冷 Data 首启的日志窗口边界；热 Data 重跑 `0x4986dc09` 实测 `frames=26/swap=26`，backboardd `in/out=123/123`、`sel4/5/6=26/26/52`，触摸 `publish=79/HID=79`。后续不要再把无 swap 归因于插件 nil 返回、accelerator 发布或分辨率。新 reseed 后首启留 ≥400 s，并记住日志窗口可能在 318 s 左右先停。
 2. GPU 保持现有经验证的时钟、SMMU、ZAP/PAS、安全策略；对照 A540 vendor/sagit 实际命令和页表映射，查运行时新增 `0x4000000/0x4001000` IOVA 可见性、BO CPU/GPU cache 一致性、ring/IB 内容与等待次序。`0x12=CP_WAIT_MEM_WRITES`、`0x26=CP_WAIT_FOR_IDLE`；软件 TLB 或 NOP 超时不能单独证明 GPU 读到了错误页或唯一根因。需使用隔离、合法、明确 ownership 的最小 GPU 操作区分可取指/可写/用户 BO 映射，不篡改真实用户提交；异常后不读取可能卡住的 GPU/SMMU MMIO，资源保守保留。
 3. 同一 boot 验证 `IOServiceOpen → 2 BO/map → submit → fence → CPU 3 值 + 哨兵 → 安全释放`，再推进可读回的 GPU 像素、IOSurface、Metal device 与系统合成。不要把内核 fence、`frames>0` 或 `fastboot OKAY` 直接等同 GPU 图形加速。
 4. 不使用 TrustControl 绕过 ZAP、关闭 AMFI、放宽 launchd 签名；不随意修改 CPU、内存、显示参数、种子或时钟。一次候选完成相关修复与必要验证再启动，保留独立记录；不循环测试。
