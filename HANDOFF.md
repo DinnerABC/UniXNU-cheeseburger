@@ -1,3 +1,16 @@
+## 2026-11-03：用户 IB 硬件翻译门禁 + user-path 对照（batch2 已临时启动）
+
+- **上一轮镜像 `2cf41785…` 的实机结果已回收**：新 boot `0x3dc9ecb3`，日志 `out/p21/persistent-logs/20261102T171817Z/`（67 rounds、心跳 sec=338、写错误 0）。设备于 17:17:52Z 自行回到 Recovery（boot 17:10:53Z，约 420 s，符合 400 s 自动复位 + misc BCB）。结果与 `b9f698f` 之前完全相同：`GPWR pre=778000/140000 post=140000/140000 me/vbif=0 st=80000101 micro=178/0`、`GSUB rc=-4 stage=3 fenced=0 seq=2 pf=0/1`、`GPSVC sub=1 fence=0 err=5 sel=5`，probe fence seq=1 成功。CPU 显示 5 帧。即：缓存属性改动没有改变用户提交结果。
+- 本轮提交 `228561e`（批量实现 + 必要诊断，同一失败点）：
+  1. 用户环在 prefence 后、IB 前加 `CP_WAIT_MEM_WRITES(0x12)+CP_WAIT_FOR_IDLE(0x26)`；probe fence 已证明这两条在本机可执行，因此 `pf=0` 不再能被“写还在 CP 缓冲里”解释。
+  2. probe fence 成功后新增一次 **user-path 对照提交**（`cpuFenceOnly`、`count=0`、seq=2），结果写 `GCTL rc/stage/fence`。它区分“probe 后环/门铃/引擎还能执行”与“用户 IB 本身”。
+  3. 用户 IB 门铃前对每个 IB IOVA 做 SMMU **ATOS 硬件走表**，PAR 与软件 leaf 不符则拒绝门铃（rc=-3/stage=0x81）；失败后仍不读 GPU MMIO。记录 `GSAT atos=/par=/expect=`。
+  4. 超时后只读 CPU fence 页：`fr=` 为 dword0 原始字（CP 的 RPTR shadow 与完成 fence 共用该页），`pf=` 为 dword1；`GPWR` 追加 gpmu ready/error 与 IRQ 预采样。
+  宿主模型 `run-gpu-start-model-test.py` PASS（环序号已按新 barrier 更新）。
+- 候选 `out/p21/gpu-dev-batch2/`（新隔离候选，复用 ADT/trust/Data seed `1e8b97fb…` 与 `unixnu.toml`）。内核 `e5dd01ea…`（native `.unstripped.noctf` `96935a7c…` → prelink `cbd01c30…` → panic-screen 补丁），expanded payload `f699b3e7…`，固件 `1ab473a0…`（新 overlay `unixnu-up1-gpu-dev-batch2`，FVMAIN 仍 99%），pins 扫描 kernel/payload/ADT 均命中，gate `20261102T174106Z` PASS（644 B args）。
+- **本轮启动**：镜像 `out/p21/gpu-dev-batch2/uefi/boot-p21-up1.img` SHA-256 `42cac48fb7094d33ca1690a59ded8ef9a6bc3eb142f9d8c00a5e55e581add820`；`boot-once.log` 记录 17:41:48Z 唯一一次 `fastboot boot` Sending/Booting OKAY。misc 仅改首 32 字节 command 为 `boot-recovery`，备份/请求/回读 `misc-before.bin`/`misc-request.bin`/`misc-readback.bin` 一致（`8698abf4…`）；未写 userdata、boot、recovery、GPT。运行结果与自动返回待回收。
+- 判定要点：`GCTL rc=0 stage=7` = probe 后 user-path 环可用；`GCTL rc=-4` = 连 user-path fence-only 都不执行，问题在引擎/门铃而不是 IB。`GSAT atos=-3` = ATOS 译出的页与软件 leaf 不符（IB 不可取指，已被拦下）；`GSAT atos=0` 而 `GSUB rc=-4` = 翻译正确，问题在 IB 内容/CP 执行或 fence 可见性。`fr` 与 `pf` 供交叉验证，不得把未观测当“CP 未执行”。
+
 ## 2026-11-03：GPU 开发批次（已临时启动，实机日志待回收）
 
 - 当前方向：优先实现 A540 用户态提交与 Metal 接口，按仓库固定的 sheng GPU 适配及同 SoC sagit 源码移植，不把软件显示或内核 fence 当作用户态 GPU/Metal 成功。每轮尽量批量完成相关功能和必要探针。
