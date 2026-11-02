@@ -1,3 +1,10 @@
+## 2026-11-02 受控启动 `0x46d23365`：去掉 ATOS 仍卡，锁定 secure-mode 环顺序
+
+- 镜像 `381a0e1c…`、内核 `54485e9d…`（删除用户路径 ATOS，保留 WAIT）于 09:43:35Z 启动；设备于 09:50:35Z 返回 Recovery（约 420 s）。日志 `out/p21/persistent-logs/20261102T095051Z/`（窗口 `84b65bf7…`）。
+- 现象与黑屏轮一致：心跳停在 `sec=80 tag=submit`，17 rounds，无 `submitdone`；msgbuf 到 142.5 s；槽位里的 `GPSVC open=0` 是发现之前的旧快照，不能据此判断 open。`GSUB rc=-1` 说明提交仍未返回。
+- 因此 ATOS 不是主因；用户路径与旧内核 `e5612490`（能返回 `rc=-3`）剩下的唯一差异是 `CP_SET_SECURE_MODE(0)` 被移到 IB 之前。sagit 顺序的 WAIT 也没有避免停顿。
+- 本轮修改：把环顺序恢复为 `e5612490` 的 `IB → CP_SET_SECURE_MODE(0) → CP_WAIT_MEM_WRITES → CACHE_FLUSH_TS`，保留新的故障记录（pre/irq/cpirq/fenced）和失败关闭；宿主模型 PASS。候选已构建、未启动：镜像 `fd0f8ff4…`、内核 `ff662e87…`、固件 `4351a938…`、payload `99709541…`，gate `20261102T095939Z` PASS；seed/trust 不变。设备当前 Recovery，misc BCB 已被消费，启动前需重写。此版预期返回 `rc=-3`，目的是拿到第一个真实 irq/cpirq。
+
 ## 2026-11-02 受控启动 `0x55637174`：提交卡在 engine_submit 内，定位到用户路径 ATOS
 
 - 镜像 `f61ffaac…`、内核 `ec646223…`（secure-mode 后插入 WAIT）于 09:09:38Z 启动；设备在 400 s 整（09:16:18Z）自行回到 Recovery。日志 `out/p21/persistent-logs/20261102T091635Z/`（窗口 `eba7a004…`）。

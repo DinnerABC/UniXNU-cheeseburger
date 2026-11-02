@@ -237,13 +237,12 @@ int main() {
         const int rc = engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords);
         check(rc == 0, "submit/rc");
         check(rec.stage == 7 && engine.running(), "submit/stage");
-        check(ring[17] == packet7(0x66, 1) && ring[18] == 0 &&
-              ring[19] == packet7(0x26, 0) &&
-              ring[20] == packet7(0x3f, 3) && ring[21] == 0x4000000 && ring[22] == 0 &&
-              ring[23] == 12, "submit/ib-packet");
-        check(ring[24] == packet7(0x26, 0) && ring[25] == packet7(0x46, 4) &&
-              ring[26] == (4 | (1u << 31)) && ring[27] == 0x2015000 &&
-              ring[28] == 0 && ring[29] == 2, "submit/fence-packet");
+        check(ring[17] == packet7(0x3f, 3) && ring[18] == 0x4000000 && ring[19] == 0 &&
+              ring[20] == 12, "submit/ib-packet");
+        check(ring[21] == packet7(0x66, 1) && ring[22] == 0 &&
+              ring[23] == packet7(0x26, 0) && ring[24] == packet7(0x46, 4) &&
+              ring[25] == (4 | (1u << 31)) && ring[26] == 0x2015000 &&
+              ring[27] == 0 && ring[28] == 2, "submit/fence-packet");
         check(fence[0] == 2, "submit/fence-value");
     }
 
