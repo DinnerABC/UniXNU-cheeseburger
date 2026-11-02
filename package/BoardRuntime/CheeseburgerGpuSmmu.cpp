@@ -286,6 +286,14 @@ extern "C" int cheeseburger_gpu_smmu_atos(uint64_t iova,uint64_t *par,volatile u
  return (atsr&1)?-2:0;
 }
 extern "C" uint64_t cheeseburger_gpu_smmu_root(void){return gRootPA;}
+// sheng invalidates the context-bank TLB before every submission (int-070: the
+// CP fetched a zero IB whose PTE and DRAM were both correct, after the address
+// had been mapped to other pages). TLBIALL+TLBSYNC is safe while the CP runs;
+// the caller must fail closed and not kick when this does not complete.
+extern "C" int cheeseburger_gpu_smmu_invalidate(void){
+ W *sp=smmuMap();if(!sp)return -1;
+ return tlbSync(*sp,0x8000,true)?0:-2;
+}
 extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
  if(!pte||(iova&4095))return -1;
  KernelTables tables;

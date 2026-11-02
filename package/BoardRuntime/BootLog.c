@@ -63,6 +63,8 @@ extern volatile uint32_t native_adreno_submit_post __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_preirq __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_precpirq __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_fenced __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_prefence __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_prefence_valid __attribute__((weak_import));
 /* Last refused open stage (1 not ready, 2 busy, 3 memory, 4 init, 5 attach, 6 start). */
 extern volatile int native_adreno_open_stage __attribute__((weak_import));
 extern volatile uint64_t native_adreno_abi_opens __attribute__((weak_import));
@@ -567,13 +569,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    /* The first real submit failure: internal rc/stage and the first captured
     * error IRQs, so the generic user-space IOReturn is not the only record. */
    char sub[160];
-   snprintf(sub,sizeof sub,"GSUB rc=%d stage=%u irq=%x cpirq=%x pre=%x/%x fenced=%u seq=%u post=%u bid=%llx",
+   snprintf(sub,sizeof sub,"GSUB rc=%d stage=%u irq=%x cpirq=%x pre=%x/%x fenced=%u seq=%u post=%u pf=%x/%u bid=%llx",
      (int)native_adreno_submit_rc,native_adreno_submit_stage,native_adreno_submit_irq,
      native_adreno_submit_cpirq,
      &native_adreno_submit_preirq?native_adreno_submit_preirq:0,
      &native_adreno_submit_precpirq?native_adreno_submit_precpirq:0,
      &native_adreno_submit_fenced?native_adreno_submit_fenced:0,
-     native_adreno_submit_seq,native_adreno_submit_post,cb_boot_id);
+     native_adreno_submit_seq,native_adreno_submit_post,
+     &native_adreno_submit_prefence?native_adreno_submit_prefence:0xdeadbeefu,
+     &native_adreno_submit_prefence_valid?native_adreno_submit_prefence_valid:0,
+     cb_boot_id);
    at=put(out,at,cap,sub,sizeof sub);
   }
   if (&native_adreno_client_name[0]) {

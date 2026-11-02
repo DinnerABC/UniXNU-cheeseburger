@@ -38,6 +38,7 @@ void *vfs_context_current(void);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
+int cheeseburger_gpu_smmu_invalidate(void);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
@@ -147,6 +148,7 @@ struct Mmio {
  void publish(){__asm__ volatile("dsb oshst":::"memory");}
  void clean(volatile void *p,unsigned n){flush_dcache((vm_offset_t)p,n,FALSE);}
  void mark(const char *tag){if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step(tag);}
+ bool invalidateTlb(){return cheeseburger_gpu_smmu_invalidate()==0;}
 };
 // Android a5xx_pm_resume turns the RBCCU and SP core power domains on before
 // any CP use. They are separate from the GPUCC clock vote: with them off the
@@ -470,6 +472,10 @@ volatile uint32_t native_adreno_submit_stage=0,native_adreno_submit_irq=0,
  native_adreno_submit_cpirq=0,native_adreno_submit_seq=0,native_adreno_submit_post=0,
  native_adreno_submit_preirq=0,native_adreno_submit_precpirq=0;
 volatile uint32_t native_adreno_submit_fenced=0;
+// CPU-owned word the ring writes before the user IB. pf=0xdeadbeef means the
+// probe was not present; a C0DE.... value with rc=-4 means the ring and
+// doorbell ran and the stall is the user IB translation/fetch.
+volatile uint32_t native_adreno_submit_prefence=0, native_adreno_submit_prefence_valid=0;
 extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1:0;}
 extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t **va,unsigned *words){
  if(!gScratchVA||!gScratchGva||!gScratchWords)return -1;
@@ -499,14 +505,16 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   native_adreno_submit_seq=s;native_adreno_submit_post=rec.postRead?1:0;
   native_adreno_submit_preirq=rec.preIrq;native_adreno_submit_precpirq=rec.preCpIrq;
   native_adreno_submit_fenced=rec.fenced?1:0;
+  native_adreno_submit_prefence=rec.prefence;
+  native_adreno_submit_prefence_valid=rec.prefenceValid?1:0;
   // Bounded: a failing submission must say why. Unknown registers are
   // 0xffffffff and postRead=0 means they were never sampled after failure.
   // pre= are the latches sampled before the doorbell (stale bits), fenced=1
   // means the CPU-visible fence page held the sequence despite the rc.
   static unsigned logged;
-  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u\n",
+  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u pf=%x/%u\n",
     rc,rec.stage,s,rec.read,rec.write,rec.irq,rec.cpIrq,rec.preIrq,rec.preCpIrq,
-    (unsigned)rec.fenced,(unsigned)rec.postRead);
+    (unsigned)rec.fenced,(unsigned)rec.postRead,rec.prefence,(unsigned)(rec.prefenceValid?1:0));
  }
  IOLockUnlock(gSubmitLock);
  return rc;

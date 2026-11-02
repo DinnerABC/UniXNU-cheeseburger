@@ -63,6 +63,11 @@ struct Record {
     // Interrupt latches sampled before the user submission's doorbell. A stale
     // RBBM bit is cleared like sagit does; a latched CP fault refuses the kick.
     uint32_t preIrq = 0, preCpIrq = 0;
+    // CPU-owned probe fence placed before the user IB: written by the CP when
+    // the ring itself still executes, so a missing real fence localizes the
+    // stall to the user IB fetch instead of the doorbell/ring.
+    uint32_t prefence = 0;
+    bool prefenceValid = false;
     bool fenced = false;     // the fence page held the sequence despite the rc
     bool abandoned = false;
     bool postRead = false;   // a post-failure bus read happened (must stay false)
@@ -394,9 +399,12 @@ public:
         if (hw && hw <= ringDwords) ringCursor = hw;
         for (unsigned i = 0; i < 1000 && rd(RBRead) != hw; ++i) r.delay(10);
         if (rd(RBRead) != hw) { fail(rec, -45, 7); return rec.rc; }
-        // Worst case: optional transition (3) + page table (20) + barrier (2)
-        // + CACHE_FLUSH_TS (5) + IBs.
-        const unsigned need = count * 4 + 7 + (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3);
+        // Worst case: optional transition (3) + page table (20) + prefence (5)
+        // + barrier (2) + CACHE_FLUSH_TS (5) + IBs.
+        const bool userPath = cpuFenceOnly;
+        const bool prefence = userPath && count != 0;
+        const unsigned need = count * 4 + 7 + (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3) +
+            (prefence ? 5 : 0);
         if (need > ringDwords) { fail(rec, -43, 7); return rec.rc; }
         if (ringCursor + need >= ringDwords) {
             // NOP-fill the tail instead of letting a packet cross the wrap.
@@ -413,6 +421,17 @@ public:
             putPacket(0x26, nullptr, 0);                            // wait for the transition
         }
         if (pageTableVA) putPageTable(pageTableVA);
+        if (prefence) {
+            // Executes before the IB is fetched. The write goes to the second
+            // dword of the CPU-owned fence page; the user IB and its target
+            // are untouched. A set word with no real fence means the ring and
+            // doorbell still work and the stall is the user IB translation.
+            ringPtr[ringCursor++] = packet7(0x46, 4);                // CACHE_FLUSH_TS
+            ringPtr[ringCursor++] = 4 | (1u << 31);
+            ringPtr[ringCursor++] = uint32_t(fenceVA + 4);
+            ringPtr[ringCursor++] = uint32_t((fenceVA + 4) >> 32);
+            ringPtr[ringCursor++] = 0xC0DE0000u | (sequence & 0xffffu);
+        }
         for (unsigned i = 0; i < count; ++i) {
             ringPtr[ringCursor++] = packet7(0x3f, 3);                // CP_INDIRECT_BUFFER
             ringPtr[ringCursor++] = uint32_t(ibs[i].va);
@@ -427,7 +446,9 @@ public:
         ringPtr[ringCursor++] = 4 | (1u << 31);
         ringPtr[ringCursor++] = uint32_t(fenceVA); ringPtr[ringCursor++] = uint32_t(fenceVA >> 32);
         ringPtr[ringCursor++] = sequence;
-        fenceCPU[0] = 0; r.clean((volatile void *)fenceCPU, 4);
+        fenceCPU[0] = 0;
+        if (prefence) fenceCPU[1] = 0;
+        r.clean((volatile void *)fenceCPU, prefence ? 8 : 4);
         r.clean((volatile void *)ringPtr, ringDwords * 4);
         c = ringCursor;
         // Sample the latches before this doorbell. sagit clears the owned RBBM
@@ -443,6 +464,13 @@ public:
             rec.stage = 3; return fail(rec, -7, 3);
         }
         wr(InterruptClear, OwnedIRQs);
+        if (userPath && !r.invalidateTlb()) {
+            // sheng's submit path invalidates the context-bank TLB before each
+            // doorbell. A map-to-kick interval can leave a stale translation in
+            // the CP's walk; without this the IB fetch can read zero or stall
+            // even though PTE and DRAM agree. Do not kick into that state.
+            rec.stage = 3; return fail(rec, -8, 3);
+        }
         r.mark("submit"); r.publish(); wr(RBWrite, c);
         if (cpuFenceOnly) {
             // A failed user IB can turn even an interrupt-status read into an
@@ -461,6 +489,10 @@ public:
             }
             // No MMIO reads or posted writes on an unresponsive bus. Keep all
             // mappings retained; this does not assert that the CP is halted.
+            // The CPU fence page also holds the pre-IB probe word.
+            r.clean((volatile void *)fenceCPU, prefence ? 8 : 4);
+            rec.prefenceValid = prefence;
+            rec.prefence = prefence ? fenceCPU[1] : 0;
             rec.rc = -4; rec.stage = 3; rec.abandoned = true;
             rec.converged = false; abandonedFlag = true;
             resetDone = false; runningFlag = false; haltAck = false;

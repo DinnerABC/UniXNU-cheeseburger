@@ -26,6 +26,8 @@ struct Mock {
     bool armed = false;
     bool watchDoorbell = false, userDoorbell = false;
     unsigned userReadsAfterDoorbell = 0;
+    bool tlbFail = false;
+    unsigned invalidateCalls = 0;
     uint32_t irqLatch = 0;
     unsigned readsAfterFailure = 0;
     unsigned unhaltWrites = 0, rbWriteWrites = 0, submitWrites = 0, rbControlWrites = 0, delays = 0, posted = 0;
@@ -45,6 +47,7 @@ struct Mock {
         std::fill(reg.begin(), reg.end(), 0);
         running = false;
         unhaltWrites = rbWriteWrites = submitWrites = rbControlWrites = delays = posted = 0;
+        invalidateCalls = 0;
         failureSeen = false; stallMarks = false; readsAfterFailure = 0;
         armed = false; irqLatch = 0;
         markCount = 0;
@@ -95,7 +98,13 @@ struct Mock {
             auto scan = [&](unsigned a, unsigned b) {
                 if (!w) return;
                 for (unsigned i = a; i + 5 <= b; ++i)
-                    if (w[i] == packet7(0x46, 4)) fenceSeq = w[i + 4];
+                    if (w[i] == packet7(0x46, 4)) {
+                        // The pre-IB probe writes the second fence dword; the
+                        // real completion fence writes the first.
+                        if (hostFence && w[i + 2] == 0x2015004u) {
+                            if (fail != ErrorIrq && fail != MmioGone) hostFence[1] = w[i + 4];
+                        } else fenceSeq = w[i + 4];
+                    }
             };
             if (w && total) {
                 if (value >= execCursor) scan(execCursor, value);
@@ -126,6 +135,7 @@ struct Mock {
         }
     }
     void publish() {}
+    bool invalidateTlb() { ++invalidateCalls; return !tlbFail; }
     void clean(volatile void *p, unsigned n) {
         ringView = const_cast<const uint32_t *>(static_cast<const volatile uint32_t *>(p));
         ringWords = n / 4;
@@ -232,7 +242,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "submit/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "submit/start");
@@ -274,7 +284,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "wrap/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "wrap/start");
@@ -300,7 +310,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "badib/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "badib/start");
@@ -315,7 +325,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "kickfail/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "kickfail/start");
@@ -331,7 +341,7 @@ int main() {
     // neither path touches GPU MMIO after the doorbell.
     for (bool complete : {false, true}) {
         Mock m; Startup<Mock> engine(m); Record rec;
-        volatile uint32_t ring[RingDwords] = {0}, fence[1] = {0};
+        volatile uint32_t ring[RingDwords] = {0}, fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "cpufence/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "cpufence/start");
@@ -342,6 +352,37 @@ int main() {
         const int rc = engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords, 0, true);
         check(m.userReadsAfterDoorbell == 0, "cpufence/no-mmio-read");
         check(complete ? (rc == 0 && rec.fenced) : (rc == -4 && rec.abandoned && !rec.converged), "cpufence/result");
+        // sheng invalidates the CB TLB before every user doorbell, and the
+        // pre-IB probe word must be in the ring before the indirect buffer.
+        check(m.invalidateCalls == 1, "cpufence/tlb-invalidate");
+        check(ring[20] == packet7(0x46, 4) && ring[22] == 0x2015004 &&
+              ring[25] == packet7(0x3f, 3) && ring[26] == 0x4000000, "cpufence/prefence-before-ib");
+        check(rec.prefenceValid || complete, "cpufence/prefence-valid");
+        if (complete) check(fence[1] == (0xC0DE0000u | 2), "cpufence/prefence-written");
+        else check(fence[1] == 0 && rec.prefence == 0, "cpufence/prefence-unwritten");
+    }
+
+    // A pre-submit TLB invalidate that does not complete must fail closed: no
+    // doorbell write, halted CP, and the abandoned state recorded.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0}, fence[2] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "tlbfail/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "tlbfail/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "tlbfail/gpmu");
+        m.tlbFail = true;
+        m.watchDoorbell = true;
+        const unsigned writes = m.rbWriteWrites;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords, 0, true) == -8, "tlbfail/rc");
+        check(m.invalidateCalls == 1 && m.rbWriteWrites == writes, "tlbfail/no-doorbell");
+        check(m.userReadsAfterDoorbell == 0, "tlbfail/no-mmio-read");
+        check(rec.stage == 3 && rec.abandoned && rec.converged, "tlbfail/state");
+        halted_after_failure(m, "tlbfail/halted");
+        check(engine.abandoned() && !engine.running(), "tlbfail/engine");
     }
 
     // A kick timeout must not retry the doorbell or read the bus afterwards;
@@ -351,7 +392,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "timeout/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "timeout/start");
@@ -375,7 +416,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "errirq/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "errirq/start");
@@ -398,7 +439,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "mmiogone/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "mmiogone/start");
@@ -418,7 +459,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "stale/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "stale/start");
@@ -437,7 +478,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "stalecp/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "stalecp/start");
@@ -458,7 +499,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "late/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "late/start");
@@ -476,7 +517,7 @@ int main() {
         Startup<Mock> engine(m);
         Record rec;
         volatile uint32_t ring[RingDwords] = {0};
-        volatile uint32_t fence[1] = {0};
+        volatile uint32_t fence[2] = {0};
         m.hostFence = fence;
         check(engine.reset(rec) == 0, "logstall/reset");
         check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "logstall/start");
