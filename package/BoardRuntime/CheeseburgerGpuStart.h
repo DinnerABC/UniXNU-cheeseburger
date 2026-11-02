@@ -54,10 +54,19 @@ inline bool idleStatus(uint32_t s) { return !(s & ~0x800001c1u); }
 struct Record {
     unsigned stage = 0;   // 1 reset done, 2 addresses/configure done, 3 kicked, 4 running
     int rc = 0;
+    // Registers sampled only while the bus was known healthy. After an error
+    // IRQ or a kick timeout the fields not yet sampled hold 0xffffffff and
+    // postRead stays false: they are "not read", never a zeroed observation.
     uint32_t vbif = 0, me = 0, status = 0, retries = 0;
     uint32_t read = 0, write = 0, irq = 0, cpIrq = 0, status3 = 0;
     uint32_t trust = 0, cpControl = 0;
+    // Interrupt latches sampled before the user submission's doorbell. A stale
+    // RBBM bit is cleared like sagit does; a latched CP fault refuses the kick.
+    uint32_t preIrq = 0, preCpIrq = 0;
+    bool fenced = false;     // the fence page held the sequence despite the rc
     bool abandoned = false;
+    bool postRead = false;   // a post-failure bus read happened (must stay false)
+    bool converged = false;  // posted halt writes were issued (not proof of stop)
 };
 
 template <class R> class Startup {
@@ -78,10 +87,16 @@ template <class R> class Startup {
         r.writePosted(VBIFHalt, 15);
     }
     int fail(Record &rec, int rc, unsigned stage) {
-        r.mark("fail");
+        // Establish the failure state first. Nothing here may wait on the
+        // persistent log, the console or the possibly stalled GPU bus.
         rec.rc = rc; rec.stage = stage; rec.abandoned = true;
         abandonedFlag = true; resetDone = false; runningFlag = false;
+        rec.postRead = false;
+        // Posted halt requests only: no reads, no DSB, no log. They request a
+        // halt; they are not evidence that DMA stopped, so haltConfirmed()
+        // stays false on this path.
         haltBestEffort();
+        rec.converged = true;
         return rc;
     }
 
@@ -115,33 +130,49 @@ template <class R> class Startup {
     }
 
     int kickTo(Record &rec, unsigned target) {
+        // Snapshot what is still safe to read before the kick. A failed kick
+        // may leave the AHB stalled, so the error path must not read the CP,
+        // VBIF, interrupt or status registers again.
+        rec.read = rd(RBRead); rec.write = rd(RBWrite);
+        rec.status = 0xffffffffu; rec.status3 = 0xffffffffu;
+        rec.me = 0xffffffffu; rec.vbif = 0xffffffffu;
+        rec.irq = 0; rec.cpIrq = 0; rec.postRead = false;
         auto poll = [&](unsigned budget) {
+            uint32_t lastRead = rec.read, lastStatus = 0xffffffffu, lastStatus3 = 0xffffffffu;
+            uint32_t lastIrq = 0, lastCpIrq = 0;
             for (unsigned waited = 0; waited < budget; waited += 10) {
                 const uint32_t irq = rd(InterruptStatus), cpirq = rd(CPInterruptStatus);
-                if ((irq & ErrorIRQs) || (cpirq & 0x3f)) { rec.irq = irq; rec.cpIrq = cpirq; return -3; }
-                const uint32_t read = rd(RBRead);
-                if (read == target && idleStatus(rd(Status)) && !(rd(Status3) & (1u << 24))) {
-                    rec.read = read; rec.write = rd(RBWrite); rec.stage = 4; rec.rc = 0;
-                    r.mark("done");
+                if ((irq & ErrorIRQs) || (cpirq & 0x3f)) {
+                    // First and only capture: the poll stops here, and the
+                    // caller must not sample the bus again.
+                    rec.irq = irq; rec.cpIrq = cpirq;
+                    rec.read = lastRead; rec.status = lastStatus; rec.status3 = lastStatus3;
+                    rec.write = 0xffffffffu;
+                    return -3;
+                }
+                const uint32_t read = rd(RBRead), status = rd(Status), status3 = rd(Status3);
+                lastRead = read; lastStatus = status; lastStatus3 = status3;
+                lastIrq = irq; lastCpIrq = cpirq;
+                if (read == target && idleStatus(status) && !(status3 & (1u << 24))) {
+                    rec.read = read; rec.write = rd(RBWrite); rec.status = status; rec.status3 = status3;
+                    rec.irq = irq; rec.cpIrq = cpirq;
+                    rec.stage = 4; rec.rc = 0; r.mark("done");
                     runningFlag = true; resetDone = false;
                     return 0;
                 }
                 r.delay(10);
             }
+            // Timeout: keep the last values sampled while polling, then stop.
+            rec.read = lastRead; rec.status = lastStatus; rec.status3 = lastStatus3;
+            rec.irq = lastIrq; rec.cpIrq = lastCpIrq; rec.write = 0xffffffffu;
             return 1;
         };
-        int polled = poll(300000);
-        if (polled == 1) {
-            // A doorbell can be lost while the CP is still coming out of reset;
-            // retry once before declaring the kick failed.
-            r.publish(); wr(RBWrite, target);
-            polled = poll(100000);
-        }
-        rec.read = rd(RBRead); rec.write = rd(RBWrite);
-        rec.irq = rd(InterruptStatus); rec.cpIrq = rd(CPInterruptStatus);
-        rec.status3 = rd(Status3); rec.status = rd(Status);
-        rec.me = rd(MEControl); rec.vbif = rd(VBIFHalted);
+        const int polled = poll(300000);
         if (polled == 0) return 0;
+        // No retry and no post-failure reads. The posted halt requests are
+        // issued by fail(); the record says which fields were never sampled.
+        // -3 keeps the first error IRQ, -4 is a poll timeout.
+        rec.stage = 3;
         return fail(rec, polled == -3 ? -3 : -4, 3);
     }
 
@@ -354,8 +385,27 @@ public:
         fenceCPU[0] = 0; r.clean((volatile void *)fenceCPU, 4);
         r.clean((volatile void *)ringPtr, ringDwords * 4);
         ringCursor = c;
+        // Sample the latches before this doorbell. sagit clears the owned RBBM
+        // set before publishing a stream, so a completion bit left by the
+        // probe's own fence cannot fail this kick. CP_INTERRUPT_STATUS has no
+        // safe write-only ack here: an already latched CP fault refuses the
+        // submit instead of kicking into a faulted engine.
+        rec.preIrq = rd(InterruptStatus); rec.preCpIrq = rd(CPInterruptStatus);
+        if (rec.preIrq == 0xffffffffu || rec.preCpIrq == 0xffffffffu) {
+            rec.stage = 3; return fail(rec, -6, 3);
+        }
+        if (rec.preCpIrq & 0x3f) {
+            rec.stage = 3; return fail(rec, -7, 3);
+        }
+        wr(InterruptClear, OwnedIRQs);
         r.mark("submit"); r.publish(); wr(RBWrite, c);
-        if (kickTo(rec, c)) return rec.rc;
+        if (kickTo(rec, c)) {
+            // The fence page is CPU memory, not the possibly stalled bus: it
+            // still tells whether the ring ran despite the latched error.
+            r.clean((volatile void *)fenceCPU, 4);
+            if (fenceCPU[0] == sequence) rec.fenced = true;
+            return rec.rc;
+        }
         for (unsigned elapsed = 0; elapsed < 100000; elapsed += 10) {
             r.clean((volatile void *)fenceCPU, 4);
             if (fenceCPU[0] == sequence) { rec.stage = 7; rec.rc = 0; r.mark("submitdone"); return 0; }

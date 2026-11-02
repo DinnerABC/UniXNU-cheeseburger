@@ -456,6 +456,14 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
 // the ring is idle when it wraps and a later BO cannot be freed under an
 // in-flight fetch.
 static bool gEngineSubmitFailed=false;
+static unsigned gEngineSubmitCount=0;
+// Internal result of the last failed user submission. The persistent log and
+// the heartbeat carry these so a wedged msgbuf does not erase them.
+volatile int32_t native_adreno_submit_rc=-1;
+volatile uint32_t native_adreno_submit_stage=0,native_adreno_submit_irq=0,
+ native_adreno_submit_cpirq=0,native_adreno_submit_seq=0,native_adreno_submit_post=0,
+ native_adreno_submit_preirq=0,native_adreno_submit_precpirq=0;
+volatile uint32_t native_adreno_submit_fenced=0;
 extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1:0;}
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
@@ -463,6 +471,10 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  // A submission that failed may have left the CP fetching a bad IB. Fail closed:
  // no further submission until reboot (the failure record names rc/stage).
  if(gEngineSubmitFailed)return -2;
+ // One hardware test per boot: a restarted host or discovery instance must not
+ // repeat the user submission.
+ if(gEngineSubmitCount>=1)return -2;
+ gEngineSubmitCount++;
  CheeseburgerGpu::Startup<Mmio>::Ib ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
  IOLockLock(gSubmitLock);
@@ -472,10 +484,19 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  if(rc==0){gFenceSeq=s;*seq=s;}
  else {
   gEngineSubmitFailed=true;
-  // Bounded: a failing submission must say why (stage/rc/ring pointers).
+  native_adreno_submit_rc=rc;native_adreno_submit_stage=rec.stage;
+  native_adreno_submit_irq=rec.irq;native_adreno_submit_cpirq=rec.cpIrq;
+  native_adreno_submit_seq=s;native_adreno_submit_post=rec.postRead?1:0;
+  native_adreno_submit_preirq=rec.preIrq;native_adreno_submit_precpirq=rec.preCpIrq;
+  native_adreno_submit_fenced=rec.fenced?1:0;
+  // Bounded: a failing submission must say why. Unknown registers are
+  // 0xffffffff and postRead=0 means they were never sampled after failure.
+  // pre= are the latches sampled before the doorbell (stale bits), fenced=1
+  // means the CPU-visible fence page held the sequence despite the rc.
   static unsigned logged;
-  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x\n",
-    rc,rec.stage,s,rec.read,rec.write);
+  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u\n",
+    rc,rec.stage,s,rec.read,rec.write,rec.irq,rec.cpIrq,rec.preIrq,rec.preCpIrq,
+    (unsigned)rec.fenced,(unsigned)rec.postRead);
  }
  IOLockUnlock(gSubmitLock);
  return rc;

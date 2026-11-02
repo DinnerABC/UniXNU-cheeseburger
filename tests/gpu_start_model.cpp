@@ -14,10 +14,18 @@
 using namespace CheeseburgerGpu;
 
 struct Mock {
-    enum Fail { None, VbifAck, Idle, MeNotHalt, SwReset, Cm3, Kick, ErrorIrq };
+    // ErrorLate models a latched bit while the CP still completed the ring and
+    // wrote the fence; ErrorIrq faults before the fence is visible.
+    enum Fail { None, VbifAck, Idle, MeNotHalt, SwReset, Cm3, Kick, ErrorIrq, ErrorLate, MmioGone };
     Fail fail = None;
     std::vector<uint32_t> reg = std::vector<uint32_t>(0x40000 / 4, 0);
     bool running = false;
+    bool failureSeen = false, stallMarks = false;
+    // RBBM latches and the fault arm: injected errors only appear after the
+    // doorbell, so a pre-kick sample sees the healthy bus.
+    bool armed = false;
+    uint32_t irqLatch = 0;
+    unsigned readsAfterFailure = 0;
     unsigned unhaltWrites = 0, rbWriteWrites = 0, submitWrites = 0, rbControlWrites = 0, delays = 0, posted = 0;
     char marks[64][16] = {};
     unsigned markCount = 0;
@@ -35,12 +43,27 @@ struct Mock {
         std::fill(reg.begin(), reg.end(), 0);
         running = false;
         unhaltWrites = rbWriteWrites = submitWrites = rbControlWrites = delays = posted = 0;
+        failureSeen = false; stallMarks = false; readsAfterFailure = 0;
+        armed = false; irqLatch = 0;
         markCount = 0;
         std::memset(marks, 0, sizeof marks);
         reg[MEControl / 4] = Halt;       // cold CP is halted
         reg[TrustControl / 4] = 1;       // secure mode on this SoC
     }
     uint32_t read(uint32_t o) {
+        // The error observation is the InterruptStatus/CPInterruptStatus pair;
+        // only reads beyond that pair count as post-failure bus access.
+        if (failureSeen && o != CPInterruptStatus) ++readsAfterFailure;
+        // Faults arm at the doorbell. The inaccessible window is observed at
+        // the poll's interrupt read; setup reads before the kick are healthy.
+        if (armed && fail == MmioGone) {
+            if (o == InterruptStatus) failureSeen = true;
+            return 0xffffffffu;
+        }
+        if (armed && (fail == ErrorIrq || fail == ErrorLate)) {
+            if (o == InterruptStatus) { failureSeen = true; return ErrorIRQs; }
+            if (o == CPInterruptStatus) return 0;
+        }
         if (o == VBIFHalted) return fail == VbifAck ? 0 : 0xf000f;
         if (o == Status) return fail == Idle ? 0xc00003c1u : (running ? 0x80000101u : 0x800001c1u);
         if (o == Status3) return 0;
@@ -48,15 +71,17 @@ struct Mock {
         if (o == RBBMSwReset) return fail == SwReset ? 1 : 0;
         if (o == GPMUCM3SysReset) return fail == Cm3 ? 0 : 1;
         if (o == GPMUReady || o == GPMUError) return reg[o / 4];
-        if (o == InterruptStatus && fail == ErrorIrq) return ErrorIRQs;
+        if (o == InterruptStatus) return irqLatch;
         return reg[o / 4];
     }
     void write(uint32_t o, uint32_t value) {
         reg[o / 4] = value;
+        if (o == InterruptClear) irqLatch &= ~value;
         if (o == MEControl && value == 0) ++unhaltWrites;
         if (o == RBControl) ++rbControlWrites;
         if (o == RBWrite) {
             ++rbWriteWrites;
+            if (fail == ErrorIrq || fail == ErrorLate || fail == MmioGone) armed = true;
             if (value == 9) ++submitWrites;
             if (value < lastRbWrite) wrapped = true;
             // Execute the ring like the CP: walk the doorbell range
@@ -74,7 +99,10 @@ struct Mock {
             }
             execCursor = value;
             lastRbWrite = value;
-            if (hostFence && fenceSeq) hostFence[0] = fenceSeq;
+            // ErrorIrq/MmioGone fault before the fence write is visible;
+            // ErrorLate completes the ring, so the CPU page is updated.
+            if (hostFence && fenceSeq && fail != ErrorIrq && fail != MmioGone)
+                hostFence[0] = fenceSeq;
             if (fail != Kick) {
                 running = true;
                 reg[RBRead / 4] = value;
@@ -85,6 +113,7 @@ struct Mock {
     void writePosted(uint32_t o, uint32_t value) { ++posted; write(o, value); }
     void delay(unsigned) { ++delays; }
     void mark(const char *tag) {
+        if (stallMarks) return;
         if (markCount < 64) {
             unsigned i = 0;
             for (; tag[i] && i < 15; ++i) marks[markCount][i] = tag[i];
@@ -172,7 +201,7 @@ static void case_reset_failure(Mock::Fail fail, int expected, const char *name) 
     halted_after_failure(m, name);
     check(m.unhaltWrites == 0, name);
     check(m.rbControlWrites == 0 && m.rbWriteWrites == 0, name);
-    check(m.markCount && std::strcmp(m.marks[m.markCount - 1], "fail") == 0, name);
+    check(rec.converged, name);
     check(std::strcmp(m.marks[0], "halt") == 0, name);
 }
 
@@ -208,10 +237,10 @@ int main() {
         const int rc = engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords);
         check(rc == 0, "submit/rc");
         check(rec.stage == 7 && engine.running(), "submit/stage");
-        check(ring[17] == packet7(0x3f, 3) && ring[18] == 0x4000000 && ring[19] == 0 &&
-              ring[20] == 12, "submit/ib-packet");
-        check(ring[21] == packet7(0x66, 1) && ring[22] == 0 &&
-              ring[23] == packet7(0x26, 0) && ring[24] == packet7(0x46, 4) &&
+        check(ring[17] == packet7(0x66, 1) && ring[18] == 0 &&
+              ring[19] == packet7(0x3f, 3) && ring[20] == 0x4000000 && ring[21] == 0 &&
+              ring[22] == 12, "submit/ib-packet");
+        check(ring[23] == packet7(0x26, 0) && ring[24] == packet7(0x46, 4) &&
               ring[25] == (4 | (1u << 31)) && ring[26] == 0x2015000 &&
               ring[27] == 0 && ring[28] == 2, "submit/fence-packet");
         check(fence[0] == 2, "submit/fence-value");
@@ -278,6 +307,150 @@ int main() {
         halted_after_failure(m, "kickfail/halted");
     }
 
+    // A kick timeout must not retry the doorbell or read the bus afterwards;
+    // unsampled registers are marked, and a second submission is refused.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "timeout/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "timeout/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "timeout/gpmu");
+        m.fail = Mock::Kick;
+        const unsigned writes = m.rbWriteWrites;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) != 0, "timeout/reject");
+        check(rec.rc == -4 && rec.stage == 3, "timeout/rc-stage");
+        check(m.rbWriteWrites == writes + 1, "timeout/no-retry");
+        check(rec.write == 0xffffffffu && rec.me == 0xffffffffu && rec.vbif == 0xffffffffu, "timeout/unread-marked");
+        check(!rec.postRead && rec.converged, "timeout/state");
+        check(engine.submit(&ib, 1, 0x2015000, 3, fence, rec, RingDwords) < 0, "timeout/resubmit-refused");
+        check(m.rbWriteWrites == writes + 1, "timeout/resubmit-no-write");
+    }
+
+    // An error IRQ is captured once; the error path performs no further bus
+    // read (the mock counts any read after the first error observation).
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "errirq/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "errirq/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "errirq/gpmu");
+        m.fail = Mock::ErrorIrq;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) != 0, "errirq/reject");
+        check(rec.rc == -3 && rec.irq == ErrorIRQs && rec.cpIrq == 0, "errirq/first-irq");
+        check(!rec.fenced, "errirq/no-fence");
+        check(m.readsAfterFailure == 0, "errirq/no-bus-read");
+        check(!rec.postRead && rec.abandoned && rec.converged, "errirq/state");
+        check(engine.abandoned() && !engine.running(), "errirq/abandoned");
+        halted_after_failure(m, "errirq/halted");
+    }
+
+    // An inaccessible MMIO window behaves like an error IRQ, not an infinite
+    // poll: no post-failure reads and a marked, abandoned engine.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "mmiogone/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "mmiogone/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "mmiogone/gpmu");
+        m.fail = Mock::MmioGone;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) != 0, "mmiogone/reject");
+        check(rec.rc == -3 && rec.irq == 0xffffffffu, "mmiogone/irq");
+        check(m.readsAfterFailure == 0, "mmiogone/no-bus-read");
+        check(rec.abandoned && rec.converged, "mmiogone/state");
+    }
+
+    // A completion bit left latched by the probe's own fence must not fail the
+    // user kick: the owned RBBM set is cleared before the doorbell, like sagit.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "stale/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "stale/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "stale/gpmu");
+        m.irqLatch = ErrorIRQs | (1u << 20);
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) == 0, "stale/rc");
+        check(rec.preIrq == (ErrorIRQs | (1u << 20)) && rec.irq == 0, "stale/pre");
+        check(m.irqLatch == 0 && fence[0] == 2, "stale/cleared");
+    }
+
+    // A CP fault that is already latched cannot be acknowledged safely, so the
+    // submission is refused before the doorbell instead of kicked into it.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "stalecp/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "stalecp/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "stalecp/gpmu");
+        m.reg[CPInterruptStatus / 4] = 4;
+        const unsigned writes = m.rbWriteWrites;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) == -7, "stalecp/rc");
+        check(rec.preCpIrq == 4 && rec.stage == 3 && rec.abandoned, "stalecp/record");
+        check(m.rbWriteWrites == writes, "stalecp/no-doorbell");
+        halted_after_failure(m, "stalecp/halted");
+    }
+
+    // The error latch stops the register poll, but the fence page is CPU memory
+    // and still shows that the ring completed (ErrorLate models this).
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "late/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "late/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "late/gpmu");
+        m.fail = Mock::ErrorLate;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) == -3, "late/rc");
+        check(rec.fenced && rec.irq == ErrorIRQs, "late/fenced");
+        check(m.readsAfterFailure == 0, "late/no-bus-read");
+    }
+
+    // A stalled log/heartbeat cannot prevent the failure state from being set.
+    {
+        Mock m;
+        Startup<Mock> engine(m);
+        Record rec;
+        volatile uint32_t ring[RingDwords] = {0};
+        volatile uint32_t fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "logstall/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "logstall/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "logstall/gpmu");
+        m.stallMarks = true;
+        m.fail = Mock::ErrorIrq;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) != 0, "logstall/reject");
+        check(rec.abandoned && engine.abandoned() && rec.converged, "logstall/state");
+    }
+
     // Success path.
     {
         Mock m;
@@ -328,8 +501,9 @@ int main() {
         check(rc == -4, "kick/timeout");
         check(rec.abandoned && engine.abandoned(), "kick/abandoned");
         halted_after_failure(m, "kick/halted");
-        // The first doorbell may be lost while the CP leaves reset; the retry is bounded.
-        check(m.submitWrites == 2 && m.unhaltWrites == 1, "kick/bounded-retry");
+        // No retry: a timeout stops at the first doorbell and does not touch
+        // the bus again; the record carries the unread fields.
+        check(m.submitWrites == 1 && m.unhaltWrites == 1, "kick/single-doorbell");
         check(m.posted == 2, "kick/posted-halt");
     }
     // An error interrupt fails the kick immediately; cleanup must not block.

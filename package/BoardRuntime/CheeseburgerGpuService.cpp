@@ -50,6 +50,22 @@ enum : uint32_t {OpenType=0x4147, BoTokenBase=0x100, MaxBo=64, AbiInputBits=36, 
 IOService *gService=nullptr;
 IOLock *gGateLock=nullptr;
 CheeseburgerGpu::ClientGate gGate;
+// A BO whose SMMU leaf could not be torn down is retained with its pages. Its
+// IOVA must never be handed to a later connection: the CP may still hold that
+// translation. The gate alone is not enough, because it is released when the
+// owning client closes while the mapping stays.
+struct RetainedRange { uint64_t iova=0, bytes=0; };
+enum { MaxRetained=MaxBo };
+RetainedRange gRetained[MaxRetained];
+unsigned gRetainedCount=0;
+void retainIova(uint64_t iova,uint64_t bytes) {
+    if(!gGateLock||!iova||!bytes)return;
+    IOLockLock(gGateLock);
+    for(unsigned i=0;i<gRetainedCount;++i)
+        if(gRetained[i].iova==iova){IOLockUnlock(gGateLock);return;}
+    if(gRetainedCount<MaxRetained)gRetained[gRetainedCount++]={iova,bytes};
+    IOLockUnlock(gGateLock);
+}
 }
 
 class AGXDeviceUserClient : public IOUserClient {
@@ -109,8 +125,8 @@ extern "C" IOReturn cheeseburger_gpu_open_client(IOService *,task_t,void *,UInt3
 // Bounded msgbuf trail: the snapshot can stop before the discovery runs, but
 // msgbuf and the heartbeat usually continue. Log the first few outcomes only.
 static void open_trail(const char *what,unsigned stage,UInt32 type,bool abi) {
-    static unsigned seen[8][2];
-    unsigned slot=stage<8?stage:7, kind=abi?1:0;
+    static unsigned seen[9][2];
+    unsigned slot=stage<9?stage:8, kind=abi?1:0;
     if(seen[slot][kind]++>=3)return;
     IOLog("CB GPU open: %s stage=%u type=%x abi=%d name=%s ready=%d gate=%d\n",
         what,stage,(unsigned)type,(int)abi,native_adreno_client_name,
@@ -168,8 +184,17 @@ extern "C" IOReturn cheeseburger_gpu_open_client(IOService *provider,task_t owni
         // makes a late close of an older client harmless to a newer one.
         if(!gGateLock){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNotReady;}
         IOLockLock(gGateLock);
-        bool acquired=gGate.acquire(generation);
+        bool retained=gRetainedCount!=0;
+        bool acquired=retained?false:gGate.acquire(generation);
         IOLockUnlock(gGateLock);
+        if(retained){
+            // An earlier teardown kept a leaf entry alive; a new client could
+            // map the same IOVA and replace a translation still in use.
+            open_trail("refuse",8,type,true);
+            native_adreno_open_stage=8;
+            native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
+            return kIOReturnBusy;
+        }
         if(!acquired){
             open_trail("refuse",2,type,true);
             native_adreno_open_stage=2;
@@ -259,7 +284,9 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
     auto unmap=[&](){ return cheeseburger_gpu_smmu_unmap(bo.iova,unsigned(bo.bytes/4096)); };
     if(!CheeseburgerGpu::releaseMappedBuffer(bo.mapped,idle,unmap)){
         // The pages may still be reachable from the GPU, or the SMMU could not
-        // be updated: keep the object and its mapping.
+        // be updated: keep the object and its mapping, and retire the IOVA for
+        // the rest of the boot so no later client can overwrite its leaf PTE.
+        if(bo.mapped)retainIova(bo.iova,bo.bytes);
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
         return false;
     }
@@ -397,7 +424,10 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
     if(!pa||span<bo->bytes)return kIOReturnNoMemory;
     int rc=cheeseburger_gpu_smmu_map(m.iova,pa,unsigned(bo->bytes/4096));
     if(rc){
-        (void)cheeseburger_gpu_smmu_unmap(m.iova,unsigned(bo->bytes/4096));
+        // A failed map should leave no entry, but if the rollback cannot sync
+        // the TLB the IOVA is retired rather than offered to another map.
+        if(cheeseburger_gpu_smmu_unmap(m.iova,unsigned(bo->bytes/4096)))
+            retainIova(m.iova,bo->bytes);
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
         return kIOReturnNoMemory;
     }

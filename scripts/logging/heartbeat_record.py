@@ -11,7 +11,8 @@ import re
 MAGIC = b'CBHB0001'
 _LINE = re.compile(
     rb'^CBHB0001 boot=([0-9a-f]{16}) seq=(\d+) sec=(\d+) tag=([a-z0-9]+) state=(\d+) rounds=(\d+)'
-    rb'(?: m=(\d+) l=([0-9a-f]+) o=(\d+) s=(-?\d+) a=(\d+))?$')
+    rb'(?: m=(\d+) l=([0-9a-f]+) o=(\d+) s=(-?\d+) a=(\d+))?'
+    rb'(?: f=(-?\d+)/(\d+)/([0-9a-f]+)/([0-9a-f]+)/(\d+)/([0-9a-f]+)/([0-9a-f]+)/(\d+))?$')
 
 
 def parse(block):
@@ -37,6 +38,12 @@ def parse(block):
     if m.group(7) is not None:
         result.update(markers=int(m.group(7)), last=int(m.group(8), 16), opens=int(m.group(9)),
                       open_stage=int(m.group(10)), abi_opens=int(m.group(11)))
+    if m.lastindex and m.lastindex >= 19 and m.group(12) is not None:
+        result.update(submit_rc=int(m.group(12)), submit_stage=int(m.group(13)),
+                      submit_irq=int(m.group(14), 16), submit_cpirq=int(m.group(15), 16),
+                      submit_seq=int(m.group(16)),
+                      submit_preirq=int(m.group(17), 16), submit_precpirq=int(m.group(18), 16),
+                      submit_fenced=int(m.group(19)))
     return result
 
 

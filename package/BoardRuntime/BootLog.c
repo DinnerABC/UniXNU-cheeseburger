@@ -53,6 +53,16 @@ extern volatile uint64_t native_adreno_client_uid __attribute__((weak_import));
 extern volatile uint64_t native_gpu_plugin_reads[3] __attribute__((weak_import));
 /* Latest process name that reached the GPU user client's open. */
 extern char native_adreno_client_name[17] __attribute__((weak_import));
+/* Internal result of the last failed user submission (see CheeseburgerGpuCp). */
+extern volatile int32_t native_adreno_submit_rc __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_stage __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_irq __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_cpirq __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_seq __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_post __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_preirq __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_precpirq __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_fenced __attribute__((weak_import));
 /* Last refused open stage (1 not ready, 2 busy, 3 memory, 4 init, 5 attach, 6 start). */
 extern volatile int native_adreno_open_stage __attribute__((weak_import));
 extern volatile uint64_t native_adreno_abi_opens __attribute__((weak_import));
@@ -212,7 +222,7 @@ extern volatile uint64_t cb_touch_extra[80] __attribute__((weak_import));
 extern volatile uint64_t cb_usb[128] __attribute__((weak_import));
 extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
 extern volatile uint64_t cb_gpu[80] __attribute__((weak_import));
-extern volatile uint64_t cb_reset[8] __attribute__((weak_import));
+extern volatile uint64_t cb_reset[12] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[24] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
 extern volatile uint64_t cb_cp[128] __attribute__((weak_import));
@@ -233,10 +243,31 @@ static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq, unsign
   if (!buf || !boot_log_blocks || !cb_boot_id || !boot_log_ticks_start || boot_log_state != 2) return;
   const uint64_t now = boot_log_freq ? (log_ticks() - boot_log_ticks_start) / boot_log_freq : 0;
   memset(buf, 0, LogBlock);
-  snprintf((char *)buf, LogBlock,
-           "CBHB0001 boot=%016llx seq=%llu sec=%llu tag=%s state=%u rounds=%u\n",
+  int line = snprintf((char *)buf, LogBlock,
+           "CBHB0001 boot=%016llx seq=%llu sec=%llu tag=%s state=%u rounds=%u",
            (unsigned long long)cb_boot_id, (unsigned long long)seq, (unsigned long long)now,
            tag, (unsigned)boot_log_state, (unsigned)boot_log_rounds);
+  // The tick also carries the GPU user-client state so it survives a snapshot
+  // stop: markers/last marker, opens, the last refused open stage and ABI opens.
+  if (line > 0 && line < LogBlock && tag && !strcmp(tag, "tick")) {
+    snprintf((char *)buf + line, LogBlock - (size_t)line,
+             " m=%llu l=%llx o=%llu s=%d a=%llu f=%d/%u/%x/%x/%u/%x/%x/%u",
+             &native_adreno_service_stats[0] ? native_adreno_service_stats[16] : 0,
+             &native_adreno_service_stats[0] ? native_adreno_service_stats[17] : 0,
+             &native_adreno_service_stats[0] ? native_adreno_service_stats[0] : 0,
+             &native_adreno_open_stage ? native_adreno_open_stage : -1,
+             &native_adreno_abi_opens ? native_adreno_abi_opens : 0,
+             &native_adreno_submit_rc ? (int)native_adreno_submit_rc : -1,
+             &native_adreno_submit_stage ? native_adreno_submit_stage : 0,
+             &native_adreno_submit_irq ? native_adreno_submit_irq : 0,
+             &native_adreno_submit_cpirq ? native_adreno_submit_cpirq : 0,
+             &native_adreno_submit_seq ? native_adreno_submit_seq : 0,
+             &native_adreno_submit_preirq ? native_adreno_submit_preirq : 0,
+             &native_adreno_submit_precpirq ? native_adreno_submit_precpirq : 0,
+             &native_adreno_submit_fenced ? native_adreno_submit_fenced : 0);
+    size_t used = strnlen((char *)buf, LogBlock - 1);
+    if (used + 1 < LogBlock) { ((char *)buf)[used] = '\n'; ((char *)buf)[used + 1] = 0; }
+  }
   // Use every block after the slot area as a small heartbeat ring so a fault
   // boot still keeps the ticks leading up to the stop, not only the last one.
   uint64_t lba;
@@ -544,6 +575,19 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      native_gpu_plugin_reads[0],native_gpu_plugin_reads[1],native_gpu_plugin_reads[2],cb_boot_id);
    at=put(out,at,cap,plug,sizeof plug);
   }
+  if (&native_adreno_submit_rc) {
+   /* The first real submit failure: internal rc/stage and the first captured
+    * error IRQs, so the generic user-space IOReturn is not the only record. */
+   char sub[160];
+   snprintf(sub,sizeof sub,"GSUB rc=%d stage=%u irq=%x cpirq=%x pre=%x/%x fenced=%u seq=%u post=%u bid=%llx",
+     (int)native_adreno_submit_rc,native_adreno_submit_stage,native_adreno_submit_irq,
+     native_adreno_submit_cpirq,
+     &native_adreno_submit_preirq?native_adreno_submit_preirq:0,
+     &native_adreno_submit_precpirq?native_adreno_submit_precpirq:0,
+     &native_adreno_submit_fenced?native_adreno_submit_fenced:0,
+     native_adreno_submit_seq,native_adreno_submit_post,cb_boot_id);
+   at=put(out,at,cap,sub,sizeof sub);
+  }
   if (&native_adreno_client_name[0]) {
    char opener[96];
    snprintf(opener,sizeof opener,"GOPEN name=%s uid=%llx ostg=%d abi=%llu bid=%llx",
@@ -582,9 +626,10 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     cb_mapdiag[0],cb_mapdiag[1],cb_mapdiag[2],cb_mapdiag[3],cb_mapret[0],cb_mapret[1],cb_boot_id);at=put(out,at,cap,md,sizeof md);
  }
  if (&cb_reset[0] && cb_reset[0]) {
-  char rst[160];
-  snprintf(rst,sizeof rst,"AUTORESET requested=%llu elapsed=%llu issued=%llu rc=%llx starterr=%llx",
-    cb_reset[1],cb_reset[2],cb_reset[3],cb_reset[4],cb_reset[5]);at=put(out,at,cap,rst,sizeof rst);
+  char rst[200];
+  snprintf(rst,sizeof rst,"AUTORESET requested=%llu elapsed=%llu main=%llu mrc=%llx mstart=%llu gstart=%llu gfire=%llu grc=%llx",
+    cb_reset[1],cb_reset[2],cb_reset[3],cb_reset[4],cb_reset[5],cb_reset[6],cb_reset[7],cb_reset[8]);
+  at=put(out,at,cap,rst,sizeof rst);
  }
  if (&cb_rails[0] && cb_rails[0]) {
   char rails[200];

@@ -14,11 +14,16 @@
 #include <stdarg.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "NativeAdrenoABI.h"
 
 namespace {
 constexpr uint32_t kOpenType = 0x4147;
+// The discovery is per-process. Only this host runs the hardware test; every
+// other host (backboardd included) returns nil at once and keeps the original
+// software renderer, instead of competing for the single ABI client.
+constexpr const char *kTargetHost = "mediaserverd";
 
 void line(const char *fmt, ...) {
     char text[160];
@@ -127,13 +132,20 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
     static bool attempted = false;
     if (attempted) return nil;
     attempted = true;
+    const char *host = getprogname();
+    if (!host || strcmp(host, kTargetHost)) {
+        line("P21PLUGIN stage=skip host=%s pid=%d", host ? host : "?", (int)getpid());
+        note("skip host=%s pid=%d", host ? host : "?", (int)getpid());
+        return nil;
+    }
     line("P21PLUGIN stage=enter port=%u pid=%d", port, (int)getpid());
     note("enter pid=%d port=%u", (int)getpid(), port);
     marker(port, 1);
     Ctx c;
-    // The accelerator may be discovered before the CP/fence path is ready, so
-    // retry the open instead of concluding that the service is absent.
-    for (unsigned i = 0; i < 240 && !c.conn; ++i) {
+    // Bounded readiness wait only: the service may come up just after the
+    // accelerator. Five seconds, then this host keeps the software renderer
+    // rather than blocking device discovery.
+    for (unsigned i = 0; i < 20 && !c.conn; ++i) {
         kern_return_t kr = IOServiceOpen((io_service_t)port, mach_task_self(), kOpenType, &c.conn);
         if (c.conn) {
             line("P21PLUGIN stage=open rc=%d conn=%u try=%u", (int)kr, c.conn, i);
@@ -145,7 +157,7 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
         // Another instance owns the single ABI client: do not spin.
         if (kr == kIOReturnBusy) { note("busy"); marker(port, 3); return nil; }
         marker(port, 3);
-        usleep(500000);
+        usleep(250000);
     }
     if (!c.conn) {
         line("P21PLUGIN stage=noopen e%x", (unsigned)c.error);

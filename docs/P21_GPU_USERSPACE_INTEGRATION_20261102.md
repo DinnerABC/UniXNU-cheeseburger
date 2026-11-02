@@ -84,6 +84,13 @@ launchd.log 在 Data 卷 `/private/var/log/com.apple.xpc.launchd/launchd.log`。
 - 金属发现要求 principal class 是 `_MTLDevice` 子类（私有基类），否则属性被读、accelerator 被 open/close，但 `initWithAcceleratorPort:` 从不调用。
 - 单客户端门改为只约束 0x4147 ABI 客户端：其它类型的连接作为 observer 创建，但 `externalMethod` 与 `clientMemoryForType` 一律拒绝，环/SMMU/BO 仍只属于一个 ABI 客户端。
 
+## 5.1 失败路径硬化（2026-11-02，仅构建）
+
+- 用户提交失败后不再重试或读取 CP/VBIF/Interrupt/Status/MEControl：`kickTo()` 只保留第一次捕获的 irq/cpirq 和故障前快照，未采样的字段是 `0xffffffff`；`fail()` 先建立失败状态，再发 posted halt，不写日志。用户 `submit()` 在 doorbell 前采样锁存位：RBBM 陈旧位按 sagit 方式清除（`InterruptClear=OwnedIRQs`），锁存的 CP fault 直接拒绝（`-7`），失败后只读 CPU fence 页记录 `fenced`。
+- 每次 boot 只允许一次用户提交；失败后新 ABI open 返回 Busy，`engine_idle=-1` 保留 BO；新增 retained-IOVA 表，teardown/unmap 未能同步的 IOVA 在本 boot 内拒绝任何新连接，避免覆盖旧叶 PTE。
+- 插件只在 `mediaserverd` 内执行 P1，其它发现宿主立即返回 nil；open 重试上限 5 s。`CheeseburgerAutoReset` 主线程到点不写日志/UFS 直发 PSCI，guard 在 +10 s 只补发一次。
+- 部署约束：本轮候选沿用当前 Data seed（`5446b3a2…`）与 trust（`e92415cc…`），不触发 reseed；新插件（`c6936b5a…`）只构建未写入 seed，部署需用户明确授权一次 seed 更新。
+
 ## 6. 本轮不建议继续的方向
 
 - 不再尝试新的 launchd plist/路径/缓存覆盖；同样会被导入规则或 launch constraint 拒绝。

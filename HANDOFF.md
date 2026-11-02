@@ -1,3 +1,21 @@
+## 2026-11-02 GPU 失败路径硬化候选（仅构建，设备未启动）
+
+**设备与证据**：最近一次已回收日志是 boot `0x405db723`（`out/p21/persistent-logs/20261102T025610Z/`）：`CB GPU open: ok … type=4147 abi=1 name=mediaserverd`、`GPSVC sub=1 fence=0 err=5`、`CB GPU engine: submit rc=-3 stage=3 seq=2 rptr=25 wptr=25`；该内核在失败后还读取了 rptr/wptr，且没有记录 irq/cpirq，因此**不能判断错误位或是否为陈旧 IRQ**。之后启动的镜像 `4411fd8b…` 黑屏，其 boot 日志尚未回收，本轮没有向设备发送任何命令，也没有把 `0x405db723` 当作这次黑屏的证据。设备当前仍需用户手动确认/返回 Recovery。
+
+**本轮源码修复（已构建，未启动）**：
+- `CheeseburgerGpuStart.h`：`kickTo()` 不再重试 doorbell，错误 IRQ/超时后不再读 CP/VBIF/Interrupt/Status/ME（未采样字段为 `0xffffffff`，`postRead=false`）；`fail()` 先建立 abandoned/rc/stage，再只发 posted halt，不写日志/不等待 UFS。用户 `submit()` 在 doorbell 前采样 `InterruptStatus`/`CPInterruptStatus`：RBBM 陈旧位按 sagit 方式用 `InterruptClear=OwnedIRQs` 清除（记录在 `pre=`），已锁存的 CP fault 拒绝提交（`-7`），不可访问总线拒绝（`-6`）。失败后仅读 CPU fence 页记录 `fenced`，不再碰 MMIO。
+- `CheeseburgerGpuCp.cpp`：每次 boot 只允许一次用户提交；失败全局记录 rc/stage/irq/cpirq/pre/fenced/seq/post；失败后 `engine_idle()=-1`、新 ABI open 返回 Busy。
+- `CheeseburgerGpuService.cpp`：新增 retained-IOVA 表；任何无法拆除/同步的 SMMU 叶表（teardown 或 map 回滚失败）都会保留 IOVA，并在 gate 释放后仍拒绝新 ABI 连接（`ostg=8`），防止后续连接覆盖旧叶 PTE。
+- `native_adreno_metal_plugin.mm`：硬件测试只在 `mediaserverd` 内运行（`getprogname()`），其它发现宿主立即返回 nil；open 重试从 240×0.5 s 缩短到 20×0.25 s（5 s）。**此插件已编译进 `userland/`，但未写入本轮 Data seed**（见下）。
+- `CheeseburgerAutoReset.cpp` + `CheeseburgerAutoResetPolicy.h`：主线程到点直接 PSCI，不依赖 IOLog/UFS；guard 在 deadline+10 s 只补发一次；记录 main/guard 创建、触发与 SMC 返回值；宿主模型覆盖日志停、线程创建失败、normal/guard 路径。
+
+**宿主测试**：`out/p21/gpu-cp/host-tests/20261102T080745Z/` 七组模型全部 PASS（`gpu_start_model` 新增陈旧 IRQ 清除、锁存 CP fault 拒绝、ErrorLate fence 证据、MMIO 不可达、日志停、单次 doorbell）；`tests/test_heartbeat_codec.py` 11/11 PASS（tick 的 `f=` 增加 `pre/precp/fenced`）。
+
+**本轮候选**（`out/p21/atos-dev-job/`，gate `20261102T082022Z` = `PREBOOT_GATE_P21_PASS`）：
+- 内核 `0aabfb26f17de0b7bbf0e70af16257a687dc71f06f4a089f7bc642193dfc387f`（编译 `f87f2af0…`、native `03e133c1…`、prelink `5a5fd33a…`）；固件 `ba43c2e4…`；payload expanded `44efa98c…`；镜像 `uefi/boot-p21-up1.img` `9df13c4b…`；boot args 644 B；FVMAIN/AARCH64 pin 扫描通过。
+- **Data seed 未更换**：沿用当前实机镜像 `4411fd8b…` 中的 seed `5446b3a2…`（base `46d03a5a…`）和 trust `e92415cc…`，避免未授权 reseed；其 owner 模块仍是 `6b740b71…`（旧插件）。新插件 cdhash `c6936b5a…` 与 trust `0726b249…` 已构建但未部署，记录在 `out/p21/atos-dev-job/deployed-userland.json`。因此本轮不会有插件单宿主/短重试的行为变化。
+- 设备下次受控启动后先只读回收当前 boot 日志，核对 boot id、心跳、AUTORESET 与实际返回位置，再执行一次 `fastboot boot`（misc BCB 规则不变）。重点看心跳 `f=` 的 `pre/irq/cpirq/fenced`：`-3` + 新 CP 位=真实 CP fault；`-7`=doorbell 前已锁存 CP fault；`-4`=超时；`fenced=1`=错误位锁存但 ring 实际完成。
+
 ## 2026-11-02 GPU 用户态迁移（官方插件路线，进行中）
 
 **最新状态（21:40Z）**：为了在快照提前停止时仍能看到插件 open 的拒绝阶段，本轮在 open 路径加了限流 `IOLog`，并让 CBHB tick 心跳附带 `m/l/o/s/a`（marker/最后 marker/open/拒绝阶段/ABI open）。候选镜像 `ae1bb6db…`、内核 `73bbf95f…`、固件 `e1bf2f9a…`、payload `b6482609…` 于 21:27:48Z 启动后**没有自动回到 Recovery**（超过 12 分钟 adb/fastboot 均不可见），与此前每轮 400 s 自动返回不同。不要重复启动；需要用户检查屏幕并手动回到 Recovery 后先回收该 boot 的日志，再决定是否回退本轮诊断改动。可疑点：open 路径的 `IOLog` 与 auto-reset 线程的 `IOLog` 共享 console/msgbuf 锁（项目已知该锁可能阻止 400 s 复位）；下一版应去掉 open 路径 IOLog，只保留心跳字段（心跳不经 msgbuf）。
