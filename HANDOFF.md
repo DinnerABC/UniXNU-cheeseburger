@@ -1,3 +1,9 @@
+## 2026-11-02：插件生命周期修复实机回收 `0x5856c881`
+
+- 用户报告设备已重启进入 Recovery；只读回收 `out/p21/persistent-logs/20261102T143713Z/`，新 boot `0x5856c881`、64 rounds、0 写错误。当前详细交接与下一步见 `docs/P21_GPU_HANDOFF_20261102.md`。
+- 相比前一轮 backboardd 14 次 fatal exit，本轮为 0；`mediaserverd` 成功打开 ABI，2 BO/map，用户 GPU 提交 `rc=-4` / `fenced=0`。`frames=0`、`SWAP check=0`；不能宣称画面或 GPU 工作。`DATA state=3 writes=136728 err=0` 只说明最后快照仍在初始化/持久化，未证明完成。返回 Recovery 的触发方式未证实，触摸未实测。
+- 设备现处 Recovery，本轮禁止自动监控；下一步先分析 backboardd 存活后仍无 swap/vsync 和 GPU IOVA/fence，保留本轮 seed，避免未经授权再次 reseed。
+
 ## 2026-11-02：backboardd 首次崩溃符号化及插件生命周期候选
 
 - boot `0x4dcc2685` 的 `backboardd p56` 首次 sig11，用本机只读挂载的 21H461 SystemOS dyld cache 和对应 symbols UUID `a1a859a2479c31998a34f4afbd808cf5`，按日志 cache slide `0x1ce44000` 解析：PC `0x1ac39bf50` 是 `libdispatch _dispatch_release$VARIANT$mp+8`，LR `0x1a499777c` 是 `Metal -[_MTLDevice dealloc]+0x44`，下层经 `_MTLRegisterDevices` / `MTLDeviceArrayInitialize` / `CA::WindowServer::AccelServer::renderer`。`0x1016ba4c4` 不在共享缓存，其镜像身份未确认。详见 `out/p21/gpu-plugin-lifecycle/symbolication.txt`。`FAR=0` 和栈表明 Metal 设备发现释放路径空指针；并不单独证明插件源码是唯一原因。
