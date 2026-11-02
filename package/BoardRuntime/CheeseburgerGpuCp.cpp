@@ -39,6 +39,8 @@ int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_smmu_invalidate(void);
+int cheeseburger_gpu_smmu_micro(void);
+int cheeseburger_gpu_smmu_resume_micro(void);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
@@ -476,6 +478,24 @@ volatile uint32_t native_adreno_submit_fenced=0;
 // probe was not present; a C0DE.... value with rc=-4 means the ring and
 // doorbell ran and the stall is the user IB translation/fetch.
 volatile uint32_t native_adreno_submit_prefence=0, native_adreno_submit_prefence_valid=0;
+// Pre-kick core power and CP liveness. Android's a5xx_pm_resume re-enables the
+// RBCCU/SP domains before every CP use; with them collapsed every RBBM read
+// still succeeds but the CP cannot execute. Sample before a user doorbell so a
+// stopped engine is distinguishable from a ring that was never consumed.
+volatile uint32_t native_adreno_pwr[10];
+extern "C" int cheeseburger_gpu_pre_kick(void){
+ if(!gMmio||!gMmio->v)return -1;
+ W gp;gp.v=gMmio->v;
+ uint64_t out[6]={0};powerCore(gp,out);
+ native_adreno_pwr[0]=uint32_t(out[0]);native_adreno_pwr[1]=uint32_t(out[1]);
+ native_adreno_pwr[2]=uint32_t(out[2]);native_adreno_pwr[3]=uint32_t(out[3]);
+ native_adreno_pwr[4]=uint32_t(out[4]);native_adreno_pwr[5]=uint32_t(out[5]);
+ native_adreno_pwr[6]=gMmio->read(CheeseburgerGpu::MEControl)|(gMmio->read(CheeseburgerGpu::VBIFHalted)<<16);
+ native_adreno_pwr[7]=gMmio->read(CheeseburgerGpu::Status);
+ native_adreno_pwr[8]=uint32_t(cheeseburger_gpu_smmu_micro());
+ native_adreno_pwr[9]=uint32_t(cheeseburger_gpu_smmu_resume_micro());
+ return 0;
+}
 extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1:0;}
 extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t **va,unsigned *words){
  if(!gScratchVA||!gScratchGva||!gScratchWords)return -1;
@@ -494,6 +514,14 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  CheeseburgerGpu::Startup<Mmio>::Ib ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
  IOLockLock(gSubmitLock);
+ // Re-assert the core power domains and sample the engine before the doorbell.
+ // A collapsed domain or a halted CP explains a ring the CP never reads; the
+ // reads happen while the bus is still healthy (no failed kick yet).
+ int pwr=cheeseburger_gpu_pre_kick();
+ IOLog("CB GPU engine: pre pwr=%d rb=%x/%x sp=%x/%x>%x/%x me/vbif=%x st=%x micro=%x/%d\n",pwr,
+  native_adreno_pwr[0],native_adreno_pwr[1],native_adreno_pwr[2],native_adreno_pwr[3],
+  native_adreno_pwr[4],native_adreno_pwr[5],native_adreno_pwr[6],native_adreno_pwr[7],
+  native_adreno_pwr[8],(int)native_adreno_pwr[9]);
  uint32_t s=gFenceSeq+1;if(!s)s=1;
  CheeseburgerGpu::Record rec;
  // The probe's own streams fetch from 0x2000000 without any CP_SMMU_TABLE_UPDATE,

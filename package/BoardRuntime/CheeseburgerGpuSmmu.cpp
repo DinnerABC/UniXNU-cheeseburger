@@ -294,6 +294,30 @@ extern "C" int cheeseburger_gpu_smmu_invalidate(void){
  W *sp=smmuMap();if(!sp)return -1;
  return tlbSync(*sp,0x8000,true)?0:-2;
 }
+// Read-only micro-MMU control (SMMU+0x6000): bit2 LOCAL_HALT_REQ, bit3 IDLE.
+// A runtime TLBIALL that left the translation pipeline halted would stop every
+// CP fetch while all RBBM reads still succeed; the submit path samples this
+// before its doorbell.
+extern "C" int cheeseburger_gpu_smmu_micro(void){
+ W *sp=smmuMap();if(!sp)return -1;
+ return int(rd(*sp,0x6000)&0xffffu);
+}
+// Re-run the vendor micro-MMU resume before a runtime doorbell. A translation
+// pipeline left with LOCAL_HALT_REQ stalls every CP fetch without a context
+// fault; intact (request clear) makes this a no-op.
+extern "C" int cheeseburger_gpu_smmu_resume_micro(void){
+ W *sp=smmuMap();if(!sp)return -1;
+ struct Io {
+  W &s;
+  uint32_t read(unsigned off){return rd(s,off);}
+  void write(unsigned off,uint32_t v){wr(s,off,v);}
+  void delay(unsigned us){IODelay(us);}
+  void mark(const char *){}
+ } io{*sp};
+ const auto micro=CheeseburgerGpu::resumeMicroMmu(io,3000);
+ cb_smmu[16]=micro.before;cb_smmu[17]=micro.after;cb_smmu[19]=uint64_t(int64_t(micro.result));
+ return int(micro.result);
+}
 extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
  if(!pte||(iova&4095))return -1;
  KernelTables tables;

@@ -65,6 +65,7 @@ extern volatile uint32_t native_adreno_submit_precpirq __attribute__((weak_impor
 extern volatile uint32_t native_adreno_submit_fenced __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_prefence __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_prefence_valid __attribute__((weak_import));
+extern volatile uint32_t native_adreno_pwr[10] __attribute__((weak_import));
 /* Last refused open stage (1 not ready, 2 busy, 3 memory, 4 init, 5 attach, 6 start). */
 extern volatile int native_adreno_open_stage __attribute__((weak_import));
 extern volatile uint64_t native_adreno_abi_opens __attribute__((weak_import));
@@ -580,6 +581,15 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      &native_adreno_submit_prefence_valid?native_adreno_submit_prefence_valid:0,
      cb_boot_id);
    at=put(out,at,cap,sub,sizeof sub);
+  }
+  if (&native_adreno_pwr[0]) {
+   /* Pre-kick core power and CP liveness, sampled while the bus was healthy. */
+   char pw[160];
+   snprintf(pw,sizeof pw,"GPWR pre=%x/%x sp=%x/%x post=%x/%x me/vbif=%x st=%x micro=%x/%d bid=%llx",
+     native_adreno_pwr[0],native_adreno_pwr[1],native_adreno_pwr[2],native_adreno_pwr[3],
+     native_adreno_pwr[4],native_adreno_pwr[5],native_adreno_pwr[6],native_adreno_pwr[7],
+     native_adreno_pwr[8],(int)native_adreno_pwr[9],cb_boot_id);
+   at=put(out,at,cap,pw,sizeof pw);
   }
   if (&native_adreno_client_name[0]) {
    char opener[96];
