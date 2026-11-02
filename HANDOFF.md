@@ -1,3 +1,10 @@
+## 2026-11-02：backboardd 首次崩溃符号化及插件生命周期候选
+
+- boot `0x4dcc2685` 的 `backboardd p56` 首次 sig11，用本机只读挂载的 21H461 SystemOS dyld cache 和对应 symbols UUID `a1a859a2479c31998a34f4afbd808cf5`，按日志 cache slide `0x1ce44000` 解析：PC `0x1ac39bf50` 是 `libdispatch _dispatch_release$VARIANT$mp+8`，LR `0x1a499777c` 是 `Metal -[_MTLDevice dealloc]+0x44`，下层经 `_MTLRegisterDevices` / `MTLDeviceArrayInitialize` / `CA::WindowServer::AccelServer::renderer`。`0x1016ba4c4` 不在共享缓存，其镜像身份未确认。详见 `out/p21/gpu-plugin-lifecycle/symbolication.txt`。`FAR=0` 和栈表明 Metal 设备发现释放路径空指针；并不单独证明插件源码是唯一原因。
+- 已部署旧插件 CDHash `6b740b7173e8d6b73a39f3c3c13e4acdfb3bac88` 在只读挂载的 `/Volumes/OwnerDataP17 3/...` 可复核；当前源码先前已调整为 mediaserverd 单宿主但**没有部署**。旧及先前新插件在 `initWithAcceleratorPort:` 内直接返回 nil，未调用 `[super init]`；官方 `.work/p21-official-framework/drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm` 先调用 `self = [super init]`，测试工作放独立线程、保留 service port。高度吻合释放栈，但需实机验证。
+- 源码提交 `fbd4e88`：按官方先初始化父类；仅 mediaserverd 上以单次原子门执行探针；保留 IOService 端口引用，异步运行 GPU 用户态探针，避免 Metal 发现线程被 GPU 超时阻塞。编译签名通过；plugin CDHash `6ff9b3b19210bc4896900adbe3e823358abaaf0d`；trust bundle SHA `0a7d5a328be859eb3d66349318fe93bd6530c2670250a44fb40211fb6ff8e1a4`。测试线程仍可能超时，GPU 用户 IB/fence 未修复、不可称 Metal 加速。
+- 本机仅从已用 seed `5446b3a2...` 生成插件替换副本 `out/p21/gpu-plugin-lifecycle/dev-seed.dbr`，SHA `1e8b97fbc0a2020c5e359e4a1acc93f9e435a45dcf79bf5f415d7fbd3db81993`；更改 seed identity 会使手机持久 Data reseed，覆盖既有 Data，必须获得用户明确授权再启动此候选。原始 seed、手机 userdata 和其它分区未修改。候选保留上轮 CPU fence 内核 `98ba2408...`，不重编 XNU；需重建 payload、UEFI 并校验 trust、seed、固件 pins 与镜像。状态以候选 gate 和本轮实际启动记录为准。
+
 ## 2026-11-02：CPU fence 候选实机结果 `0x4dcc2685`
 
 - 用户报告没有进入系统，设备自动返回 Recovery。只读回收 `out/p21/persistent-logs/20261102T135923Z/`，新 boot `0x4dcc2685`、66 rounds、write_errors=0，窗口 SHA-256 `844798851488ee5423a63e2df926983f16bc4687c0bfbde836bfead3a745497f`；对应本轮唯一临时启动镜像 `2d2ae77d8b6eee1a034f34af3c843803e1ad3c24e5c55aeefde7b3b70ceb1cbc`。回收前按用户要求已停止后台监控，本轮 Recovery 返回是用户报告，日志中复位线程没有 fire 后记录，不据此判断具体线程。
