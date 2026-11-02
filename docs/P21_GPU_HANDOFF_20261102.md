@@ -1,5 +1,22 @@
 # P21 / OnePlus 5 GPU 交接（2026-11-02）
 
+## 接手后先做：阅读与执行顺序
+
+**不要只读本文或依赖上下文摘要。每次接手、压缩上下文后都重新阅读以下资料，并以本轮源码和证据核实：**
+
+1. 仓库 `AGENTS.md` → `HANDOFF.md` 顶部最新记录 → 本文；检查 `git status --short --branch`、最近提交和实际设备状态。历史章节只是历史，以最新记录为准。
+2. `docs/P21_LOCAL_BUILD_GPU_HANDOFF_20261102.md`：本机增量构建、NAS 回写、固件 overlay、门禁及启动流程；再看 `docs/P21_BLACK_SCREEN_NEXT_STEPS.md`：零帧和线程栈的读取与证据边界。
+3. `docs/P21_GPU_USERSPACE_INTEGRATION_20261102.md`、`docs/P21_OFFICIAL_MIGRATION_DIFF_20261101.md`：当前插件、用户客户端和官方迁移差异；`docs/P21_OFFICIAL_WORKFLOW_AUDIT.md`、`docs/P21_OFFICIAL_ADAPTATION.md`：固定上游及整体启动链。
+4. `.work/p21-official-framework/AGENTS.md` 和 `.work/p21-official-framework/docs/porting/{gpu,display,uefi-firmware,migration}.md`；查看 `.work/p21-official-framework/drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm` 的初始化与异步测试，再对照本机 `package/Userland/native_adreno_metal_plugin.mm`。硬件细节再读 `docs/upstream/reference/sagit/QcomGPU/AdrenoStartup.h`、`AdrenoSubmit.h`。
+5. 实际读取本轮 `out/p21/persistent-logs/20261102T143713Z/retrieval.json`、`decoded/cheeseburger-P21-5856c881/latest.txt`、`msgbuf.txt`、`heartbeat.json`，与能出帧的 `out/p21/persistent-logs/20261101T172951Z/` 及崩溃前轮 `20261102T135923Z/` 比较；不要只依赖自动概览。
+
+**先恢复画面，再并行推进 GPU，不把二者混为一件事：**
+
+- 画面：本轮 backboardd 存活但 `frames=0 / swap=0 / notify72=0 / vsync arm=0`。对比成功轮对应的显示客户端、服务和线程栈，确认实际等待点、插件 nil 返回后的发现路径和 Data `state=3` 的影响；找到有源码依据的差异后进行功能修复。`state=3` 的完成状态要用实际代码定义和下轮记录核实，不把日志时间当作剩余进度。
+- GPU：沿同 SoC 案例核对用户 IB 的构造、可见性、SMMU 映射、cache 和 fence；之前的 `TLB=0`、单 NOP 停顿、`irq=ffffffff` 都不能各自证明硬件取指原因。提交必须保留原用户数据和失败资源保护；用最小可复核实验把“地址可达、执行、回写”分开。
+- 同一候选批量完成相互关联的修复和必要宿主验证，再进行一次受控启动；不要为了每条日志各编译一次。只有实际需要 GPU 执行才能区分的原因才加有界探针，不在共享系统中重复 kick；失败后不可读取故障 GPU/SMMU MMIO。
+- 测试结果分别记录 Data、backboardd、显示 swap/frames、用户态 BO/submit/fence/回读、触摸和自动恢复；用户曾明确要求停止 Recovery 自动监控，继续遵守。每次更新 `HANDOFF.md` 并提交本轮源码、文档，保留别人的未跟踪文件。
+
 ## 当前状态与边界
 
 项目：`/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger`；设备 OnePlus 5 `cheeseburger` / MSM8998 / Adreno 540，序列号 `3b25cc7c`；当前主线为 iPadOS 17.7.11（21H461）。接手先读仓库 `AGENTS.md`、`HANDOFF.md`、`docs/P21_LOCAL_BUILD_GPU_HANDOFF_20261102.md` 和本文，再查 Git、进程、设备及最新日志。`main` 当前领先远端，存在其他 agent 遗留的三个未跟踪 launchd cache 文件，不要清理或提交。不要推送、重置工作区、覆盖旧候选。
