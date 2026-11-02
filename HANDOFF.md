@@ -1,3 +1,11 @@
+## 2026-11-02 受控启动 `0x4f7fca90`：一次性切换后仍是 CP_OPCODE_ERROR，转 IB 取指/NOP 探针
+
+- 镜像 `54d36703…`、内核 `25ed4f9f…`（`secureLeft`，用户流为 `IB → WAIT → FLUSH`）于 10:56:49Z 启动，11:03:28Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T110333Z/`（窗口 `87e402de…`）。
+- 心跳仍为 `f=-3/3/0/1/2/0/0/0`：`rc=-3, cpirq=1`（CP_OPCODE_ERROR），说明重复 secure-mode 切换不是（唯一）原因。msgbuf：`open ok`（149.53 s）、用户 BO 映射 `0x4000000/0x4001000 tlb=0`、`submit rc=-3 rptr=24 wptr=ffffffff irq=0 cpirq=1 fenced=0`；`GPSVC sub=1 fence=0 wait=0`。
+- 剩余差异只有用户 IB 的内容与取指：ring 里的 WAIT/FLUSH 已被探测 fence 证明；IB 的 `CP_MEM_WRITE` 编码与 sagit/官方 PM4 一致。IB 位于运行期新增的 IOVA（0x4000000），而取指正常的 GPMU IB 位于 CP 启动前映射的 IOVA（0x2012000）。
+- 本轮诊断（不改 seed/插件）：内核在用户提交时把 IB 首字临时替换为单个 `CP_NOP` 并把环内 IB 长度改为 1。若 fence 完成 → CP 能取到该 IOVA，问题在 MEM_WRITE；若仍 `cpirq=1` → 问题在运行期 IOVA 的 CP 取指/页表。候选已构建、未启动：镜像 `51841998…`、内核 `5337eb8e…`、固件 `569f6d4a…`、payload `38c60659…`，gate `20261102T111525Z` PASS。
+- 另核对到：官方 A740 ring 与 sagit 都将 `0x26` 定义为 `CP_WAIT_FOR_IDLE`，`CP_WAIT_MEM_WRITES` 是 `0x12`；sagit barrier 为 `0x12 + 0x26`。本机 `submit()` 目前只用 `0x26` 且注释错误。该差异不解释 opcode error（探测 fence 已证明 0x26 合法），但下一版需要按 sagit 修正屏障顺序，确保 MEM_WRITE 在 fence 前完成。设备当前 Recovery，misc BCB 已消费。
+
 ## 2026-11-02 受控启动 `0x4989a7fb`：拿到 `CP_OPCODE_ERROR`，修复重复 secure-mode 切换
 
 - 镜像 `fd0f8ff4…`、内核 `ff662e87…`（IB-first、无用户 ATOS、保留新故障记录）于 10:11:29Z 启动；10:18:20Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T101828Z/`（窗口 `b6cbb203…`）。

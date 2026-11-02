@@ -24,6 +24,7 @@
 #include <string.h>
 #include "NativeAdrenoABI.h"
 #include "CheeseburgerGpuBoPolicy.h"
+#include "CheeseburgerGpuStart.h"
 
 extern "C" {
 volatile uint64_t native_adreno_service_stats[20];
@@ -475,13 +476,18 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
             return kIOReturnBadArgument;
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
-    // Do not run the hardware ATOS probe here. The only verified ATOS calls
-    // happen before the CP starts (CheeseburgerGpuCp maps the ring, then
-    // starts it); this path would halt and resume the micro-MMU against a live
-    // CP and then write the doorbell. Both hanging boots passed these probes
-    // (two rc=0 lines) and stalled inside engine_submit, while the earlier
-    // kernel without this gate returned rc=-3 in milliseconds. Keep the SMMU
-    // mapping checks in boMap and let the CP report its own fault.
+    // Diagnostic build: the fifth boot still reports CP_OPCODE_ERROR with the
+    // IB at a runtime-mapped IOVA. Replace the IB with one CP_NOP so a
+    // completed fence separates "the CP cannot fetch this IOVA" from
+    // "CP_MEM_WRITE is rejected". Remove this probe after the boot.
+    {
+        Bo *ib=find(s.buffers[0].handle);
+        if(ib&&ib->buf){
+            uint32_t *w=(uint32_t *)ib->buf->getBytesNoCopy();
+            if(w){w[0]=CheeseburgerGpu::packet7(0x10,0);dwords[0]=1;
+                  flush_dcache((vm_offset_t)w,4,FALSE);}
+        }
+    }
     uint32_t seq=0;
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;
