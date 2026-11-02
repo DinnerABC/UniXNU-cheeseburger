@@ -41,7 +41,6 @@ int cheeseburger_gpu_engine_idle(void);
 int cheeseburger_gpu_engine_failed(void);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
-int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 }
 
@@ -476,31 +475,13 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
             return kIOReturnBadArgument;
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
-    // The CP can only fetch the IB and its first write target if the hardware
-    // page walk succeeds. Check both before the kick; a failed walk must not
-    // leave the CP fetching an unmapped address.
-    {
-        uint64_t par=0; volatile uint64_t diag[8]={0,0,0,0,0,0,0,0};
-        Bo *ib=find(s.buffers[0].handle);
-        int ibr=cheeseburger_gpu_smmu_atos(vas[0],&par,diag);
-        uint64_t ibpa=0;IOByteCount span=0;
-        if(ib&&ib->buf)ibpa=ib->buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
-        static unsigned atos_logged;
-        if(atos_logged++<4)IOLog("CB GPU client atos ib=%llx pa=%llx rc=%d par=%llx\n",
-            (unsigned long long)vas[0],(unsigned long long)ibpa,ibr,(unsigned long long)par);
-        if(ibr){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNoMemory;}
-        if(ib&&ib->buf){
-            const uint32_t *ibw=(const uint32_t *)ib->buf->getBytesNoCopy();
-            if(ibw&&((ibw[0]>>16)&0x7f)==0x3d){
-                uint64_t tgt=uint64_t(ibw[1])|(uint64_t(ibw[2])<<32);
-                uint64_t tpar=0;
-                int tr=cheeseburger_gpu_smmu_atos(tgt,&tpar,diag);
-                if(atos_logged++<5)IOLog("CB GPU client atos tgt=%llx rc=%d par=%llx\n",
-                    (unsigned long long)tgt,tr,(unsigned long long)tpar);
-                if(tr){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNoMemory;}
-            }
-        }
-    }
+    // Do not run the hardware ATOS probe here. The only verified ATOS calls
+    // happen before the CP starts (CheeseburgerGpuCp maps the ring, then
+    // starts it); this path would halt and resume the micro-MMU against a live
+    // CP and then write the doorbell. Both hanging boots passed these probes
+    // (two rc=0 lines) and stalled inside engine_submit, while the earlier
+    // kernel without this gate returned rc=-3 in milliseconds. Keep the SMMU
+    // mapping checks in boMap and let the CP report its own fault.
     uint32_t seq=0;
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;

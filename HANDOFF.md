@@ -1,3 +1,11 @@
+## 2026-11-02 受控启动 `0x55637174`：提交卡在 engine_submit 内，定位到用户路径 ATOS
+
+- 镜像 `f61ffaac…`、内核 `ec646223…`（secure-mode 后插入 WAIT）于 09:09:38Z 启动；设备在 400 s 整（09:16:18Z）自行回到 Recovery。日志 `out/p21/persistent-logs/20261102T091635Z/`（窗口 `eba7a004…`）。
+- 与上一轮不同：日志写到 318 s、65 rounds、0 write errors，**UFS/心跳没有再停写**；`AUTORESET requested=400 … mstart=1 gstart=1`。说明 WAIT 改变了故障形态，但提交仍未返回。
+- 提交链：`CB GPU open: ok … name=mediaserverd`（153.28 s）→ 两条 `CB GPU client atos … rc=0` → 心跳 `tag=submit`（writer sec 78）→ 之后没有 `submitdone`；`GPSVC open=1 bo=2 map=2 calls=9 sub=0 sel=5`（最后方法 Submit），`GSUB rc=-1`、心跳 `f=-1`。即线程卡在 `engine_submit` 内，失败记录未生成。
+- 关键差异：探测路径的 ATOS 只在 CP 启动前使用（`CheeseburgerGpuCp.cpp:260`，早于 start）；用户提交是在**运行中的 CP** 上 halt/resume micro-MMU，随后立即写门铃。无 ATOS 的旧内核 `e5612490` 在 open 后 6 ms 返回 `rc=-3`；两个含 ATOS 的内核都通过 `rc=0` 探测后在 `engine_submit` 内卡住。
+- 本轮修改：删除用户路径的 ATOS 门禁（保留 `cheeseburger_gpu_smmu_atos` 供启动前探测），其它不变。新候选已构建、未启动：镜像 `381a0e1c…`、内核 `54485e9d…`、固件 `4713e6f7…`、payload `c71c804d…`，gate `20261102T092530Z` PASS；seed/trust 不变。设备当前 Recovery，misc BCB 已再次被消费，下一轮启动前需重写。
+
 ## 2026-11-02 受控启动 `0x5d6a3728`：复位成功，提交仍停顿（已定位到 secure-mode 顺序）
 
 - 镜像 `9df13c4b…`、内核 `0aabfb26…` 于 08:32:19Z 临时启动；设备在约 400 s 后自行回到 Recovery（08:39:06Z），**无需手动回收**。日志 `out/p21/persistent-logs/20261102T083940Z/`（窗口 `e89bd9c9…`）。
