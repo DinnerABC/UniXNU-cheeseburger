@@ -335,16 +335,46 @@ public:
     // One user indirect buffer: GPU address of the command stream and its
     // length in dwords. The buffer must already be mapped in this context.
     struct Ib { uint64_t va; uint32_t dwords; };
-    // Worst case: 0x66(2) + transition wait(1) + 0x26(1) + 0x46(5).
-    static constexpr unsigned SubmitFenceWords = 9;
+
+    void putPacket(uint32_t op, const uint32_t *data, unsigned n) {
+        ringPtr[ringCursor++] = packet7(op, n);
+        for (unsigned i = 0; i < n; ++i) ringPtr[ringCursor++] = data[i];
+    }
+    void putReg(uint32_t address, uint32_t value) {
+        // sagit Encoder::reg: A5xx Type4 single-register write.
+        ringPtr[ringCursor++] = 0x40000000u | 1u | (parity(1) << 7) | (address << 8) |
+            (parity(address) << 27);
+        ringPtr[ringCursor++] = value;
+    }
+    // sagit Encoder::pageTable: kernel-only A5xx SMMU transition. A leaf added
+    // after the CP started is not in the CP's translation until it reloads the
+    // table and invalidates; without this the fetch of the user IB reads zero
+    // (opcode error) or stalls.
+    void putPageTable(uint64_t ttbr) {
+        const uint32_t zero = 0, one = 1;
+        const uint32_t table[3] = {uint32_t(ttbr), uint32_t(ttbr >> 32), 0};
+        const uint32_t invalidate[3] = {0x40000, 1, 0};
+        putPacket(0x12, nullptr, 0);            // CP_WAIT_MEM_WRITES
+        putPacket(0x26, nullptr, 0);            // CP_WAIT_FOR_IDLE
+        putPacket(0x5f, &zero, 1);              // protected mode off
+        putReg(0x831, 1);
+        putPacket(0x13, nullptr, 0);
+        putPacket(0x53, table, 3);              // CP_SMMU_TABLE_UPDATE
+        putPacket(0x43, invalidate, 3);         // TLB invalidate
+        putReg(0x831, 0);
+        putPacket(0x5f, &one, 1);
+        putPacket(0x13, nullptr, 0);
+    }
 
     // Append IB packets plus the non-secure fence to the ring, kick once and
     // wait for the CP to write the sequence. Every call waits for its own
     // completion, so the 32 KiB ring is idle when it wraps. This is the
     // submission primitive the user client calls; fence() below is the
-    // zero-buffer case.
+    // zero-buffer case. A nonzero pageTableVA emits sagit's page-table update
+    // before the IB so mappings added after CP start become visible.
     int submit(const Ib *ibs, unsigned count, uint64_t fenceVA, uint32_t sequence,
-               volatile uint32_t *fenceCPU, Record &rec, unsigned ringDwords) {
+               volatile uint32_t *fenceCPU, Record &rec, unsigned ringDwords,
+               uint64_t pageTableVA = 0) {
         if (!runningFlag || abandonedFlag || !ringPtr || ringDwords != RingDwords) {
             fail(rec, -40, 7); return rec.rc;
         }
@@ -364,7 +394,9 @@ public:
         if (hw && hw <= ringDwords) ringCursor = hw;
         for (unsigned i = 0; i < 1000 && rd(RBRead) != hw; ++i) r.delay(10);
         if (rd(RBRead) != hw) { fail(rec, -45, 7); return rec.rc; }
-        const unsigned need = SubmitFenceWords + count * 4;
+        // Worst case: optional transition (3) + page table (20) + barrier (2)
+        // + CACHE_FLUSH_TS (5) + IBs.
+        const unsigned need = count * 4 + 7 + (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3);
         if (need > ringDwords) { fail(rec, -43, 7); return rec.rc; }
         if (ringCursor + need >= ringDwords) {
             // NOP-fill the tail instead of letting a packet cross the wrap.
@@ -372,27 +404,32 @@ public:
             ringCursor = 0;
         }
         unsigned c = ringCursor;
-        for (unsigned i = 0; i < count; ++i) {
-            ringPtr[c++] = packet7(0x3f, 3);                        // CP_INDIRECT_BUFFER
-            ringPtr[c++] = uint32_t(ibs[i].va);
-            ringPtr[c++] = uint32_t(ibs[i].va >> 32);
-            ringPtr[c++] = ibs[i].dwords;
-        }
-        // The first completed stream (the probe's fence) leaves secure mode and
-        // waits for that transition. Later streams must not repeat the switch:
-        // the CP is already non-secure and reports CP_OPCODE_ERROR (bit 0) on
-        // the duplicate, after which the fence never executes.
+        const uint32_t zero = 0;
         if (!secureLeft) {
-            ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;      // CP_SET_SECURE_MODE(0)
-            ringPtr[c++] = packet7(0x26, 0);                        // wait for the transition
+            // The first completed stream (the probe's fence) leaves secure mode
+            // and waits for that transition. Later streams must not repeat the
+            // switch; the CP already is non-secure.
+            putPacket(0x66, &zero, 1);                              // CP_SET_SECURE_MODE(0)
+            putPacket(0x26, nullptr, 0);                            // wait for the transition
         }
-        ringPtr[c++] = packet7(0x26, 0);                            // CP_WAIT_MEM_WRITES
-        ringPtr[c++] = packet7(0x46, 4); ringPtr[c++] = 4 | (1u << 31); // CACHE_FLUSH_TS + IRQ
-        ringPtr[c++] = uint32_t(fenceVA); ringPtr[c++] = uint32_t(fenceVA >> 32);
-        ringPtr[c++] = sequence;
+        if (pageTableVA) putPageTable(pageTableVA);
+        for (unsigned i = 0; i < count; ++i) {
+            ringPtr[ringCursor++] = packet7(0x3f, 3);                // CP_INDIRECT_BUFFER
+            ringPtr[ringCursor++] = uint32_t(ibs[i].va);
+            ringPtr[ringCursor++] = uint32_t(ibs[i].va >> 32);
+            ringPtr[ringCursor++] = ibs[i].dwords;
+        }
+        // sagit barrier: wait for the IB's writes, then for the CP pipeline,
+        // before the fence timestamp retires.
+        putPacket(0x12, nullptr, 0);                                // CP_WAIT_MEM_WRITES
+        putPacket(0x26, nullptr, 0);                                // CP_WAIT_FOR_IDLE
+        ringPtr[ringCursor++] = packet7(0x46, 4);                   // CACHE_FLUSH_TS + IRQ
+        ringPtr[ringCursor++] = 4 | (1u << 31);
+        ringPtr[ringCursor++] = uint32_t(fenceVA); ringPtr[ringCursor++] = uint32_t(fenceVA >> 32);
+        ringPtr[ringCursor++] = sequence;
         fenceCPU[0] = 0; r.clean((volatile void *)fenceCPU, 4);
         r.clean((volatile void *)ringPtr, ringDwords * 4);
-        ringCursor = c;
+        c = ringCursor;
         // Sample the latches before this doorbell. sagit clears the owned RBBM
         // set before publishing a stream, so a completion bit left by the
         // probe's own fence cannot fail this kick. CP_INTERRUPT_STATUS has no

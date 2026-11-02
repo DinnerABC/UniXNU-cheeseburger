@@ -237,20 +237,29 @@ int main() {
         const int rc = engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords);
         check(rc == 0, "submit/rc");
         check(rec.stage == 7 && engine.running(), "submit/stage");
-        check(ring[17] == packet7(0x3f, 3) && ring[18] == 0x4000000 && ring[19] == 0 &&
-              ring[20] == 12, "submit/ib-packet");
-        check(ring[21] == packet7(0x66, 1) && ring[22] == 0 &&
-              ring[23] == packet7(0x26, 0) && ring[24] == packet7(0x26, 0) &&
-              ring[25] == packet7(0x46, 4) && ring[26] == (4 | (1u << 31)) &&
-              ring[27] == 0x2015000 && ring[28] == 0 && ring[29] == 2, "submit/fence-packet");
+        check(ring[17] == packet7(0x66, 1) && ring[18] == 0 &&
+              ring[19] == packet7(0x26, 0) &&
+              ring[20] == packet7(0x3f, 3) && ring[21] == 0x4000000 && ring[22] == 0 &&
+              ring[23] == 12, "submit/ib-packet");
+        check(ring[24] == packet7(0x12, 0) && ring[25] == packet7(0x26, 0) &&
+              ring[26] == packet7(0x46, 4) && ring[27] == (4 | (1u << 31)) &&
+              ring[28] == 0x2015000 && ring[29] == 0 && ring[30] == 2, "submit/fence-packet");
         check(fence[0] == 2, "submit/fence-value");
         // The probe's fence already left secure mode: a later stream must not
-        // repeat CP_SET_SECURE_MODE, which the CP rejects with an opcode error.
+        // repeat CP_SET_SECURE_MODE.
         check(engine.submit(&ib, 1, 0x2015000, 3, fence, rec, RingDwords) == 0, "submit2/rc");
         bool switched = false;
-        for (unsigned i = 30; i < 40; ++i)
+        for (unsigned i = 31; i < 42; ++i)
             if (ring[i] == packet7(0x66, 1)) switched = true;
-        check(!switched && fence[0] == 3, "submit2/no-repeat-switch");
+        check(!switched && ring[35] == packet7(0x12, 0) && fence[0] == 3,
+              "submit2/no-repeat-switch");
+        // A runtime mapping needs sagit's page-table update before the IB.
+        check(engine.submit(&ib, 1, 0x2015000, 4, fence, rec, RingDwords, 0x400000) == 0,
+              "submit3/rc");
+        check(ring[42] == packet7(0x12, 0) && ring[43] == packet7(0x26, 0) &&
+              ring[49] == packet7(0x53, 3) && ring[50] == 0x400000 &&
+              ring[53] == packet7(0x43, 3) && ring[66] == packet7(0x12, 0) &&
+              ring[67] == packet7(0x26, 0) && fence[0] == 4, "submit3/page-table");
     }
 
     // The ring is 32 KiB and every submit waits for its own completion, so a

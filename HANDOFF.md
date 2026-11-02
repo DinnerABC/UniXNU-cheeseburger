@@ -1,3 +1,10 @@
+## 2026-11-02 受控启动 `0x48f4c3b3`：NOP 探针证明 CP 取不到运行期 IOVA，加入 pageTable 更新
+
+- 镜像 `51841998…`、内核 `5337eb8e…`（用户 IB 临时替换为单个 `CP_NOP`、长度 1）于 11:16:56Z 启动，11:23:58Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T112404Z/`（窗口 `9ac23a5c…`）。
+- 结果：`GPSVC open=1 bo=2 map=2 calls=9 sub=0 sel=5`、无 `GSUB`、心跳 `f=-1`、无 `submitdone`；提交线程卡在 `engine_submit` 内，但 msgbuf/心跳继续到 406 s。即单 NOP IB 从“opcode error”变成“取指停顿”，与 CP 看不到运行期新增 IOVA（0x4000000）一致；探测的 GPMU IB 在 CP 启动前映射（0x2012000），一直正常。
+- 官方核对：`0x26` 是 `CP_WAIT_FOR_IDLE`，不是 `CP_WAIT_MEM_WRITES`；后者是 `0x12`，sagit barrier 为 `0x12 + 0x26`。sagit `Encoder::pageTable()` 在每次提交前发送 `0x12/0x26 → 0x5f/reg 0x831 → 0x13 → 0x53(ttbr) → 0x43(invalidate) → reg 0x831/0x5f → 0x13`，用于内核侧 A5xx SMMU 转换。
+- 本轮功能修复：`Startup::submit` 新增 `pageTableVA` 参数并在 IB 前发送 sagit 的完整 pageTable 序列；屏障改为 `0x12 + 0x26`；`cheeseburger_gpu_engine_submit` 传入 `cheeseburger_gpu_smmu_root()`。探针 fence 仍走 `pageTableVA=0`。宿主模型新增 page-table 序列断言并 PASS。候选已构建、未启动：镜像 `bcef55af…`、内核 `3ab90dee…`、固件 `a6224a21…`、payload `94ae1f85…`，gate `20261102T113251Z` PASS；seed/trust 不变。设备当前 Recovery，misc BCB 已消费，启动前需重写。
+
 ## 2026-11-02 受控启动 `0x4f7fca90`：一次性切换后仍是 CP_OPCODE_ERROR，转 IB 取指/NOP 探针
 
 - 镜像 `54d36703…`、内核 `25ed4f9f…`（`secureLeft`，用户流为 `IB → WAIT → FLUSH`）于 10:56:49Z 启动，11:03:28Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T110333Z/`（窗口 `87e402de…`）。
