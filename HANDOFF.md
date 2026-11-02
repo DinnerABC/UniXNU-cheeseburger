@@ -1,3 +1,10 @@
+## 2026-11-02：GPU 提交外部中止与 CPU fence 轮询修复（构建中）
+
+- 用户提供 panic：PC `0xfffffff00bf9d34c`、LR `0xfffffff00bf9d330`，ESR `0x96000210`，FAR 对应访问 `[x8,#0x1384]`。Recovery 已只读回收 `out/p21/persistent-logs/20261102T133308Z/`，boot `0x49a91db8`，17 rounds、0 errors，末条 CBHB `submit`；启动镜像身份应以实际启动记录复核。当前 `out/p21/atos-dev-job/kernel/kernel.macho` 的反汇编在该 PC 是 `kickTo` 中读取 GPU `InterruptStatus`（offset `0x1384`），而寄存器 x8 加 offset 与用户 FAR 一致；这说明 MMIO read 触发 external abort，不证明 GPU 卡死的根因或精确出错命令。屏幕转录的地址存在多余 f，符号化使用规范 64 位地址；候选内核身份尚须与实际启动收据关联。
+- 提交 `c6dd16c`：用户提交门铃后改为只轮询 CPU fence，超时禁止后续提交、不读写 GPU MMIO、不假定停止 DMA；恢复/内存保留仍不保证总线不会在写门铃或其他位置中止。启动时内核 fence 仍用原有检查。删除旧 scratch 测试：其要求 `buffer_count>=2`，而插件实际只提交一个 IB，且静默重写用户 IB/目标会破坏 ABI 语义；不能用该测试结果宣称用户目标写回。
+- 宿主模型 `out/p21/gpu-cp/host-tests/20261102T133458Z/` 7/7 PASS，包括新增门铃后无 MMIO 读取的成功/超时模型。模型不证明硬件或 panic 已修复。新候选 `out/p21/panic-cpufence/`，本机树 `/Users/dinnerabc/unixnu-p21/atos-gate/source-tree`；内核编译中。当前不可复用旧 payload/UEFI，必须使用新内核逐项重打并核对 pins 与门禁。
+- 下一步：完成本机编译后将内核哈希回写候选；基于现有经过验证的 seed/trust、ADT、构建路径重建 prelink、payload 和独立 UEFI，校验匹配并单次临时启动；回收同 boot 日志，分别判定 panic、用户 fence、CPU 四值、实际返回 Recovery。只读的 fence 超时可能保持整机存活，但不会修复无法访问的 IOVA；用户态提交通过前不得声称 GPU 工作。不要重启或写入手机，直到当前日志与镜像身份核对完毕。
+
 ## 2026-11-02 受控启动 `0x439f93bf`：`0x2020000` 窗口 panic，回退并改用预映射 scratch 自检
 
 - 镜像 `1ca0ca37…`、内核 `bfd84b28…`（用户窗口 `0x2020000`）于 11:51:33Z 启动；用户报告显示 panic 屏后黑屏并手动回 Recovery。日志 `out/p21/persistent-logs/20261102T120953Z/`（窗口 `c8d2f258…`）。
