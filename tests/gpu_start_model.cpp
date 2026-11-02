@@ -240,10 +240,17 @@ int main() {
         check(ring[17] == packet7(0x3f, 3) && ring[18] == 0x4000000 && ring[19] == 0 &&
               ring[20] == 12, "submit/ib-packet");
         check(ring[21] == packet7(0x66, 1) && ring[22] == 0 &&
-              ring[23] == packet7(0x26, 0) && ring[24] == packet7(0x46, 4) &&
-              ring[25] == (4 | (1u << 31)) && ring[26] == 0x2015000 &&
-              ring[27] == 0 && ring[28] == 2, "submit/fence-packet");
+              ring[23] == packet7(0x26, 0) && ring[24] == packet7(0x26, 0) &&
+              ring[25] == packet7(0x46, 4) && ring[26] == (4 | (1u << 31)) &&
+              ring[27] == 0x2015000 && ring[28] == 0 && ring[29] == 2, "submit/fence-packet");
         check(fence[0] == 2, "submit/fence-value");
+        // The probe's fence already left secure mode: a later stream must not
+        // repeat CP_SET_SECURE_MODE, which the CP rejects with an opcode error.
+        check(engine.submit(&ib, 1, 0x2015000, 3, fence, rec, RingDwords) == 0, "submit2/rc");
+        bool switched = false;
+        for (unsigned i = 30; i < 40; ++i)
+            if (ring[i] == packet7(0x66, 1)) switched = true;
+        check(!switched && fence[0] == 3, "submit2/no-repeat-switch");
     }
 
     // The ring is 32 KiB and every submit waits for its own completion, so a
@@ -262,12 +269,12 @@ int main() {
         const Startup<Mock>::Ib ib = {0x4000000, 12};
         bool all_ok = true;
         unsigned fail_at = 0;
-        for (unsigned i = 0; i < 700; ++i) {
+        for (unsigned i = 0; i < 900; ++i) {
             const int rc = engine.submit(&ib, 1, 0x2015000, 3 + i, fence, rec, RingDwords);
             if (rc != 0) { all_ok = false; fail_at = i + 1; std::printf("WRAPFAIL i=%u rc=%d read=%u write=%u\n", i, rc, rec.read, rec.write); break; }
         }
         (void)fail_at;
-        check(all_ok, "wrap/700-submits");
+        check(all_ok, "wrap/900-submits");
         check(m.wrapped, "wrap/happened");
         check(m.lastRbWrite <= RingDwords, "wrap/target-bounded");
         check(ring[RingDwords - 1] == packet7(0x10, 0), "wrap/tail-nop");

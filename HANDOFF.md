@@ -1,3 +1,10 @@
+## 2026-11-02 受控启动 `0x4989a7fb`：拿到 `CP_OPCODE_ERROR`，修复重复 secure-mode 切换
+
+- 镜像 `fd0f8ff4…`、内核 `ff662e87…`（IB-first、无用户 ATOS、保留新故障记录）于 10:11:29Z 启动；10:18:20Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T101828Z/`（窗口 `b6cbb203…`）。
+- 心跳首次给出完整内部结果：`f=-3/3/0/1/2/0/0/0` → `rc=-3, stage=3, irq=0, cpirq=1, pre=0/0, fenced=0, seq=2`；日志继续到 328 s，没有停写。`cpirq=1` 按 Linux A5xx `a5xx.xml` 是 **CP_OPCODE_ERROR**（bit0；bit1 reserved、bit2 HW fault、bit3 DMA、bit4 register protect、bit5 AHB）。
+- IB 的 `CP_MEM_WRITE(0x3d,3)` 与 sagit `Encoder::fill` 和官方 PM4 测试头 `0x703d8003` 一致，不是编码错误。探测 fence 已经把 CP 切到非安全模式；用户提交又重复发送 `CP_SET_SECURE_MODE(0)`，CP 对重复切换报 opcode error，后面的 fence 从未执行（`fenced=0`）。之前 IB-first 的无 ATOS 内核能返回同一个 `rc=-3` 也与此一致。
+- 修复：`Startup` 新增 `secureLeft`，只在第一条完成的流（探测 fence）发送 `CP_SET_SECURE_MODE(0)+等待转换`；后续用户流为 `IB → CP_WAIT_MEM_WRITES → CACHE_FLUSH_TS`。宿主模型新增第二次提交断言，确认环中不再出现 0x66。候选已构建、未启动：镜像 `54d36703…`、内核 `25ed4f9f…`、固件 `ba949846…`、payload `d5a66152…`，gate `20261102T103058Z` PASS；seed/trust 不变。设备当前 Recovery，misc BCB 已消费，启动前需重写。
+
 ## 2026-11-02 受控启动 `0x46d23365`：去掉 ATOS 仍卡，锁定 secure-mode 环顺序
 
 - 镜像 `381a0e1c…`、内核 `54485e9d…`（删除用户路径 ATOS，保留 WAIT）于 09:43:35Z 启动；设备于 09:50:35Z 返回 Recovery（约 420 s）。日志 `out/p21/persistent-logs/20261102T095051Z/`（窗口 `84b65bf7…`）。

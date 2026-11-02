@@ -72,6 +72,8 @@ struct Record {
 template <class R> class Startup {
     R &r;
     bool resetDone = false, abandonedFlag = false, runningFlag = false, haltAck = false;
+    // Set once the first completed stream left the CP non-secure.
+    bool secureLeft = false;
     volatile uint32_t *ringPtr = nullptr;
     unsigned ringCursor = 0;
 
@@ -333,7 +335,8 @@ public:
     // One user indirect buffer: GPU address of the command stream and its
     // length in dwords. The buffer must already be mapped in this context.
     struct Ib { uint64_t va; uint32_t dwords; };
-    static constexpr unsigned SubmitFenceWords = 8; // 0x66(2) + 0x26(1) + 0x46(5)
+    // Worst case: 0x66(2) + transition wait(1) + 0x26(1) + 0x46(5).
+    static constexpr unsigned SubmitFenceWords = 9;
 
     // Append IB packets plus the non-secure fence to the ring, kick once and
     // wait for the CP to write the sequence. Every call waits for its own
@@ -375,11 +378,14 @@ public:
             ringPtr[c++] = uint32_t(ibs[i].va >> 32);
             ringPtr[c++] = ibs[i].dwords;
         }
-        // Keep the e5612490 order: the secure stream fetched the IB and
-        // reported an error IRQ; switching to non-secure before the fetch
-        // stalled this AHB even after a transition wait. The error record is
-        // what the next fix needs.
-        ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;          // CP_SET_SECURE_MODE(0)
+        // The first completed stream (the probe's fence) leaves secure mode and
+        // waits for that transition. Later streams must not repeat the switch:
+        // the CP is already non-secure and reports CP_OPCODE_ERROR (bit 0) on
+        // the duplicate, after which the fence never executes.
+        if (!secureLeft) {
+            ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;      // CP_SET_SECURE_MODE(0)
+            ringPtr[c++] = packet7(0x26, 0);                        // wait for the transition
+        }
         ringPtr[c++] = packet7(0x26, 0);                            // CP_WAIT_MEM_WRITES
         ringPtr[c++] = packet7(0x46, 4); ringPtr[c++] = 4 | (1u << 31); // CACHE_FLUSH_TS + IRQ
         ringPtr[c++] = uint32_t(fenceVA); ringPtr[c++] = uint32_t(fenceVA >> 32);
@@ -410,7 +416,7 @@ public:
         }
         for (unsigned elapsed = 0; elapsed < 100000; elapsed += 10) {
             r.clean((volatile void *)fenceCPU, 4);
-            if (fenceCPU[0] == sequence) { rec.stage = 7; rec.rc = 0; r.mark("submitdone"); return 0; }
+            if (fenceCPU[0] == sequence) { rec.stage = 7; rec.rc = 0; secureLeft = true; r.mark("submitdone"); return 0; }
             r.delay(10);
         }
         fail(rec, -44, 7); return rec.rc;
