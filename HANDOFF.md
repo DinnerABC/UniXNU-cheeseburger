@@ -1,3 +1,15 @@
+## 2026-11-03：内核 IB 自检（batch3 已临时启动）
+
+- **batch2 实机结果已回收**（boot `0x448ab1c5`，日志 `out/p21/persistent-logs/20261102T174905Z/`，17:41:48Z 启动、17:48:39Z 自动回 Recovery，约 411 s）。关键三行：
+  - `GCTL rc=0 stage=7 fence=2`：probe 后同一 user-path（cpuFenceOnly、无 IB）的 fence-only 提交**成功**，环/门铃/引擎在 probe 后仍可执行。
+  - `GSAT atos=0 par=4000000111193b80 expect=111193000`：用户 IB IOVA `0x4000000` 的 SMMU 硬件走表与软件 leaf 一致，IB 在页表层面可翻译。
+  - `GSUB rc=-4 stage=3 seq=3 pf=0/1 fr=34`：用户提交超时；`0x34=52` 恰好等于该提交环的最终 WPTR，而 control 完成后 fence 页 dword0 仍是 `2`（未被 RPTR 影子覆盖），说明这次是 CP 在 IB 处**中止批次**（RPTR 直接置到 WPTR），完成 fence 未执行；prefence（dword1）也为 0。
+  - 因此“门铃/环/翻译”都已排除，剩余二分点是 **IB 内容/执行** vs **0x4000000 取指路径**。`GPSVC sub=1 fence=0 err=5`，CPU 显示 5 帧。
+- 本轮提交 `e2b4ab1`：probe fence 与 control 之后，在 CP 已取过的 GPMU 页（`0x2012000`，偏移 0x200）构造 6 dword 的已知 IB（一条 `CP_MEM_WRITE(0x3d)` 写三个哨兵到同页 0x400），走同一 user-path 提交并回读；结果写 `GSIB rc/stage/fenced/fence/tgt/ib`。若自检成功，则引擎能执行内核构造的 IB，问题在用户 IOVA 取指；若失败，则 IB 执行本身不成立。另在服务端提交前用 `IOMemoryDescriptor::readBytes` 复制用户 IB 头 8 dword 到 `GIBH`（内核自有视图，无 GPU MMIO），用于判断 IB 是否真是 PM4/是否陈旧。
+- 候选 `out/p21/gpu-dev-batch3/`：内核 `7947eb1f…`（native `29229384…` → prelink `4df033f0…`），expanded payload `00c0478f…`，固件 `b5101e08…`（overlay `unixnu-up1-gpu-dev-batch3`，LOWER 前置 batch2 upper），pins 命中，gate `20261102T180542Z` PASS（644 B args）。镜像 `out/p21/gpu-dev-batch3/uefi/boot-p21-up1.img` SHA-256 `c37382254d9da242ab7dee3b5860831f5fb3e37aa2a57ffa1141a97b3de2f15f`。
+- **本轮启动**：18:06:34Z 对 `3b25cc7c` 唯一一次 `fastboot boot`，Sending/Booting OKAY（`boot-once.log`）；misc command 字段重写并回读一致（`8698abf4…`），未写其它分区。运行结果待回收。
+- 判定参考：`GSIB rc=0 且 tgt=5a5a0001/0002/0003` = 内核在已验证页内的 IB 能执行并写回（IB 执行无墙）；`GSIB rc=-4` = 连该 IB 都不执行（引擎/批次执行问题，与用户地址无关）；`GIBH` 第一个 dword 不是 type-7 头 = 用户 IB 内容/可见性问题。
+
 ## 2026-11-03：用户 IB 硬件翻译门禁 + user-path 对照（batch2 已临时启动）
 
 - **上一轮镜像 `2cf41785…` 的实机结果已回收**：新 boot `0x3dc9ecb3`，日志 `out/p21/persistent-logs/20261102T171817Z/`（67 rounds、心跳 sec=338、写错误 0）。设备于 17:17:52Z 自行回到 Recovery（boot 17:10:53Z，约 420 s，符合 400 s 自动复位 + misc BCB）。结果与 `b9f698f` 之前完全相同：`GPWR pre=778000/140000 post=140000/140000 me/vbif=0 st=80000101 micro=178/0`、`GSUB rc=-4 stage=3 fenced=0 seq=2 pf=0/1`、`GPSVC sub=1 fence=0 err=5 sel=5`，probe fence seq=1 成功。CPU 显示 5 帧。即：缓存属性改动没有改变用户提交结果。
