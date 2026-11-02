@@ -494,6 +494,10 @@ extern "C" int cheeseburger_gpu_pre_kick(void){
  native_adreno_pwr[7]=gMmio->read(CheeseburgerGpu::Status);
  native_adreno_pwr[8]=uint32_t(cheeseburger_gpu_smmu_micro());
  native_adreno_pwr[9]=uint32_t(cheeseburger_gpu_smmu_resume_micro());
+ // Do not ring a CP with a collapsed core or a halted/unreadable micro-MMU.
+ if(out[4]==0xffffffffu||out[5]==0xffffffffu||
+    !(out[4]&(1u<<20))||!(out[5]&(1u<<20)))return -2;
+ if((int32_t)native_adreno_pwr[9]<0)return -3;
  return 0;
 }
 extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1:0;}
@@ -506,14 +510,11 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  if(!gEngine||!gRing||!gFence||!gFenceGva||!gSubmitLock||!seq||count>16||(count&&(!vas||!dwords)))return -1;
  // A submission that failed may have left the CP fetching a bad IB. Fail closed:
  // no further submission until reboot (the failure record names rc/stage).
- if(gEngineSubmitFailed)return -2;
- // One hardware test per boot: a restarted host or discovery instance must not
- // repeat the user submission.
- if(gEngineSubmitCount>=1)return -2;
- gEngineSubmitCount++;
  CheeseburgerGpu::Startup<Mmio>::Ib ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
  IOLockLock(gSubmitLock);
+ if(gEngineSubmitFailed||gEngineSubmitCount>=1){IOLockUnlock(gSubmitLock);return -2;}
+ gEngineSubmitCount++;
  // Re-assert the core power domains and sample the engine before the doorbell.
  // A collapsed domain or a halted CP explains a ring the CP never reads; the
  // reads happen while the bus is still healthy (no failed kick yet).
@@ -522,6 +523,11 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   native_adreno_pwr[0],native_adreno_pwr[1],native_adreno_pwr[2],native_adreno_pwr[3],
   native_adreno_pwr[4],native_adreno_pwr[5],native_adreno_pwr[6],native_adreno_pwr[7],
   native_adreno_pwr[8],(int)native_adreno_pwr[9]);
+ if(pwr){
+  gEngineSubmitFailed=true;native_adreno_submit_rc=pwr;
+  native_adreno_submit_stage=0x80;
+  IOLockUnlock(gSubmitLock);return pwr;
+ }
  uint32_t s=gFenceSeq+1;if(!s)s=1;
  CheeseburgerGpu::Record rec;
  // The probe's own streams fetch from 0x2000000 without any CP_SMMU_TABLE_UPDATE,

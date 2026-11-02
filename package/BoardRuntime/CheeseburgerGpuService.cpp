@@ -16,6 +16,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <kern/clock.h>
+#include <vm/memory_types.h>
 #include <sys/proc.h>
 #include <sys/kauth.h>
 #include <mach/kmod.h>
@@ -43,6 +44,7 @@ int cheeseburger_gpu_engine_scratch(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
+void pmap_set_cache_attributes(ppnum_t,unsigned int);
 }
 
 namespace {
@@ -71,7 +73,7 @@ void retainIova(uint64_t iova,uint64_t bytes) {
 class AGXDeviceUserClient : public IOUserClient {
     OSDeclareDefaultStructors(AGXDeviceUserClient)
     struct Bo {
-        uint64_t handle=0,bytes=0,iova=0;
+        uint64_t handle=0,bytes=0,iova=0,physical=0;
         IOBufferMemoryDescriptor *buf=nullptr;
         IOMemoryDescriptor *desc=nullptr;
         uint32_t token=0;
@@ -292,6 +294,11 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
     }
     if(bo.mapped)native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
     OSSafeReleaseNULL(bo.desc);
+    // Restore the VM's default page attributes only after the GPU can no
+    // longer access this BO. This mirrors sheng's owned BO lifecycle.
+    if(bo.physical)
+        for(uint64_t off=0;off<bo.bytes;off+=4096)
+            pmap_set_cache_attributes((ppnum_t)((bo.physical+off)>>12),VM_WIMG_USE_DEFAULT);
     OSSafeReleaseNULL(bo.buf);
     bo=Bo();
     return true;
@@ -384,10 +391,19 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     IOByteCount span=0;
     uint64_t pa=buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
     if(!pa||(pa&4095)||span<a.bytes||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
+    void *cpu=buf->getBytesNoCopy();
+    if(!cpu){buf->release();return kIOReturnNoMemory;}
+    // IOMapInhibitCache alone does not guarantee all aliases get the intended
+    // attribute on this XNU. Publish initialized cache lines, then set the
+    // owned physical pages write-combined as in sheng's NativeAdrenoMemory.
+    flush_dcache((vm_offset_t)cpu,(unsigned)a.bytes,FALSE);
+    for(uint64_t off=0;off<a.bytes;off+=4096)
+        pmap_set_cache_attributes((ppnum_t)((pa+off)>>12),VM_WIMG_WCOMB);
     Bo &bo=bos_[index];
     bo=Bo();
     bo.handle=uint64_t(index)+1;
     bo.bytes=a.bytes;
+    bo.physical=pa;
     bo.buf=buf;
     // One descriptor object per BO: clientMemoryForType must return this same
     // instance so IOConnectUnmapMemory64 can find and remove the mapping. The
@@ -396,7 +412,11 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     IOAddressRange range={pa,a.bytes};
     bo.desc=IOMemoryDescriptor::withAddressRanges(&range,1,
         static_cast<IOOptionBits>(kIODirectionInOut)|static_cast<IOOptionBits>(kIOMemoryTypePhysical64),nullptr);
-    if(!bo.desc){buf->release();bo=Bo();return kIOReturnNoMemory;}
+    if(!bo.desc){
+        for(uint64_t off=0;off<a.bytes;off+=4096)
+            pmap_set_cache_attributes((ppnum_t)((pa+off)>>12),VM_WIMG_USE_DEFAULT);
+        buf->release();bo=Bo();return kIOReturnNoMemory;
+    }
     bo.token=BoTokenBase+index;
     r.handle=bo.handle;
     native_adreno_service_stats[2]=native_adreno_service_stats[2]+1;
@@ -477,6 +497,9 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
     uint32_t seq=0;
+    // Publish all mapped objects, not just IBs: an IB can reference another
+    // BO as data or as its GPU writeback destination.
+    __asm__ volatile("dsb sy":::"memory");
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;
     if(rc){native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;return kIOReturnIOError;}

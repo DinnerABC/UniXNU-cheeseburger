@@ -37,6 +37,27 @@ evidence in the message or HANDOFF so any candidate can be rolled back,
 compared or used as a reference. Never carry a round's changes uncommitted.
 Images, private logs and signing material stay out of Git.
 
+## GPU development priority
+
+- The current objective is working A540 GPU rendering and Metal integration.
+  Treat this as implementation work: make substantive, related changes in a
+  coherent batch, not a succession of reviews or log-only builds.
+- Read the pinned official UniXNU/sheng implementation, its documented fixes
+  and same-SoC sagit/vendor code first. Port reusable interfaces, lifetime and
+  synchronization behavior; check A540 and OS ABI differences explicitly.
+  Do not invent a duplicate implementation when an applicable upstream one
+  exists, or copy A740-specific hardware commands or board addresses to A540.
+- Add bounded probes when they unlock implementation and preserve the first
+  failure. Retain actual device and host evidence; never claim completion from
+  a probe, fabricated result, software frame, or Fastboot acceptance alone.
+- Batch safety, functional support, and diagnostics needed for the same GPU
+  milestone into one candidate. Reuse the authorized Data seed, existing boot
+  parameters and local-build workflow; preserve other agents' work. A user can
+  explicitly limit a task to one build/boot round; follow that limit.
+- When the user requests background Recovery monitoring, use only the existing
+  ADB server, match the device identity, collect the prior boot first, and stop
+  monitoring once its log is recovered. Never start repeated device boots.
+
 ## Local XNU builds and NAS evidence
 
 - The NAS checkout is authoritative for source and retained candidates. Run
