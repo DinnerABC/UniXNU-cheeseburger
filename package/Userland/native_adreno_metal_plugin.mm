@@ -16,6 +16,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <dispatch/dispatch.h>
+#include <atomic>
 #include "NativeAdrenoABI.h"
 
 namespace {
@@ -123,21 +125,31 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
 @end
 
 @interface NativeAdrenoMetalDevice : _MTLDevice
++ (id)runProbe:(unsigned)port;
 @end
 
 @implementation NativeAdrenoMetalDevice
 - (id)initWithAcceleratorPort:(unsigned)port {
-    // The discovery may instantiate the plugin many times in one process; run
-    // the hardware test once and keep later instances from allocating again.
-    static bool attempted = false;
-    if (attempted) return nil;
-    attempted = true;
+    // Match the official plugin: a nil return releases self under ARC, so its
+    // Metal superclass must have been initialized before any exit path.
+    self = [super init];
+    if (!self || !port) return nil;
     const char *host = getprogname();
-    if (!host || strcmp(host, kTargetHost)) {
-        line("P21PLUGIN stage=skip host=%s pid=%d", host ? host : "?", (int)getpid());
-        note("skip host=%s pid=%d", host ? host : "?", (int)getpid());
-        return nil;
-    }
+    if (!host || strcmp(host, kTargetHost)) return nil;
+    static std::atomic<bool> attempted{false};
+    if (attempted.exchange(true)) return nil;
+    // Metal discovery owns the port only until this initializer returns. Keep
+    // a reference for the worker, and do not block the discovery/UI thread on
+    // a potentially stalled kernel call (as in the official sheng plugin).
+    if (IOObjectRetain((io_object_t)port) != KERN_SUCCESS) return nil;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        [NativeAdrenoMetalDevice runProbe:port];
+        IOObjectRelease((io_object_t)port);
+    });
+    return nil;
+}
+
++ (id)runProbe:(unsigned)port {
     line("P21PLUGIN stage=enter port=%u pid=%d", port, (int)getpid());
     note("enter pid=%d port=%u", (int)getpid(), port);
     marker(port, 1);
