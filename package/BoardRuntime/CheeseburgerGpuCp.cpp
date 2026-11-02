@@ -490,7 +490,7 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  IOLockLock(gSubmitLock);
  uint32_t s=gFenceSeq+1;if(!s)s=1;
  CheeseburgerGpu::Record rec;
- int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,cheeseburger_gpu_smmu_root());
+ int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,cheeseburger_gpu_smmu_root(),true);
  if(rc==0){gFenceSeq=s;*seq=s;}
  else {
   gEngineSubmitFailed=true;

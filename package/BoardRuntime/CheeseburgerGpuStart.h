@@ -374,7 +374,7 @@ public:
     // before the IB so mappings added after CP start become visible.
     int submit(const Ib *ibs, unsigned count, uint64_t fenceVA, uint32_t sequence,
                volatile uint32_t *fenceCPU, Record &rec, unsigned ringDwords,
-               uint64_t pageTableVA = 0) {
+               uint64_t pageTableVA = 0, bool cpuFenceOnly = false) {
         if (!runningFlag || abandonedFlag || !ringPtr || ringDwords != RingDwords) {
             fail(rec, -40, 7); return rec.rc;
         }
@@ -444,6 +444,28 @@ public:
         }
         wr(InterruptClear, OwnedIRQs);
         r.mark("submit"); r.publish(); wr(RBWrite, c);
+        if (cpuFenceOnly) {
+            // A failed user IB can turn even an interrupt-status read into an
+            // external abort. Poll only the CPU-owned fence after the doorbell.
+            // A timeout is not proof of an idle engine or of stopped DMA.
+            rec.irq = rec.cpIrq = rec.read = rec.write = 0xffffffffu;
+            rec.status = rec.status3 = rec.me = rec.vbif = 0xffffffffu;
+            rec.postRead = false;
+            for (unsigned elapsed = 0; elapsed < 300000; elapsed += 10) {
+                r.clean((volatile void *)fenceCPU, 4);
+                if (fenceCPU[0] == sequence) {
+                    rec.stage = 7; rec.rc = 0; rec.fenced = true;
+                    secureLeft = true; r.mark("submitdone"); return 0;
+                }
+                r.delay(10);
+            }
+            // No MMIO reads or posted writes on an unresponsive bus. Keep all
+            // mappings retained; this does not assert that the CP is halted.
+            rec.rc = -4; rec.stage = 3; rec.abandoned = true;
+            rec.converged = false; abandonedFlag = true;
+            resetDone = false; runningFlag = false; haltAck = false;
+            return rec.rc;
+        }
         if (kickTo(rec, c)) {
             // The fence page is CPU memory, not the possibly stalled bus: it
             // still tells whether the ring ran despite the latched error.

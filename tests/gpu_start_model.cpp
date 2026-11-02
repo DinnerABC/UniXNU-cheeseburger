@@ -24,6 +24,8 @@ struct Mock {
     // RBBM latches and the fault arm: injected errors only appear after the
     // doorbell, so a pre-kick sample sees the healthy bus.
     bool armed = false;
+    bool watchDoorbell = false, userDoorbell = false;
+    unsigned userReadsAfterDoorbell = 0;
     uint32_t irqLatch = 0;
     unsigned readsAfterFailure = 0;
     unsigned unhaltWrites = 0, rbWriteWrites = 0, submitWrites = 0, rbControlWrites = 0, delays = 0, posted = 0;
@@ -51,6 +53,7 @@ struct Mock {
         reg[TrustControl / 4] = 1;       // secure mode on this SoC
     }
     uint32_t read(uint32_t o) {
+        if (userDoorbell) ++userReadsAfterDoorbell;
         // The error observation is the InterruptStatus/CPInterruptStatus pair;
         // only reads beyond that pair count as post-failure bus access.
         if (failureSeen && o != CPInterruptStatus) ++readsAfterFailure;
@@ -80,6 +83,7 @@ struct Mock {
         if (o == MEControl && value == 0) ++unhaltWrites;
         if (o == RBControl) ++rbControlWrites;
         if (o == RBWrite) {
+            if (watchDoorbell) userDoorbell = true;
             ++rbWriteWrites;
             if (fail == ErrorIrq || fail == ErrorLate || fail == MmioGone) armed = true;
             if (value == 9) ++submitWrites;
@@ -321,6 +325,23 @@ int main() {
         check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) != 0, "kickfail/reject");
         check(rec.rc == -4 && rec.abandoned && engine.abandoned(), "kickfail/abandoned");
         halted_after_failure(m, "kickfail/halted");
+    }
+
+    // User submission can complete or time out using only CPU fence memory:
+    // neither path touches GPU MMIO after the doorbell.
+    for (bool complete : {false, true}) {
+        Mock m; Startup<Mock> engine(m); Record rec;
+        volatile uint32_t ring[RingDwords] = {0}, fence[1] = {0};
+        m.hostFence = fence;
+        check(engine.reset(rec) == 0, "cpufence/reset");
+        check(engine.start(ring, RingDwords, 0x2000000, 0x2008000, 0x200d000, 0x2015000, rec) == 0, "cpufence/start");
+        check(engine.gpmu(0x2012000, 1000, 800000, 257000000, rec), "cpufence/gpmu");
+        m.fail = complete ? Mock::None : Mock::MmioGone;
+        m.watchDoorbell = true;
+        const Startup<Mock>::Ib ib = {0x4000000, 12};
+        const int rc = engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords, 0, true);
+        check(m.userReadsAfterDoorbell == 0, "cpufence/no-mmio-read");
+        check(complete ? (rc == 0 && rec.fenced) : (rc == -4 && rec.abandoned && !rec.converged), "cpufence/result");
     }
 
     // A kick timeout must not retry the doorbell or read the bus afterwards;
