@@ -32,6 +32,9 @@ int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_service_publish(void);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
+// Kernel IB self-test in a page the CP already fetched: rc, stage and the three
+// sentinel words the IB was told to write, plus the fence page word.
+volatile uint32_t native_adreno_selftest[8];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -410,6 +413,37 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
      cb_cp[38]=14;cb_cp[39]=uint64_t(int32_t(crc));IOSleep(8000);return;
     }
     gFenceSeq=2;
+   }
+   // IB self-test inside the page window the CP has already fetched (the GPMU
+   // command page). One CP_MEM_WRITE of three sentinels through the same user
+   // path separates "the CP cannot fetch the user IB" from "the engine cannot
+   // execute an indirect buffer at all" before a user attempt is spent.
+   {
+    volatile uint32_t *fp=(volatile uint32_t*)fence.va;
+    volatile uint32_t *ib=(volatile uint32_t*)gpmu.va+0x80;
+    volatile uint32_t *tgt=(volatile uint32_t*)gpmu.va+0x100;
+    const uint64_t ibVA=gpmu.gva+0x200,tgtVA=gpmu.gva+0x400;
+    ib[0]=CheeseburgerGpu::packet7(0x3d,5);ib[1]=uint32_t(tgtVA);ib[2]=uint32_t(tgtVA>>32);
+    ib[3]=0x5a5a0001u;ib[4]=0x5a5a0002u;ib[5]=0x5a5a0003u;
+    tgt[0]=0;tgt[1]=0;tgt[2]=0;
+    flush_dcache((vm_offset_t)ib,64,FALSE);
+    flush_dcache((vm_offset_t)tgt,64,FALSE);
+    CheeseburgerGpu::Startup<Mmio>::Ib one{ibVA,6};
+    CheeseburgerGpu::Record srec;
+    int src=engine.submit(&one,1,fence.gva,3,fp,srec,ring.bytes/4,0,true);
+    __asm__ volatile("dsb sy":::"memory");
+    flush_dcache((vm_offset_t)tgt,64,FALSE);
+    __asm__ volatile("dsb sy":::"memory");
+    native_adreno_selftest[0]=uint32_t(src);native_adreno_selftest[1]=srec.stage;
+    native_adreno_selftest[2]=tgt[0];native_adreno_selftest[3]=tgt[1];native_adreno_selftest[4]=tgt[2];
+    native_adreno_selftest[5]=srec.fenced?1:0;native_adreno_selftest[6]=uint32_t(ibVA);
+    native_adreno_selftest[7]=*fp;
+    IOLog("CB GPU start: ib selftest rc=%d stage=%u fenced=%u fence=%x tgt=%x/%x/%x ib=%x\n",
+     src,srec.stage,unsigned(srec.fenced),*fp,tgt[0],tgt[1],tgt[2],uint32_t(ibVA));
+    if(src||tgt[0]!=0x5a5a0001u){
+     cb_cp[38]=15;cb_cp[39]=uint64_t(int32_t(src));IOSleep(8000);return;
+    }
+    gFenceSeq=3;
    }
    // The engine and its pages now belong to the persistent GPU service. The
    // probe worker keeps them for the boot lifetime (statics) and never frees

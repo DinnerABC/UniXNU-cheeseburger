@@ -69,6 +69,8 @@ extern volatile uint32_t native_adreno_submit_fence_raw __attribute__((weak_impo
 extern volatile uint32_t native_adreno_submit_atos_rc __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_atos_par __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_atos_expect __attribute__((weak_import));
+extern volatile uint32_t native_adreno_selftest[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pwr[14] __attribute__((weak_import));
 /* Last refused open stage (1 not ready, 2 busy, 3 memory, 4 init, 5 attach, 6 start). */
 extern volatile int native_adreno_open_stage __attribute__((weak_import));
@@ -604,6 +606,24 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_submit_atos_expect,cb_boot_id);
     at=put(out,at,cap,sat,sizeof sat);
    }
+   if (&native_adreno_ib_head[0] && native_adreno_ib_head[0]) {
+    char ibh[160];
+    snprintf(ibh,sizeof ibh,"GIBH %x %x %x %x %x %x %x %x bid=%llx",
+      native_adreno_ib_head[0],native_adreno_ib_head[1],native_adreno_ib_head[2],
+      native_adreno_ib_head[3],native_adreno_ib_head[4],native_adreno_ib_head[5],
+      native_adreno_ib_head[6],native_adreno_ib_head[7],cb_boot_id);
+    at=put(out,at,cap,ibh,sizeof ibh);
+   }
+  }
+  if (&native_adreno_selftest[0] && native_adreno_selftest[6]) {
+   /* Kernel IB self-test in a page the CP already fetched: rc/stage, the fence
+    * word and the three sentinel words the IB was told to write. */
+   char sib[160];
+   snprintf(sib,sizeof sib,"GSIB rc=%d stage=%u fenced=%u fence=%x tgt=%x/%x/%x ib=%x bid=%llx",
+     (int)native_adreno_selftest[0],native_adreno_selftest[1],native_adreno_selftest[5],
+     native_adreno_selftest[7],native_adreno_selftest[2],native_adreno_selftest[3],
+     native_adreno_selftest[4],native_adreno_selftest[6],cb_boot_id);
+   at=put(out,at,cap,sib,sizeof sib);
   }
   if (&native_adreno_pwr[0]) {
    /* Pre-kick core power and CP liveness, sampled while the bus was healthy. */

@@ -32,6 +32,8 @@ volatile uint64_t native_adreno_client_uid=~0ull;
 char native_adreno_client_name[17];
 volatile int native_adreno_open_stage;
 volatile uint64_t native_adreno_abi_opens;
+// First dwords of the first submitted IB, copied from the kernel's own view.
+volatile uint32_t native_adreno_ib_head[8];
 extern "C" void proc_selfname(char *, int);
 char native_adreno_service_text[64];
 volatile int native_adreno_service_ready;
@@ -497,6 +499,14 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
     uint32_t seq=0;
+    // Copy the IB head from the kernel's own mapping before the doorbell: a
+    // non-PM4 first dword or a stale page explains a CP fetch that never
+    // retires, and no GPU MMIO is involved.
+    for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=0;
+    { Bo *ib=find(s.buffers[0].handle);
+      if(ib&&ib->buf){uint32_t head[8]={0};
+        if(ib->buf->readBytes(0,head,sizeof head)==kIOReturnSuccess)
+          for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=head[i];}}
     // Publish all mapped objects, not just IBs: an IB can reference another
     // BO as data or as its GPU writeback destination.
     __asm__ volatile("dsb sy":::"memory");
