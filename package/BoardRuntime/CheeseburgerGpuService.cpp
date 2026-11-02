@@ -39,6 +39,7 @@ int cheeseburger_gpu_engine_wait(uint32_t,uint64_t);
 int cheeseburger_gpu_engine_window(uint64_t *,uint64_t *);
 int cheeseburger_gpu_engine_idle(void);
 int cheeseburger_gpu_engine_failed(void);
+int cheeseburger_gpu_engine_scratch(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
@@ -475,12 +476,47 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
             return kIOReturnBadArgument;
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
-    // The user BOs are mapped after the CP started. engine_submit emits
-    // sagit's page-table update before the IB so the CP can fetch them.
+    // Bring-up test: run the user IB from the probe's pre-mapped GPMU page and
+    // write to a second page there. This separates the command stream from the
+    // runtime user IOVA, which the CP has not fetched so far. Remove after the
+    // boot; the plugin's own BO is untouched and its readback is expected to
+    // differ while this diagnostic is active.
+    bool scratch=false;
+    volatile uint32_t *scratchVA=nullptr;
+    {
+        uint64_t sgva=0;volatile uint32_t *sv=nullptr;unsigned sw=0;
+        Bo *ib=find(s.buffers[0].handle);
+        const unsigned n=dwords[0];
+        if(s.buffer_count>=2&&ib&&ib->buf&&n&&n<=1024&&
+           cheeseburger_gpu_engine_scratch(&sgva,&sv,&sw)==0&&sv&&sw>=1028) {
+            const uint32_t *src=(const uint32_t *)ib->buf->getBytesNoCopy();
+            if(src) {
+                for(unsigned i=0;i<n;++i)sv[i]=src[i];
+                const uint64_t tgt=sgva+0x1000;
+                for(unsigned i=0;i+3<n;i+=4) {
+                    if(((sv[i]>>16)&0x7f)==0x3d) {
+                        const unsigned p=i/4;
+                        sv[i+1]=uint32_t(tgt+p*4);
+                        sv[i+2]=uint32_t((tgt+p*4)>>32);
+                    }
+                }
+                for(unsigned i=0;i<4;++i)sv[1024+i]=0xdeadbeef;
+                flush_dcache((vm_offset_t)sv,4096,FALSE);
+                vas[0]=sgva;dwords[0]=n;scratch=true;scratchVA=sv;
+                IOLog("CB GPU scratch test: ib=%llx target=%llx words=%u\n",
+                    (unsigned long long)sgva,(unsigned long long)(sgva+0x1000),n);
+            }
+        }
+    }
     uint32_t seq=0;
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;
     if(rc){native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;return kIOReturnIOError;}
+    if(scratch&&scratchVA){
+        flush_dcache((vm_offset_t)scratchVA,4096,FALSE);
+        IOLog("CB GPU scratch values: %08x %08x %08x %08x\n",
+            scratchVA[1024],scratchVA[1025],scratchVA[1026],scratchVA[1027]);
+    }
     r.fence=seq;
     native_adreno_service_stats[8]=native_adreno_service_stats[8]+1;
     return kIOReturnSuccess;

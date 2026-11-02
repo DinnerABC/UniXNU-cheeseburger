@@ -1,3 +1,10 @@
+## 2026-11-02 受控启动 `0x439f93bf`：`0x2020000` 窗口 panic，回退并改用预映射 scratch 自检
+
+- 镜像 `1ca0ca37…`、内核 `bfd84b28…`（用户窗口 `0x2020000`）于 11:51:33Z 启动；用户报告显示 panic 屏后黑屏并手动回 Recovery。日志 `out/p21/persistent-logs/20261102T120953Z/`（窗口 `c8d2f258…`）。
+- 日志：探测 fence OK（sec 52），用户 `tag=submit`（sec 81）后心跳停止；msgbuf 到 ~139.6 s；设备未自动返回。panic 文本没有落盘（启动时 `gPanicBase is still not initialized`），所以没有 panic 的具体 pc/寄存器；不得猜测 panic 原因。
+- 唯一变量是用户窗口：上一轮同内核窗口 `0x4000000` 只是停顿并 400 s 自动返回，本轮换到 `0x2020000` 即 panic。已将 `cheeseburger_gpu_engine_window` 回退到 `0x4000000`。
+- 下一步（不改 seed/插件）：把用户 IB 复制到探测阶段已映射、CP 已取过的 GPMU 页（`0x2012000`），把 MEM_WRITE 目标改到同缓冲区的第二页（`0x2013000`），在 fence 后由内核直接回读三值+哨兵。这样可区分“命令流/MEM_WRITE 可用性”与“运行期用户 IOVA 可达性”。候选已构建、未启动：镜像 `f7f8e0b7…`、内核 `6ae33985…`、固件 `7246f5ef…`、payload `b651b863…`，gate `20261102T131811Z` PASS；窗口已回退到 `0x4000000`，seed/trust 不变。设备当前 Recovery，misc BCB 已消费，启动前需重写。
+
 ## 2026-11-02 受控启动 `0x45655a90`：pageTable 更新未解决取指，改测用户 IOVA 窗口
 
 - 镜像 `bcef55af…`、内核 `3ab90dee…`（用户 IB 前发送 sagit pageTable 0x53/0x43，屏障 0x12+0x26）于 11:34:16Z 启动，11:41:06Z 自动回 Recovery。日志 `out/p21/persistent-logs/20261102T114114Z/`（窗口 `74cbb9e6…`）。

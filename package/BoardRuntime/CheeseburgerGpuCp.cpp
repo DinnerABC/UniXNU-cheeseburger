@@ -174,6 +174,11 @@ static void powerCore(W &gp, volatile uint64_t *out){
 static Mmio *gMmio=nullptr;
 static CheeseburgerGpu::Startup<Mmio> *gEngine=nullptr;
 static volatile uint32_t *gRing=nullptr,*gFence=nullptr;
+// The probe GPMU command page is pre-mapped and was already fetched by the CP;
+// expose it as a scratch IB/target page for the user-path bring-up test.
+static volatile uint32_t *gScratchVA=nullptr;
+static uint64_t gScratchGva=0;
+static unsigned gScratchWords=0;
 static uint64_t gRingGva=0,gFenceGva=0;
 static uint32_t gRingWords=0,gFenceSeq=0;
 static IOLock *gSubmitLock=nullptr;
@@ -354,6 +359,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     return;
    }
    cb_cp[38]=4;cb_cp[39]=0;
+   gScratchVA=(volatile uint32_t*)gpmu.va;gScratchGva=gpmu.gva;gScratchWords=gpmu.bytes/4;
    IOLog("CB GPU start: gpmu OK ready=%x err=%x rptr=%x\n",
     uint32_t(m.read(CheeseburgerGpu::GPMUReady)),uint32_t(m.read(CheeseburgerGpu::GPMUError)),
     uint32_t(m.read(CheeseburgerGpu::RBRead)));
@@ -465,6 +471,10 @@ volatile uint32_t native_adreno_submit_stage=0,native_adreno_submit_irq=0,
  native_adreno_submit_preirq=0,native_adreno_submit_precpirq=0;
 volatile uint32_t native_adreno_submit_fenced=0;
 extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1:0;}
+extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t **va,unsigned *words){
+ if(!gScratchVA||!gScratchGva||!gScratchWords)return -1;
+ if(gva)*gva=gScratchGva;if(va)*va=gScratchVA;if(words)*words=gScratchWords;return 0;
+}
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
  if(!gEngine||!gRing||!gFence||!gFenceGva||!gSubmitLock||!seq||count>16||(count&&(!vas||!dwords)))return -1;
@@ -533,12 +543,12 @@ extern "C" int cheeseburger_gpu_engine_idle(void){
  if(r==0xffffffffu||w==0xffffffffu||st==0xffffffffu||st3==0xffffffffu)return -1;
  return (r==w && CheeseburgerGpu::idleStatus(st) && !(st3&(1u<<24)))?0:-2;
 }
-// Address window the user client may map BOs into, placed next to the probe's
-// already-fetched pages (0x2000000-0x2015fff). The CP rejected/stalled on the
-// former 0x4000000 window even after a page-table update, while the probe
-// pages work; keep the user aperture inside the same CP-visible range. One
-// 16 MiB window keeps the 4 KiB leaf tables inside the preallocated cap.
+// Address window the user client may map BOs into. 0x2020000 (beside the
+// probe's fetched pages) panicked the kernel on the first user submission, so
+// it is not used. Keep the original window until the CP-visible aperture is
+// understood from the panic. One 16 MiB window keeps the 4 KiB leaf tables
+// inside the preallocated cap.
 extern "C" int cheeseburger_gpu_engine_window(uint64_t *start,uint64_t *bytes){
  if(!start||!bytes||!gEngine||!gRing)return -1;
- *start=0x2020000ULL;*bytes=0x1000000ULL;return 0;
+ *start=0x4000000ULL;*bytes=0x1000000ULL;return 0;
 }
