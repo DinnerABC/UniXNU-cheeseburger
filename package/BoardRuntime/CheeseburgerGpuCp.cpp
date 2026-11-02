@@ -186,6 +186,11 @@ static volatile uint32_t *gRing=nullptr,*gFence=nullptr;
 static volatile uint32_t *gScratchVA=nullptr;
 static uint64_t gScratchGva=0;
 static unsigned gScratchWords=0;
+// Staging page in the pre-start mapped window; user IB copies are submitted
+// here to separate their content from the runtime user IOVA fetch.
+static volatile uint32_t *gStageVA=nullptr;
+static uint64_t gStageGva=0;
+static unsigned gStageWords=0;
 static uint64_t gRingGva=0,gFenceGva=0;
 static uint32_t gRingWords=0,gFenceSeq=0;
 static IOLock *gSubmitLock=nullptr;
@@ -219,9 +224,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  if(!CB_GPU_FW||!fw.open(gpu_firmware_blob,gpu_firmware_size)){cb_cp[0]=1;return;}
  cb_cp[2]=fw.cpBytes(0);cb_cp[3]=fw.cpBytes(1);cb_cp[4]=fw.gpmuWords();
  if(!fw.cpBytes(0)||!fw.cpBytes(1)||!fw.gpmuWords()){cb_cp[0]=2;return;}
- static Buf ring,pm4,pfp,gpmu,fence;
+ static Buf ring,pm4,pfp,gpmu,fence,stage;
  if(!allocBuf(ring,8192*4)||!allocBuf(pm4,fw.cpBytes(0))||!allocBuf(pfp,fw.cpBytes(1))||
-    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)){cb_cp[0]=3;return;}
+    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)||!allocBuf(stage,16384)){cb_cp[0]=3;return;}
  if(!fw.copyCP(0,pm4.va,pm4.bytes)||!fw.copyCP(1,pfp.va,pfp.bytes)||
     !fw.gpmuCommands((uint32_t*)gpmu.va,gpmu.bytes/4)){cb_cp[0]=4;return;}
  flush_dcache((vm_offset_t)pm4.va,pm4.bytes,FALSE);
@@ -263,7 +268,12 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  cb_cp[25]=ring.gva;cb_cp[26]=pm4.gva;cb_cp[27]=pfp.gva;
  cb_cp[30]=seq;
  if(!mapBuf(gpmu,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=gpmu.bytes;
- if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;}
+ if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;} 
+ // A staging page in the window the CP already fetched. A user command stream
+ // copied here is fetched over the proven path, which separates its content
+ // from the runtime user IOVA.
+ gva+=fence.bytes;
+ if(!mapBuf(stage,gva,seq)){IOSleep(1000);return;}
  cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
  cb_cp[30]=seq;cb_cp[0]=0;
  // Hardware walk of the installed tables before any CP write. A matching PAR
@@ -367,6 +377,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    }
    cb_cp[38]=4;cb_cp[39]=0;
    gScratchVA=(volatile uint32_t*)gpmu.va;gScratchGva=gpmu.gva;gScratchWords=gpmu.bytes/4;
+   gStageVA=(volatile uint32_t*)stage.va;gStageGva=stage.gva;gStageWords=stage.bytes/4;
    IOLog("CB GPU start: gpmu OK ready=%x err=%x rptr=%x\n",
     uint32_t(m.read(CheeseburgerGpu::GPMUReady)),uint32_t(m.read(CheeseburgerGpu::GPMUError)),
     uint32_t(m.read(CheeseburgerGpu::RBRead)));
@@ -537,6 +548,10 @@ volatile uint32_t native_adreno_submit_prefence=0, native_adreno_submit_prefence
 // on the translation instead of being inferred from a silent timeout.
 volatile uint32_t native_adreno_submit_atos_rc=0;
 volatile uint64_t native_adreno_submit_atos_par=0, native_adreno_submit_atos_expect=0;
+// 1 when buffer 0 was replaced by its copy in the pre-start mapped window, so
+// a failure cannot be blamed on the runtime user IOVA.
+volatile uint32_t native_adreno_submit_staged=0;
+volatile uint64_t native_adreno_submit_stage_gva=0;
 // Pre-kick core power and CP liveness. Android's a5xx_pm_resume re-enables the
 // RBCCU/SP domains before every CP use; with them collapsed every RBBM read
 // still succeeds but the CP cannot execute. Sample before a user doorbell so a
@@ -567,6 +582,10 @@ extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1
 extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t **va,unsigned *words){
  if(!gScratchVA||!gScratchGva||!gScratchWords)return -1;
  if(gva)*gva=gScratchGva;if(va)*va=gScratchVA;if(words)*words=gScratchWords;return 0;
+}
+extern "C" int cheeseburger_gpu_engine_stage(uint64_t *gva,volatile uint32_t **va,unsigned *words){
+ if(!gStageVA||!gStageGva||!gStageWords)return -1;
+ if(gva)*gva=gStageGva;if(va)*va=gStageVA;if(words)*words=gStageWords;return 0;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
@@ -636,9 +655,10 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   // pre= are the latches sampled before the doorbell (stale bits), fenced=1
   // means the CPU-visible fence page held the sequence despite the rc.
   static unsigned logged;
-  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u pf=%x/%u fr=%x\n",
+  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u pf=%x/%u fr=%x stg=%u\n",
     rc,rec.stage,s,rec.read,rec.write,rec.irq,rec.cpIrq,rec.preIrq,rec.preCpIrq,
-    (unsigned)rec.fenced,(unsigned)rec.postRead,rec.prefence,(unsigned)(rec.prefenceValid?1:0),rec.fenceRaw);
+    (unsigned)rec.fenced,(unsigned)rec.postRead,rec.prefence,(unsigned)(rec.prefenceValid?1:0),rec.fenceRaw,
+    (unsigned)native_adreno_submit_staged);
  }
  IOLockUnlock(gSubmitLock);
  return rc;

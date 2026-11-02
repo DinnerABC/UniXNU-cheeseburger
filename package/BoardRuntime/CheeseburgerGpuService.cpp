@@ -34,6 +34,11 @@ volatile int native_adreno_open_stage;
 volatile uint64_t native_adreno_abi_opens;
 // First dwords of the first submitted IB, copied from the kernel's own view.
 volatile uint32_t native_adreno_ib_head[8];
+// Up to four (slot, v0, v1, v2) rows read back from the mapped BOs after the
+// submission: the user IB's memory writes land here even without a fence.
+volatile uint32_t native_adreno_bo_dump[16];
+extern volatile uint32_t native_adreno_submit_staged;
+extern volatile uint64_t native_adreno_submit_stage_gva;
 extern "C" void proc_selfname(char *, int);
 char native_adreno_service_text[64];
 volatile int native_adreno_service_ready;
@@ -42,6 +47,7 @@ int cheeseburger_gpu_engine_wait(uint32_t,uint64_t);
 int cheeseburger_gpu_engine_window(uint64_t *,uint64_t *);
 int cheeseburger_gpu_engine_idle(void);
 int cheeseburger_gpu_engine_failed(void);
+int cheeseburger_gpu_engine_stage(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_engine_scratch(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
@@ -499,18 +505,42 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
     uint32_t seq=0;
-    // Copy the IB head from the kernel's own mapping before the doorbell: a
-    // non-PM4 first dword or a stale page explains a CP fetch that never
-    // retires, and no GPU MMIO is involved.
+    // Read the first IB from the kernel's own view and, when the pre-start
+    // staging page exists, submit a copy of it from that proven window. A
+    // runtime user-IOVA fetch failure and a bad command stream then give
+    // different results, and the head shows what the GPU would have fetched.
     for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=0;
+    native_adreno_submit_staged=0;
     { Bo *ib=find(s.buffers[0].handle);
-      if(ib&&ib->buf){uint32_t head[8]={0};
-        if(ib->buf->readBytes(0,head,sizeof head)==kIOReturnSuccess)
-          for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=head[i];}}
+      const uint32_t *src=ib&&ib->buf?(const uint32_t*)ib->buf->getBytesNoCopy():nullptr;
+      __asm__ volatile("dsb sy":::"memory");
+      if(src){
+        for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=src[i];
+        uint64_t sg=0;volatile uint32_t *stage=nullptr;unsigned sw=0;
+        const unsigned words=dwords[0];
+        if(cheeseburger_gpu_engine_stage(&sg,&stage,&sw)==0&&stage&&words&&words<=sw){
+          for(unsigned i=0;i<words;++i)stage[i]=src[i];
+          flush_dcache((vm_offset_t)stage,words*4,FALSE);
+          vas[0]=sg;native_adreno_submit_staged=1;native_adreno_submit_stage_gva=sg;
+        }
+      }
+    }
     // Publish all mapped objects, not just IBs: an IB can reference another
     // BO as data or as its GPU writeback destination.
     __asm__ volatile("dsb sy":::"memory");
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
+    // Kernel-side readback of every mapped BO: the IB's write target is one of
+    // them, and the values show whether the commands ran even without a fence.
+    { unsigned n=0;
+      for(unsigned i=0;i<MaxBo&&n<4;++i){ Bo &b=bos_[i];
+        if(!b.handle||!b.mapped||!b.buf)continue;
+        const uint32_t *p=(const uint32_t*)b.buf->getBytesNoCopy(); if(!p)continue;
+        __asm__ volatile("dsb sy":::"memory");
+        flush_dcache((vm_offset_t)p,64,FALSE);
+        __asm__ volatile("dsb sy":::"memory");
+        native_adreno_bo_dump[n*4]=i;native_adreno_bo_dump[n*4+1]=p[0];
+        native_adreno_bo_dump[n*4+2]=p[1];native_adreno_bo_dump[n*4+3]=p[2];++n; }
+      native_adreno_bo_dump[15]=n; }
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;
     if(rc){native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;return kIOReturnIOError;}
     r.fence=seq;

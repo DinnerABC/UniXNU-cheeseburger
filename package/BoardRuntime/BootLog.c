@@ -71,6 +71,9 @@ extern volatile uint64_t native_adreno_submit_atos_par __attribute__((weak_impor
 extern volatile uint64_t native_adreno_submit_atos_expect __attribute__((weak_import));
 extern volatile uint32_t native_adreno_selftest[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
+extern volatile uint64_t native_adreno_submit_stage_gva __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pwr[14] __attribute__((weak_import));
 /* Last refused open stage (1 not ready, 2 busy, 3 memory, 4 init, 5 attach, 6 start). */
 extern volatile int native_adreno_open_stage __attribute__((weak_import));
@@ -584,8 +587,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   if (&native_adreno_submit_rc) {
    /* The first real submit failure: internal rc/stage and the first captured
     * error IRQs, so the generic user-space IOReturn is not the only record. */
-   char sub[160];
-   snprintf(sub,sizeof sub,"GSUB rc=%d stage=%u irq=%x cpirq=%x pre=%x/%x fenced=%u seq=%u post=%u pf=%x/%u fr=%x bid=%llx",
+   char sub[192];
+   snprintf(sub,sizeof sub,"GSUB rc=%d stage=%u irq=%x cpirq=%x pre=%x/%x fenced=%u seq=%u post=%u pf=%x/%u fr=%x stg=%u bid=%llx",
      (int)native_adreno_submit_rc,native_adreno_submit_stage,native_adreno_submit_irq,
      native_adreno_submit_cpirq,
      &native_adreno_submit_preirq?native_adreno_submit_preirq:0,
@@ -595,6 +598,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      &native_adreno_submit_prefence?native_adreno_submit_prefence:0xdeadbeefu,
      &native_adreno_submit_prefence_valid?native_adreno_submit_prefence_valid:0,
      &native_adreno_submit_fence_raw?native_adreno_submit_fence_raw:0xdeadbeefu,
+     &native_adreno_submit_staged?native_adreno_submit_staged:0xdeadbeefu,
      cb_boot_id);
    at=put(out,at,cap,sub,sizeof sub);
    /* Hardware walk of the user IB before its doorbell: -3 is a translated
@@ -613,6 +617,18 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_ib_head[3],native_adreno_ib_head[4],native_adreno_ib_head[5],
       native_adreno_ib_head[6],native_adreno_ib_head[7],cb_boot_id);
     at=put(out,at,cap,ibh,sizeof ibh);
+   }
+   /* BO content read back by the kernel after the submission: slot and the
+    * first three words, so a memory write that landed without a fence shows. */
+   if (&native_adreno_bo_dump[0] && native_adreno_bo_dump[15]) {
+    char bod[200];
+    snprintf(bod,sizeof bod,"GBOD n=%u %u:%x/%x/%x %u:%x/%x/%x %u:%x/%x/%x bid=%llx",
+      native_adreno_bo_dump[15],
+      native_adreno_bo_dump[0],native_adreno_bo_dump[1],native_adreno_bo_dump[2],native_adreno_bo_dump[3],
+      native_adreno_bo_dump[4],native_adreno_bo_dump[5],native_adreno_bo_dump[6],native_adreno_bo_dump[7],
+      native_adreno_bo_dump[8],native_adreno_bo_dump[9],native_adreno_bo_dump[10],native_adreno_bo_dump[11],
+      cb_boot_id);
+    at=put(out,at,cap,bod,sizeof bod);
    }
   }
   if (&native_adreno_selftest[0] && native_adreno_selftest[6]) {
