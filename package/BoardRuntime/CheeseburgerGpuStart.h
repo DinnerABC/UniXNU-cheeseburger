@@ -338,13 +338,15 @@ public:
             ringCursor = 0;
         }
         unsigned c = ringCursor;
+        // Leave secure mode before any user IB: the secure stream has no
+        // mapping for the user window, so an IB fetched first would fault.
+        ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;          // CP_SET_SECURE_MODE(0)
         for (unsigned i = 0; i < count; ++i) {
             ringPtr[c++] = packet7(0x3f, 3);                        // CP_INDIRECT_BUFFER
             ringPtr[c++] = uint32_t(ibs[i].va);
             ringPtr[c++] = uint32_t(ibs[i].va >> 32);
             ringPtr[c++] = ibs[i].dwords;
         }
-        ringPtr[c++] = packet7(0x66, 1); ringPtr[c++] = 0;          // CP_SET_SECURE_MODE(0)
         ringPtr[c++] = packet7(0x26, 0);                            // CP_WAIT_MEM_WRITES
         ringPtr[c++] = packet7(0x46, 4); ringPtr[c++] = 4 | (1u << 31); // CACHE_FLUSH_TS + IRQ
         ringPtr[c++] = uint32_t(fenceVA); ringPtr[c++] = uint32_t(fenceVA >> 32);

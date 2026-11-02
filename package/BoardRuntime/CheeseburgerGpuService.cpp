@@ -38,8 +38,10 @@ int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,ui
 int cheeseburger_gpu_engine_wait(uint32_t,uint64_t);
 int cheeseburger_gpu_engine_window(uint64_t *,uint64_t *);
 int cheeseburger_gpu_engine_idle(void);
+int cheeseburger_gpu_engine_failed(void);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
+int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 }
 
@@ -104,6 +106,18 @@ OSDefineMetaClassAndStructors(AGXDeviceUserClient,IOUserClient)
 extern "C" IOReturn cheeseburger_gpu_open_client(IOService *,task_t,void *,UInt32,OSDictionary *,
     IOUserClient **);
 
+// Bounded msgbuf trail: the snapshot can stop before the discovery runs, but
+// msgbuf and the heartbeat usually continue. Log the first few outcomes only.
+static void open_trail(const char *what,unsigned stage,UInt32 type,bool abi) {
+    static unsigned seen[8][2];
+    unsigned slot=stage<8?stage:7, kind=abi?1:0;
+    if(seen[slot][kind]++>=3)return;
+    IOLog("CB GPU open: %s stage=%u type=%x abi=%d name=%s ready=%d gate=%d\n",
+        what,stage,(unsigned)type,(int)abi,native_adreno_client_name,
+        (int)native_adreno_service_ready,(int)gGate.open);
+}
+
+
 IOReturn NativeAdrenoGpuService::newUserClient(task_t owningTask,void *securityID,UInt32 type,
     OSDictionary *properties,IOUserClient **handler) {
     return cheeseburger_gpu_open_client(this,owningTask,securityID,type,properties,handler);
@@ -128,7 +142,15 @@ extern "C" IOReturn cheeseburger_gpu_open_client(IOService *provider,task_t owni
         native_adreno_service_stats[17]=type&0xffff;
         return kIOReturnUnsupported;
     }
+    if(cheeseburger_gpu_engine_failed()){
+        // A failed submission may have stalled the CP/bus; refuse new work until
+        // reboot. Busy makes the plugin exit instead of retrying for minutes.
+        native_adreno_open_stage=7;
+        native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
+        return kIOReturnBusy;
+    }
     if(!native_adreno_service_ready){
+        open_trail("refuse",1,type,type==OpenType);
         native_adreno_open_stage=1;
         native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
         return kIOReturnNotReady;
@@ -149,6 +171,7 @@ extern "C" IOReturn cheeseburger_gpu_open_client(IOService *provider,task_t owni
         bool acquired=gGate.acquire(generation);
         IOLockUnlock(gGateLock);
         if(!acquired){
+            open_trail("refuse",2,type,true);
             native_adreno_open_stage=2;
             native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;
             return kIOReturnBusy;
@@ -156,6 +179,7 @@ extern "C" IOReturn cheeseburger_gpu_open_client(IOService *provider,task_t owni
     }
     AGXDeviceUserClient *client=new AGXDeviceUserClient;
     if(!client){
+        open_trail("refuse",3,type,abi);
         native_adreno_open_stage=3;
         if(abi){IOLockLock(gGateLock);gGate.release(generation);IOLockUnlock(gGateLock);}
         return kIOReturnNoMemory;
@@ -163,14 +187,18 @@ extern "C" IOReturn cheeseburger_gpu_open_client(IOService *provider,task_t owni
     if(abi) client->setGeneration(generation);
     client->setAbi(abi);
     if(!client->initWithTask(owningTask,securityID,type,properties)) {
+        open_trail("refuse",4,type,abi);
         native_adreno_open_stage=4;
     } else if(!client->attach(provider)) {
+        open_trail("refuse",5,type,abi);
         native_adreno_open_stage=5;
     } else if(!client->start(provider)) {
+        open_trail("refuse",6,type,abi);
         native_adreno_open_stage=6;
     } else {
         native_adreno_open_stage=0;
         if(abi) native_adreno_abi_opens=native_adreno_abi_opens+1;
+        open_trail("ok",0,type,abi);
         *handler=client;
         return kIOReturnSuccess;
     }
@@ -418,6 +446,31 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
             return kIOReturnBadArgument;
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
+    // The CP can only fetch the IB and its first write target if the hardware
+    // page walk succeeds. Check both before the kick; a failed walk must not
+    // leave the CP fetching an unmapped address.
+    {
+        uint64_t par=0; volatile uint64_t diag[8]={0,0,0,0,0,0,0,0};
+        Bo *ib=find(s.buffers[0].handle);
+        int ibr=cheeseburger_gpu_smmu_atos(vas[0],&par,diag);
+        uint64_t ibpa=0;IOByteCount span=0;
+        if(ib&&ib->buf)ibpa=ib->buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+        static unsigned atos_logged;
+        if(atos_logged++<4)IOLog("CB GPU client atos ib=%llx pa=%llx rc=%d par=%llx\n",
+            (unsigned long long)vas[0],(unsigned long long)ibpa,ibr,(unsigned long long)par);
+        if(ibr){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNoMemory;}
+        if(ib&&ib->buf){
+            const uint32_t *ibw=(const uint32_t *)ib->buf->getBytesNoCopy();
+            if(ibw&&((ibw[0]>>16)&0x7f)==0x3d){
+                uint64_t tgt=uint64_t(ibw[1])|(uint64_t(ibw[2])<<32);
+                uint64_t tpar=0;
+                int tr=cheeseburger_gpu_smmu_atos(tgt,&tpar,diag);
+                if(atos_logged++<5)IOLog("CB GPU client atos tgt=%llx rc=%d par=%llx\n",
+                    (unsigned long long)tgt,tr,(unsigned long long)tpar);
+                if(tr){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNoMemory;}
+            }
+        }
+    }
     uint32_t seq=0;
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;
@@ -435,6 +488,7 @@ IOReturn AGXDeviceUserClient::waitFence(const NativeAdrenoAbiWaitFence &w) {
 }
 IOReturn AGXDeviceUserClient::run(uint32_t method,const void *input,size_t input_size,void *output,size_t output_size) {
     if(!live_||!lock_)return kIOReturnNotReady;
+    if(cheeseburger_gpu_engine_failed())return kIOReturnNotReady;
     native_adreno_service_stats[15]=native_adreno_service_stats[15]+1;
     native_adreno_service_stats[11]=method;
     IOLockLock(lock_);
@@ -630,7 +684,17 @@ done:
 
 extern "C" int cheeseburger_gpu_service_publish(void) {
     if(gService)return 0;
-    cheeseburger_gpu_service_static_init();
+    // Register NativeAdrenoGpuService and AGXDeviceUserClient the same way as
+    // the accelerator: without preModLoad/postModLoad OSMetaClass reports an
+    // internal error and a user-space class query can read a bad metaclass.
+    {
+        void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+        if(!handle)return -5;
+        cheeseburger_gpu_service_static_init();
+        int moderr=OSMetaClass::postModLoad(handle);
+        IOLog("CB GPU service: modload rc=%d\n",moderr);
+        if(moderr)return -6;
+    }
     if(!gGateLock){gGateLock=IOLockAlloc();if(!gGateLock)return -4;}
     uint64_t start=0,bytes=0;
     if(cheeseburger_gpu_engine_window(&start,&bytes))return -1;

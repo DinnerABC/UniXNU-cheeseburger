@@ -313,6 +313,11 @@ Images, private logs and signing material stay out of Git.
 - 发现会先用 type 1（`IOGPUDeviceCreateWithAPIProperty`，API 值在高 16 位）打开 accelerator，
   并可能长期保持该连接；它不是 ABI 客户端。单客户端门只约束 0x4147：其它类型作为 observer
   创建，`externalMethod`/`clientMemoryForType` 一律拒绝，环/SMMU/BO 仍只属于一个 ABI 客户端。
+- 发现逐进程执行：每个查询 Metal 的进程各自加载插件并调用 `initWithAcceleratorPort:`（已见
+  mediaserverd）。`NativeSandboxGrantProcess` 必须是包含这些宿主的逗号列表（backboardd/
+  mediaserverd/SpringBoard）；未列出的宿主 open 被 sandbox 静默拒绝，内核看不到 marker。
+- 400 s 自动复位另有独立守护线程（不 IOLog、不写 UFS），在 `requested+10 s` 直接发 PSCI，
+  防止日志/console 锁阻止返回；主线程仍负责 mark/smc 记录。
 - 插件以 0x4147 open 客户端，走与探针相同的 P1（Query→BO→Map→Submit→Fence→CPU 回读）；
   marker 用 0x4147xxxx 的 open（低半非零）即可在无连接时记录进度。boot 日志/快照可能提前
   停止而心跳与 400 s 自动复位继续，是否执行以 marker、`GPSVC`、`GOPEN`、插件标记文件和

@@ -78,6 +78,8 @@ launchd.log 在 Data 卷 `/private/var/log/com.apple.xpc.launchd/launchd.log`。
 
 - IOGPUFamily 只是被 prelink 并不会注册 `IOAcceleratorES`；必须像上游 `GpuPowerProbe` 一样调用 `OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily")`，再用 `OSMetaClass::preModLoad` + 本类 `__GLOBAL__sub_I` + `postModLoad` 注册 owner 类，最后 attach 到 `IOService::getPlatform()` 并 `registerService()`。
 - 加速器构造/析构/元类地址按本机 prelink 布局静态审计：`accelerator-original-bindings.S` 里的三个地址在多次重编 prelink 后保持不变（Apple 组件按 donor+slide 放置）。
+- 发现是**逐进程**的：每个查询 Metal 的进程都会加载自己的插件副本并调用 `initWithAcceleratorPort:`。本机已观察到插件在 **mediaserverd（pid 29）** 中执行（`/private/var/tmp/p21-plugin.txt` 的 `enter pid=29`）；grant 名单必须包含这些宿主（已改为 `backboardd,mediaserverd,SpringBoard`，逗号列表由内核 grant 解析）。未列入的宿主 open 会被 sandbox 静默拒绝（内核看不到 marker）。
+- 快照/持久写线程偶发在 80–105 s 卡住；`CheeseburgerAutoReset` 现在另起一个**不写日志/不碰 UFS 的守护线程**，在 `requested+10 s` 直接发 PSCI，避免日志锁阻止自动回 Recovery（主线程仍做 mark/smc 记录）。
 - 发现**会自己 open 一次** accelerator（原始 `IOGPUDeviceCreateWithAPIProperty`，open type 1，API 值在 type 高 16 位），该连接可能一直保持；它不属于我们的 ABI。
 - 金属发现要求 principal class 是 `_MTLDevice` 子类（私有基类），否则属性被读、accelerator 被 open/close，但 `initWithAcceleratorPort:` 从不调用。
 - 单客户端门改为只约束 0x4147 ABI 客户端：其它类型的连接作为 observer 创建，但 `externalMethod` 与 `clientMemoryForType` 一律拒绝，环/SMMU/BO 仍只属于一个 ABI 客户端。

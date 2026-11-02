@@ -122,6 +122,11 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
 
 @implementation NativeAdrenoMetalDevice
 - (id)initWithAcceleratorPort:(unsigned)port {
+    // The discovery may instantiate the plugin many times in one process; run
+    // the hardware test once and keep later instances from allocating again.
+    static bool attempted = false;
+    if (attempted) return nil;
+    attempted = true;
     line("P21PLUGIN stage=enter port=%u pid=%d", port, (int)getpid());
     note("enter pid=%d port=%u", (int)getpid(), port);
     marker(port, 1);
@@ -137,6 +142,8 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
             break;
         }
         c.error = (int)kr;
+        // Another instance owns the single ABI client: do not spin.
+        if (kr == kIOReturnBusy) { note("busy"); marker(port, 3); return nil; }
         marker(port, 3);
         usleep(500000);
     }
@@ -145,6 +152,26 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
         note("noopen e%x", (unsigned)c.error);
         return nil;
     }
+    // Release everything on every path: a leaked connection and its BOs kept
+    // the SMMU mappings alive and stressed the client teardown.
+    NativeAdrenoAbiBoAllocReply ib = {}, tgt = {};
+    uint32_t ibTok = 0, tgtTok = 0;
+    mach_vm_address_t ibAddr = 0, tgtAddr = 0;
+    struct Guard {
+        Ctx &c;
+        NativeAdrenoAbiBoAllocReply &ib, &tgt;
+        uint32_t &ibTok, &tgtTok;
+        mach_vm_address_t &ibAddr, &tgtAddr;
+        ~Guard() {
+            if (ibAddr && ibTok) IOConnectUnmapMemory64(c.conn, ibTok, mach_task_self(), ibAddr);
+            if (tgtAddr && tgtTok) IOConnectUnmapMemory64(c.conn, tgtTok, mach_task_self(), tgtAddr);
+            if (ibTok) { NativeAdrenoAbiBoCpuUnmap u = {ib.handle, ibTok, 0}; call(c, NativeAdrenoMethodBoCpuUnmap, &u, (NativeAdrenoAbiTimestamp *)nullptr); }
+            if (tgtTok) { NativeAdrenoAbiBoCpuUnmap u = {tgt.handle, tgtTok, 0}; call(c, NativeAdrenoMethodBoCpuUnmap, &u, (NativeAdrenoAbiTimestamp *)nullptr); }
+            if (ib.handle) { NativeAdrenoAbiBoFree f = {ib.handle}; call(c, NativeAdrenoMethodBoFree, &f, (NativeAdrenoAbiTimestamp *)nullptr); }
+            if (tgt.handle) { NativeAdrenoAbiBoFree f = {tgt.handle}; call(c, NativeAdrenoMethodBoFree, &f, (NativeAdrenoAbiTimestamp *)nullptr); }
+            if (c.conn) IOServiceClose(c.conn);
+        }
+    } guard{c, ib, tgt, ibTok, tgtTok, ibAddr, tgtAddr};
     NativeAdrenoAbiParams params = {};
     if (!checked(c, callOut(c, NativeAdrenoMethodQuery, &params), "query")) return nil;
     marker(port, 4);
@@ -156,7 +183,6 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
         (unsigned long long)info.va_start, (unsigned long long)info.va_size);
 
     NativeAdrenoAbiBoAlloc alloc = {4096, 12, 1}, alloc2 = {4096, 12, 1};
-    NativeAdrenoAbiBoAllocReply ib = {}, tgt = {};
     if (!checked(c, call(c, NativeAdrenoMethodBoAlloc, &alloc, &ib), "alloc-ib")) return nil;
     if (!checked(c, call(c, NativeAdrenoMethodBoAlloc, &alloc2, &tgt), "alloc-tgt")) return nil;
     const uint64_t ibIova = info.va_start, tgtIova = info.va_start + 0x1000;
@@ -168,10 +194,10 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
     NativeAdrenoAbiBoCpuMapReply crIb = {}, crTgt = {};
     if (!checked(c, call(c, NativeAdrenoMethodBoCpuMap, &cmIb, &crIb), "cpumap-ib")) return nil;
     if (!checked(c, call(c, NativeAdrenoMethodBoCpuMap, &cmTgt, &crTgt), "cpumap-tgt")) return nil;
-    mach_vm_address_t ibAddr = 0, tgtAddr = 0;
+    ibTok = crIb.token; tgtTok = crTgt.token;
     mach_vm_size_t ibLen = 0, tgtLen = 0;
-    if (!checked(c, IOConnectMapMemory64(c.conn, crIb.token, mach_task_self(), &ibAddr, &ibLen, 1), "mapmem-ib")) return nil;
-    if (!checked(c, IOConnectMapMemory64(c.conn, crTgt.token, mach_task_self(), &tgtAddr, &tgtLen, 1), "mapmem-tgt")) return nil;
+    if (!checked(c, IOConnectMapMemory64(c.conn, ibTok, mach_task_self(), &ibAddr, &ibLen, 1), "mapmem-ib")) return nil;
+    if (!checked(c, IOConnectMapMemory64(c.conn, tgtTok, mach_task_self(), &tgtAddr, &tgtLen, 1), "mapmem-tgt")) return nil;
     if (ibLen < 4096 || tgtLen < 4096) {
         c.error = 0xbad1;
         report(c, "maplen", 0);
@@ -219,18 +245,9 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
         IOConnectCallMethod(c.conn, NativeAdrenoMethodSetMetadata, nullptr, 0, &meta, sizeof meta,
             nullptr, nullptr, nullptr, nullptr);
     }
-    IOConnectUnmapMemory64(c.conn, crIb.token, mach_task_self(), ibAddr);
-    IOConnectUnmapMemory64(c.conn, crTgt.token, mach_task_self(), tgtAddr);
-    NativeAdrenoAbiBoCpuUnmap ui = {ib.handle, crIb.token, 0}, ut = {tgt.handle, crTgt.token, 0};
-    call(c, NativeAdrenoMethodBoCpuUnmap, &ui, (NativeAdrenoAbiTimestamp *)nullptr);
-    call(c, NativeAdrenoMethodBoCpuUnmap, &ut, (NativeAdrenoAbiTimestamp *)nullptr);
-    NativeAdrenoAbiBoFree fi = {ib.handle}, ft = {tgt.handle};
-    call(c, NativeAdrenoMethodBoFree, &fi, (NativeAdrenoAbiTimestamp *)nullptr);
-    call(c, NativeAdrenoMethodBoFree, &ft, (NativeAdrenoAbiTimestamp *)nullptr);
     line("P21PLUGIN stage=idle verified=%d", verified);
     note("done verified=%d", verified);
     marker(port, 7);
-    IOServiceClose(c.conn);
     // Stage 1: no device is returned, so backboardd keeps the software renderer.
     return nil;
 }

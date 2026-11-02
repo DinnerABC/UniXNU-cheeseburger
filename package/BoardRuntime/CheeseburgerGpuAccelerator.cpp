@@ -68,7 +68,10 @@ extern "C" IOService *cheeseburger_gpu_accelerator_allocate(void) {
     }
     OSString *plugin = OSString::withCString("NativeAdrenoMetal");
     OSString *pluginClass = OSString::withCString("NativeAdrenoMetalDevice");
-    OSString *grant = OSString::withCString("backboardd");
+    // Every process that runs the original discovery loads its own copy of the
+    // plugin; the observed hosts so far are the render server, the media server
+    // and SpringBoard. The kernel grant accepts the comma-separated list.
+    OSString *grant = OSString::withCString("backboardd,mediaserverd,SpringBoard");
     if (plugin) accel->setProperty("MetalPluginName", plugin);
     if (pluginClass) accel->setProperty("MetalPluginClassName", pluginClass);
     if (grant) accel->setProperty("NativeSandboxGrantProcess", grant);

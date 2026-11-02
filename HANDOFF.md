@@ -1,5 +1,7 @@
 ## 2026-11-02 GPU 用户态迁移（官方插件路线，进行中）
 
+**最新状态（21:40Z）**：为了在快照提前停止时仍能看到插件 open 的拒绝阶段，本轮在 open 路径加了限流 `IOLog`，并让 CBHB tick 心跳附带 `m/l/o/s/a`（marker/最后 marker/open/拒绝阶段/ABI open）。候选镜像 `ae1bb6db…`、内核 `73bbf95f…`、固件 `e1bf2f9a…`、payload `b6482609…` 于 21:27:48Z 启动后**没有自动回到 Recovery**（超过 12 分钟 adb/fastboot 均不可见），与此前每轮 400 s 自动返回不同。不要重复启动；需要用户检查屏幕并手动回到 Recovery 后先回收该 boot 的日志，再决定是否回退本轮诊断改动。可疑点：open 路径的 `IOLog` 与 auto-reset 线程的 `IOLog` 共享 console/msgbuf 锁（项目已知该锁可能阻止 400 s 复位）；下一版应去掉 open 路径 IOLog，只保留心跳字段（心跳不经 msgbuf）。
+
 用户决定按上游（UniXNU/UniXNU-sheng）方式迁移 GPU 用户态。已完成从“自建 launchd 作业”到“**IOAcceleratorES + 插件在 backboardd 内运行**”的切换，并推进到插件实际执行、用户态客户端建立连接。**尚未完成 P1 的 BO/submit/fence/回读**。
 
 - 关键实现（已提交源码）：

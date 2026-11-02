@@ -455,9 +455,14 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
 // way a user request reaches the CP. Each submit waits for its own fence, so
 // the ring is idle when it wraps and a later BO cannot be freed under an
 // in-flight fetch.
+static bool gEngineSubmitFailed=false;
+extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1:0;}
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
  if(!gEngine||!gRing||!gFence||!gFenceGva||!gSubmitLock||!seq||count>16||(count&&(!vas||!dwords)))return -1;
+ // A submission that failed may have left the CP fetching a bad IB. Fail closed:
+ // no further submission until reboot (the failure record names rc/stage).
+ if(gEngineSubmitFailed)return -2;
  CheeseburgerGpu::Startup<Mmio>::Ib ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
  IOLockLock(gSubmitLock);
@@ -465,6 +470,13 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  CheeseburgerGpu::Record rec;
  int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords);
  if(rc==0){gFenceSeq=s;*seq=s;}
+ else {
+  gEngineSubmitFailed=true;
+  // Bounded: a failing submission must say why (stage/rc/ring pointers).
+  static unsigned logged;
+  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x\n",
+    rc,rec.stage,s,rec.read,rec.write);
+ }
  IOLockUnlock(gSubmitLock);
  return rc;
 }
@@ -484,6 +496,10 @@ extern "C" int cheeseburger_gpu_engine_wait(uint32_t seq,uint64_t timeout_ns){
 // whole ring and reports the reset idle status may release a mapped BO.
 extern "C" int cheeseburger_gpu_engine_idle(void){
  if(!gEngine||!gMmio||!gSubmitLock)return -1;
+ // After a failed submission the CP may be fetching a bad IB and the GPU AHB
+ // can be stalled; a register read here can hang the caller. Report unknown so
+ // the BO policy keeps every mapping instead of touching that bus.
+ if(gEngineSubmitFailed)return -1;
  // 1 only after reset read back both stop controls halted. An abandoned or
  // not-started engine without that readback is unknown, not stopped.
  const bool confirmed=gEngine->haltConfirmed();
