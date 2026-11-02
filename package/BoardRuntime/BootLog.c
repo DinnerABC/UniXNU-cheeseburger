@@ -65,7 +65,11 @@ extern volatile uint32_t native_adreno_submit_precpirq __attribute__((weak_impor
 extern volatile uint32_t native_adreno_submit_fenced __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_prefence __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_prefence_valid __attribute__((weak_import));
-extern volatile uint32_t native_adreno_pwr[10] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_fence_raw __attribute__((weak_import));
+extern volatile uint32_t native_adreno_submit_atos_rc __attribute__((weak_import));
+extern volatile uint64_t native_adreno_submit_atos_par __attribute__((weak_import));
+extern volatile uint64_t native_adreno_submit_atos_expect __attribute__((weak_import));
+extern volatile uint32_t native_adreno_pwr[14] __attribute__((weak_import));
 /* Last refused open stage (1 not ready, 2 busy, 3 memory, 4 init, 5 attach, 6 start). */
 extern volatile int native_adreno_open_stage __attribute__((weak_import));
 extern volatile uint64_t native_adreno_abi_opens __attribute__((weak_import));
@@ -481,6 +485,15 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    snprintf(cp,sizeof cp,"GCP15 fsrb=%llx fsynrb=%llx farb=%llx ttbr=%llx/%llx tcr=%llx root=%llx bid=%llx",
      cb_cp[120],cb_cp[121],cb_cp[122],cb_cp[123],cb_cp[124],cb_cp[125],cb_cp[126],cb_boot_id);
    at=put(out,at,cap,cp,sizeof cp);
+   /* Kernel user-path control fence after the probe: rc/stage and the fence
+    * page word (the CP's RPTR shadow shares dword 0). Only printed once the
+    * control actually ran, so a zero slot cannot read as a success. */
+   if (cb_cp[127]) {
+    snprintf(cp,sizeof cp,"GCTL rc=%d stage=%llu fence=%llx bid=%llx",
+      (int)(int16_t)(uint16_t)(cb_cp[127]&0xffffu),cb_cp[127]>>48,
+      (cb_cp[127]>>16)&0xffffffffu,cb_boot_id);
+    at=put(out,at,cap,cp,sizeof cp);
+   }
    snprintf(cp,sizeof cp,"KEY bid=%llx clk=%x/%x/%x trust=%x stg=%llu rc=%llx r=%llx w=%llx cpfsr=%llx gfsr=%llx hberr=%u frames=%llu",
      cb_boot_id,(uint32_t)(cb_cp[56]),(uint32_t)(cb_cp[57]),(uint32_t)(cb_cp[58]),(uint32_t)(cb_cp[48]),
      cb_cp[38],cb_cp[39],cb_cp[42],cb_cp[43],(uint32_t)(cb_cp[53]),(uint32_t)(cb_cp[54]),
@@ -570,7 +583,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    /* The first real submit failure: internal rc/stage and the first captured
     * error IRQs, so the generic user-space IOReturn is not the only record. */
    char sub[160];
-   snprintf(sub,sizeof sub,"GSUB rc=%d stage=%u irq=%x cpirq=%x pre=%x/%x fenced=%u seq=%u post=%u pf=%x/%u bid=%llx",
+   snprintf(sub,sizeof sub,"GSUB rc=%d stage=%u irq=%x cpirq=%x pre=%x/%x fenced=%u seq=%u post=%u pf=%x/%u fr=%x bid=%llx",
      (int)native_adreno_submit_rc,native_adreno_submit_stage,native_adreno_submit_irq,
      native_adreno_submit_cpirq,
      &native_adreno_submit_preirq?native_adreno_submit_preirq:0,
@@ -579,16 +592,27 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      native_adreno_submit_seq,native_adreno_submit_post,
      &native_adreno_submit_prefence?native_adreno_submit_prefence:0xdeadbeefu,
      &native_adreno_submit_prefence_valid?native_adreno_submit_prefence_valid:0,
+     &native_adreno_submit_fence_raw?native_adreno_submit_fence_raw:0xdeadbeefu,
      cb_boot_id);
    at=put(out,at,cap,sub,sizeof sub);
+   /* Hardware walk of the user IB before its doorbell: -3 is a translated
+    * page that does not match the software leaf, other codes are ATOS faults. */
+   if (native_adreno_submit_atos_rc || native_adreno_submit_atos_expect) {
+    char sat[120];
+    snprintf(sat,sizeof sat,"GSAT atos=%d par=%llx expect=%llx bid=%llx",
+      (int)native_adreno_submit_atos_rc,native_adreno_submit_atos_par,
+      native_adreno_submit_atos_expect,cb_boot_id);
+    at=put(out,at,cap,sat,sizeof sat);
+   }
   }
   if (&native_adreno_pwr[0]) {
    /* Pre-kick core power and CP liveness, sampled while the bus was healthy. */
-   char pw[160];
-   snprintf(pw,sizeof pw,"GPWR pre=%x/%x sp=%x/%x post=%x/%x me/vbif=%x st=%x micro=%x/%d bid=%llx",
+   char pw[224];
+   snprintf(pw,sizeof pw,"GPWR pre=%x/%x sp=%x/%x post=%x/%x me/vbif=%x st=%x micro=%x/%d gpmu=%x/%x cpirq=%x irq=%x bid=%llx",
      native_adreno_pwr[0],native_adreno_pwr[1],native_adreno_pwr[2],native_adreno_pwr[3],
      native_adreno_pwr[4],native_adreno_pwr[5],native_adreno_pwr[6],native_adreno_pwr[7],
-     native_adreno_pwr[8],(int)native_adreno_pwr[9],cb_boot_id);
+     native_adreno_pwr[8],(int)native_adreno_pwr[9],native_adreno_pwr[10],native_adreno_pwr[11],
+     native_adreno_pwr[12],native_adreno_pwr[13],cb_boot_id);
    at=put(out,at,cap,pw,sizeof pw);
   }
   if (&native_adreno_client_name[0]) {

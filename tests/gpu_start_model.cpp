@@ -352,13 +352,14 @@ int main() {
         const int rc = engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords, 0, true);
         check(m.userReadsAfterDoorbell == 0, "cpufence/no-mmio-read");
         check(complete ? (rc == 0 && rec.fenced) : (rc == -4 && rec.abandoned && !rec.converged), "cpufence/result");
-        // sheng invalidates the CB TLB before every user doorbell, and the
-        // pre-IB probe word must be in the ring before the indirect buffer.
+        // sheng invalidates the CB TLB before every user doorbell; the pre-IB
+        // probe word must be retired (wait-for-writes/idle) before the IB.
         check(m.invalidateCalls == 1, "cpufence/tlb-invalidate");
         check(ring[20] == packet7(0x46, 4) && ring[22] == 0x2015004 &&
-              ring[25] == packet7(0x3f, 3) && ring[26] == 0x4000000, "cpufence/prefence-before-ib");
+              ring[25] == packet7(0x12, 0) && ring[26] == packet7(0x26, 0) &&
+              ring[27] == packet7(0x3f, 3) && ring[28] == 0x4000000, "cpufence/prefence-before-ib");
         check(rec.prefenceValid || complete, "cpufence/prefence-valid");
-        if (complete) check(fence[1] == (0xC0DE0000u | 2), "cpufence/prefence-written");
+        if (complete) check(fence[1] == (0x1000u | 2), "cpufence/prefence-written");
         else check(fence[1] == 0 && rec.prefence == 0, "cpufence/prefence-unwritten");
     }
 

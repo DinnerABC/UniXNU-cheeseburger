@@ -68,6 +68,10 @@ struct Record {
     // stall to the user IB fetch instead of the doorbell/ring.
     uint32_t prefence = 0;
     bool prefenceValid = false;
+    // Raw fence-page word after a timeout. The CP's RPTR shadow shares this
+    // page, so a non-zero value the kernel did not write means the CP consumed
+    // ring entries even when the completion fence never fired.
+    uint32_t fenceRaw = 0;
     bool fenced = false;     // the fence page held the sequence despite the rc
     bool abandoned = false;
     bool postRead = false;   // a post-failure bus read happened (must stay false)
@@ -400,10 +404,10 @@ public:
         for (unsigned i = 0; i < 1000 && rd(RBRead) != hw; ++i) r.delay(10);
         if (rd(RBRead) != hw) { fail(rec, -45, 7); return rec.rc; }
         // Worst case: optional transition (3) + page table (20) + prefence (5)
-        // + barrier (2) + CACHE_FLUSH_TS (5) + IBs.
+        // + pre-IB barrier (2) + barrier (2) + CACHE_FLUSH_TS (5) + IBs.
         const bool userPath = cpuFenceOnly;
         const bool prefence = userPath && count != 0;
-        const unsigned need = count * 4 + 7 + (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3) +
+        const unsigned need = count * 4 + 9 + (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3) +
             (prefence ? 5 : 0);
         if (need > ringDwords) { fail(rec, -43, 7); return rec.rc; }
         if (ringCursor + need >= ringDwords) {
@@ -426,11 +430,19 @@ public:
             // dword of the CPU-owned fence page; the user IB and its target
             // are untouched. A set word with no real fence means the ring and
             // doorbell still work and the stall is the user IB translation.
+            // A plain timestamp value and no IRQ flag: a value with bit 31 set
+            // or an interrupt could make the CP treat the probe itself as an
+            // error, which would hide whether the ring is consumed at all.
             ringPtr[ringCursor++] = packet7(0x46, 4);                // CACHE_FLUSH_TS
-            ringPtr[ringCursor++] = 4 | (1u << 31);
+            ringPtr[ringCursor++] = 4;
             ringPtr[ringCursor++] = uint32_t(fenceVA + 4);
             ringPtr[ringCursor++] = uint32_t((fenceVA + 4) >> 32);
-            ringPtr[ringCursor++] = 0xC0DE0000u | (sequence & 0xffffu);
+            ringPtr[ringCursor++] = 0x1000u | (sequence & 0xfffu);
+            // Retire that write before the IB is fetched. Without this the
+            // timestamp can still sit in the CP's write buffer when an IB fetch
+            // stalls, and pf=0 cannot be told apart from "the ring never ran".
+            putPacket(0x12, nullptr, 0);                            // CP_WAIT_MEM_WRITES
+            putPacket(0x26, nullptr, 0);                            // CP_WAIT_FOR_IDLE
         }
         for (unsigned i = 0; i < count; ++i) {
             ringPtr[ringCursor++] = packet7(0x3f, 3);                // CP_INDIRECT_BUFFER
@@ -493,6 +505,7 @@ public:
             r.clean((volatile void *)fenceCPU, prefence ? 8 : 4);
             rec.prefenceValid = prefence;
             rec.prefence = prefence ? fenceCPU[1] : 0;
+            rec.fenceRaw = fenceCPU[0];
             rec.rc = -4; rec.stage = 3; rec.abandoned = true;
             rec.converged = false; abandonedFlag = true;
             resetDone = false; runningFlag = false; haltAck = false;

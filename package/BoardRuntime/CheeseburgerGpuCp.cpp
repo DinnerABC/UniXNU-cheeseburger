@@ -392,11 +392,30 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     return;
    }
    IOLog("CB GPU start: fence OK seq=%x\n",*(volatile uint32_t*)fence.va);
+   // Post-probe user-path control: the exact primitive the user client uses
+   // (CPU fence only, no post-doorbell MMIO) with no indirect buffer. If this
+   // fence completes, the ring, doorbell and fence page still work after the
+   // probe; a later user failure then belongs to the user IB, not the engine.
+   {
+    CheeseburgerGpu::Record ctl;
+    volatile uint32_t *fp=(volatile uint32_t*)fence.va;
+    int crc=engine.submit(nullptr,0,fence.gva,2,fp,ctl,ring.bytes/4,0,true);
+    __asm__ volatile("dsb sy":::"memory");
+    flush_dcache((vm_offset_t)fence.va,4096,FALSE);
+    __asm__ volatile("dsb sy":::"memory");
+    const uint32_t fraw=*fp;
+    cb_cp[127]=uint64_t(uint16_t(uint32_t(crc)))|(uint64_t(fraw)<<16)|(uint64_t(ctl.stage&0xff)<<48);
+    IOLog("CB GPU start: userpath fence rc=%d stage=%u seq=2 fence=%x\n",crc,ctl.stage,fraw);
+    if(crc){
+     cb_cp[38]=14;cb_cp[39]=uint64_t(int32_t(crc));IOSleep(8000);return;
+    }
+    gFenceSeq=2;
+   }
    // The engine and its pages now belong to the persistent GPU service. The
    // probe worker keeps them for the boot lifetime (statics) and never frees
    // them; submission from userland is serialized by gSubmitLock.
    gRing=(volatile uint32_t*)ring.va;gRingGva=ring.gva;gRingWords=ring.bytes/4;
-   gFence=(volatile uint32_t*)fence.va;gFenceGva=fence.gva;gFenceSeq=1;
+   gFence=(volatile uint32_t*)fence.va;gFenceGva=fence.gva;
    unsigned svc=0;
    if(PE_parse_boot_argn("cheeseburger-gpu-service",&svc,sizeof svc)&&svc==1){
     int prc=cheeseburger_gpu_service_publish();
@@ -475,14 +494,20 @@ volatile uint32_t native_adreno_submit_stage=0,native_adreno_submit_irq=0,
  native_adreno_submit_preirq=0,native_adreno_submit_precpirq=0;
 volatile uint32_t native_adreno_submit_fenced=0;
 // CPU-owned word the ring writes before the user IB. pf=0xdeadbeef means the
-// probe was not present; a C0DE.... value with rc=-4 means the ring and
-// doorbell ran and the stall is the user IB translation/fetch.
-volatile uint32_t native_adreno_submit_prefence=0, native_adreno_submit_prefence_valid=0;
+// probe was not present; a 0x1000|seq value with rc=-4 means the ring, the
+// prefence barrier and the doorbell ran and the stall is after the prefence.
+volatile uint32_t native_adreno_submit_prefence=0, native_adreno_submit_prefence_valid=0,
+ native_adreno_submit_fence_raw=0;
+// SMMU hardware walk of the first user IB before its doorbell: rc plus the raw
+// PAR and the software leaf's expected page, so a fetch failure can be placed
+// on the translation instead of being inferred from a silent timeout.
+volatile uint32_t native_adreno_submit_atos_rc=0;
+volatile uint64_t native_adreno_submit_atos_par=0, native_adreno_submit_atos_expect=0;
 // Pre-kick core power and CP liveness. Android's a5xx_pm_resume re-enables the
 // RBCCU/SP domains before every CP use; with them collapsed every RBBM read
 // still succeeds but the CP cannot execute. Sample before a user doorbell so a
 // stopped engine is distinguishable from a ring that was never consumed.
-volatile uint32_t native_adreno_pwr[10];
+volatile uint32_t native_adreno_pwr[14];
 extern "C" int cheeseburger_gpu_pre_kick(void){
  if(!gMmio||!gMmio->v)return -1;
  W gp;gp.v=gMmio->v;
@@ -494,6 +519,10 @@ extern "C" int cheeseburger_gpu_pre_kick(void){
  native_adreno_pwr[7]=gMmio->read(CheeseburgerGpu::Status);
  native_adreno_pwr[8]=uint32_t(cheeseburger_gpu_smmu_micro());
  native_adreno_pwr[9]=uint32_t(cheeseburger_gpu_smmu_resume_micro());
+ native_adreno_pwr[10]=gMmio->read(CheeseburgerGpu::GPMUReady);
+ native_adreno_pwr[11]=gMmio->read(CheeseburgerGpu::GPMUError);
+ native_adreno_pwr[12]=gMmio->read(CheeseburgerGpu::CPInterruptStatus);
+ native_adreno_pwr[13]=gMmio->read(CheeseburgerGpu::InterruptStatus);
  // Do not ring a CP with a collapsed core or a halted/unreadable micro-MMU.
  if(out[4]==0xffffffffu||out[5]==0xffffffffu||
     !(out[4]&(1u<<20))||!(out[5]&(1u<<20)))return -2;
@@ -529,6 +558,26 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   IOLockUnlock(gSubmitLock);return pwr;
  }
  uint32_t s=gFenceSeq+1;if(!s)s=1;
+ // Hardware translation gate for every IB. sheng invalidates the CB TLB per
+ // submission; a leaf the SMMU walk cannot resolve stalls the CP fetch with no
+ // CPU-visible record, and this board must not read GPU MMIO after a failed
+ // kick. Compare the raw PAR with the software leaf and fail closed before the
+ // doorbell instead of ringing an unfetchable IB.
+ int atosRc=0;uint64_t atosPar=0,atosExpect=0;
+ for(unsigned i=0;i<count&&!atosRc;++i){
+  uint64_t pte=0;
+  if(cheeseburger_gpu_smmu_lookup(vas[i],&pte)){atosRc=-1;break;}
+  atosExpect=pte&0x0000fffffffff000ull;
+  int arc=cheeseburger_gpu_smmu_atos(vas[i],&atosPar,nullptr);
+  if(!CheeseburgerGpu::atosMatches(arc,atosPar,atosExpect))atosRc=arc?arc:-3;
+ }
+ native_adreno_submit_atos_rc=uint32_t(atosRc);
+ native_adreno_submit_atos_par=atosPar;native_adreno_submit_atos_expect=atosExpect;
+ if(count)IOLog("CB GPU engine: atos rc=%d par=%llx expect=%llx\n",atosRc,atosPar,atosExpect);
+ if(atosRc){
+  native_adreno_submit_rc=atosRc;native_adreno_submit_stage=0x81;native_adreno_submit_seq=s;
+  IOLockUnlock(gSubmitLock);return atosRc;
+ }
  CheeseburgerGpu::Record rec;
  // The probe's own streams fetch from 0x2000000 without any CP_SMMU_TABLE_UPDATE,
  // so the SMMU CB0 TTBR0 installed by the kernel is the translation the CP uses.
@@ -547,14 +596,15 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   native_adreno_submit_fenced=rec.fenced?1:0;
   native_adreno_submit_prefence=rec.prefence;
   native_adreno_submit_prefence_valid=rec.prefenceValid?1:0;
+  native_adreno_submit_fence_raw=rec.fenceRaw;
   // Bounded: a failing submission must say why. Unknown registers are
   // 0xffffffff and postRead=0 means they were never sampled after failure.
   // pre= are the latches sampled before the doorbell (stale bits), fenced=1
   // means the CPU-visible fence page held the sequence despite the rc.
   static unsigned logged;
-  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u pf=%x/%u\n",
+  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u pf=%x/%u fr=%x\n",
     rc,rec.stage,s,rec.read,rec.write,rec.irq,rec.cpIrq,rec.preIrq,rec.preCpIrq,
-    (unsigned)rec.fenced,(unsigned)rec.postRead,rec.prefence,(unsigned)(rec.prefenceValid?1:0));
+    (unsigned)rec.fenced,(unsigned)rec.postRead,rec.prefence,(unsigned)(rec.prefenceValid?1:0),rec.fenceRaw);
  }
  IOLockUnlock(gSubmitLock);
  return rc;
