@@ -1,3 +1,15 @@
+## 2026-11-04：P21-Raven 结果（内联 IB 仍不动；fence 与 RPTR shadow 冲突）· P21-Crane
+
+- **P21-Raven 实机（boot `0x4545dd2f`，日志 `out/p21/persistent-logs/20261103T164835Z/`）**：68 轮、0 写错误；`GSUB rc=-4 stage=3`、`fr=28`，内联 IB 没有改变结果（诊断路径是否真正生效仍需日志标记，但结论指向更基础的问题）。
+- **sheng 案例（`NativeAdrenoRing.cpp`）**：`emitFence`/`emitFramedFence` 明确 "The timestamp goes to +4 (msm_rbmemptrs.fence) … +0 is the CP's RPTR shadow"。我们的引擎把 `0x46` fence **写到 dword0** 并轮询 dword0，正好与 CP 的 RPTR shadow 冲突；历轮的 `fr=0x28/0x2d/0x34` 正是 RPTR 值，而我们的 sequence 可能被影子覆盖 → **完成检测误判超时**，CP 也可能写入了目标。
+- **P21-Crane 修复**：fence 写/轮询改到 `fence+4`（`+0` 保留给 RPTR shadow）；`engine_wait` 与 probe 的三处 fence 读取同步改为 `[1]`；宿主模型同步更新并通过（`HOST_MODELS_PASS`）。
+- 候选 `out/p21/p21-crane`：内核 `8ae3f10285a01bc379d09e33aaeb252d6da1a6db9296d87a1f74bd0eee17bb35`、payload 展开 `a50fe00f…`、固件 `6484b87c…`、镜像 `out/p21/p21-crane/uefi/boot-p21-up1.img` SHA-256 `2500410bd2784539910cc10a5bf75ffaf70e9757f2d44b75cacd19abab450311`，gate `20261103T165729Z` PASS（686 B）。misc 首块仅 `boot-recovery`、回读一致；16:57:48Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`GSUB rc=0/fenced`、probe `fence OK seq` 与 `userpath fence`、目标 BO 是否出现 `adc0de1`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Raven** | `912ee99d…` | `643793ec…` | 内联 IB 仍 stage=3；发现 fence 与 RPTR shadow 冲突 |
+  | 2026-11-04 | **P21-Crane** | `2500410b…` | `8ae3f102…` | fence 移到 +4，避免与 RPTR shadow 冲突；结果待回收 |
+
 ## 2026-11-04：P21-Pelican 结果（prefence 排除，IB 取指成唯一差异）· P21-Raven
 
 - **P21-Pelican 实机（boot `0x455dbfb8`，日志 `out/p21/persistent-logs/20261103T163200Z/`）**：68 轮、0 写错误；显示 `frames=5`。
