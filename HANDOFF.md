@@ -1,4 +1,13 @@
-## 2026-11-03：用户 BO 写目标的硬件翻译（batch9 构建中）
+## 2026-11-03：CP 读用户页（batch10 构建中）
+
+- **batch9 实机（boot `0x558056e6`，日志 `out/p21/persistent-logs/20261103T035610Z/`，镜像 `422f4c02…`，03:49:20Z 启动、03:55:58Z 自动回 Recovery）**：
+  - `GCTL` OK、`GPSVC sub=1`、`GSUB rc=-4 seq=3 pf=0/1 fr=34 stg=0`、`GBOD` 目标页仍 `0xdeadbeef`。
+  - 新增 `GBOA0/1`（原始 IOLog）：IB `0x4000000` 与**写目标 `0x4001000` 的硬件走表都是 `rc=0` 且 PAR 命中 leaf**（PA `0x1519bb000`、`0x1519fc000`）。BootLog 里 `GBOA1 rc=2` 是“行计数与最后一行共用索引”的解码 bug，已修复。
+  - 结论：**写目标的映射完全正确**，失败不是翻译缺失；问题在“该页/该访问本身”。
+- 本轮（batch10）唯一新测试：`cheeseburger_gpu_engine_copy_test(src)` 用一条 `CP_MEM_TO_MEM(0x73)` 把用户写目标 `0x4001000`（内容是插件写入的 `0xdeadbeef`）复制到已验证 GPMU 页，再 fence 并回读（`GCPY rc/seq/src/dst`）。它只读用户页、不写用户数据；失败会在 helper 内置 `gEngineSubmitFailed`，服务直接返回，不再碰总线或门铃。
+- batch10 判定：`GCPY rc=0 dst=deadbeef` → GPU **能读**用户页，只有写失败（下一轮查写权限/页属性/XPU）；`GCPY rc=-4` → 连读都失败，即该页整体对 CP 不可访问（与 ATOS 结果矛盾，需要查 SMMU stream 归属）。
+
+## 2026-11-03：用户 BO 写目标的硬件翻译（batch9）
 
 - **batch8 实机（boot `0x4a508e1d`，日志 `out/p21/persistent-logs/20261103T034012Z/`，镜像 `a7ed9c9f…`，03:33:14Z 启动、03:40:04Z 自动回 Recovery）**：
   - **稳定性验证**：`GPSVC sub=1`（用户提交真正执行）、`GPWR` 正常（`post=140000/140000 micro=178/0`）、`frames=5`、自动回 Recovery 正常。**pa_test 导致的卡死/panic 不再出现**，回退有效。
