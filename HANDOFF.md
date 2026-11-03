@@ -1,3 +1,14 @@
+## 2026-11-03：日志"独立线"分析 + batch14 控制启动（结果待回收）
+
+- **日志独立线不可行（有证据）**：日志 writer 与心跳本来就是独立内核线程，但本轮一起停在 kernel ~138 s；更关键的是 `AUTORESET` 线程不碰日志/UFS（只 `IOSleep` + PSCI），60 s 时 `mstart=1 gstart=1` 却在 400 s 没有触发复位（设备为 14 分钟后手动恢复）。因此停的是整机调度/CPU（或全局自旋锁），第二条软件日志线同样无法存活；可改进的只是取证：writer 提前启动（当前 ~60 s）、周期缩短（当前 ~4.8 s）、增加 stall supervisor + stackshot/panic 落盘，但不能跨越整机停机。
+- **历史日志把回归点指到 batch14→15，而不是 sheng 同步**：
+  - batch13 `20261103T050613Z`（boot `0x561d238f`）与 batch14 `20261103T052325Z`（boot `0x452f3116`）：`clients=117`、`frames=5`，日志到 ~398 s，400 s 自动回 Recovery；
+  - batch15 `20261103T061746Z`（`0x7aefa0c4`）起：`clients=0`、`frames=0`，日志停在 136–188 s；batch17/18/panic-hold 与本轮均同（~136/136/138 s）。
+  - batch14→15 代码差异仅 `BootLog.c`/`GpuCp`/`GpuService`/`GpuSmmu`（SMMU dump + 池页晚测），启动参数完全相同；`git diff bc044ac b61ceab` 可复现。池页晚测已不在当前代码，dump 仍在。
+- 两个待区分原因：①batch15 遗留代码（`cheeseburger_gpu_smmu_dump` 等）或后续构建差异；②**持久 Data 状态**在 05:30 后被改写，之后所有镜像（含同镜像重跑）都在同一位置停住。
+- **控制实验**：2026-11-03T11:01:25Z 对 `3b25cc7c` 单次 `fastboot boot` batch14 镜像 `out/p21/gpu-dev-batch14/uefi/boot-p21-up1.img`（SHA-256 `f6cda6f99f5e0c08e46995f2f3fd521bf994b5f64f5252492882827f351b38ea`，当时 `clients=117 frames=5`、400 s 自动返回），记录 `out/p21/gpu-dev-batch14/boot-once2.log`。misc 首块仅 command=`boot-recovery`，回读一致（`8698abf4…`），未写其他分区。
+- 判定：若 batch14 现在也停在 ~136 s/`clients=0` → 环境/Data 状态问题（隔离构建无意义，需先取得 Data reseed 授权或查 launchd/APFS 状态）；若恢复 `clients=117 frames=5` 且 400 s 自动返回 → 是镜像代码回归，二分 `bc044ac..b61ceab`（dump/池页晚测/构建差异）。
+
 ## 2026-11-03：panic-hold 实机结果（boot `0x47d33baa`，黑屏且不自动返回）
 
 - 日志 `out/p21/persistent-logs/20261103T104649Z/`，boot `0x47d33baa`，16 轮、写错误 0，窗口 SHA-256 `090e69d0…`。Recovery btime 10:46:41（启动命令 10:32:19），即用户约 14 分钟后手动恢复，**400 s 计时没有把设备自动带回 Recovery**。
