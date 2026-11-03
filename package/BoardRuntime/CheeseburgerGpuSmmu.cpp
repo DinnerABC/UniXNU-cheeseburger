@@ -15,6 +15,10 @@
 #include "CheeseburgerSmmuMicro.h"
 #include "CheeseburgerSmmuId.h"
 extern "C" {
+int cheeseburger_gpu_smmu4k_setup(void);
+int cheeseburger_gpu_smmu4k_active(void);
+int cheeseburger_gpu_smmu4k_map(uint64_t,uint64_t,unsigned);
+int cheeseburger_gpu_smmu4k_unmap(uint64_t,unsigned);
 volatile uint64_t cb_smmu[24];
 volatile uint64_t cb_map[4];
 volatile uint64_t cb_mapdiag[4];
@@ -185,6 +189,7 @@ static void mapTest(W &s,unsigned ctx){
 // the context and root; each table update is cleaned and one CB TLB sync is
 // issued after the whole range.
 extern "C" int cheeseburger_gpu_smmu_map(uint64_t iova,uint64_t pa,unsigned pages){
+ if(cheeseburger_gpu_smmu4k_active())return cheeseburger_gpu_smmu4k_map(iova,pa,pages);
  if(!gRootVA||!pages||(iova&4095)||(pa&4095)||iova<0x1000000ULL||
     iova+uint64_t(pages)*4096>(1ULL<<gIovaBits)||pa+uint64_t(pages)*4096>(1ULL<<gPaBits)){
   IOLog("CB GPU SMMU map reject: iova=%llx pa=%llx pages=%u\n",iova,pa,pages);return -1;
@@ -220,6 +225,7 @@ static bool unmapPage(uint64_t iova){
 // on the GPU (every submit waits for its fence), so clearing and one TLB sync
 // cannot race an in-flight fetch.
 extern "C" int cheeseburger_gpu_smmu_unmap(uint64_t iova,unsigned pages){
+ if(cheeseburger_gpu_smmu4k_active())return cheeseburger_gpu_smmu4k_unmap(iova,pages);
  if(!gRootVA||!pages||(iova&4095)||iova<0x1000000ULL||
     iova+uint64_t(pages)*4096>(1ULL<<gIovaBits))return -1;
  for(unsigned i=0;i<pages;++i)if(!unmapPage(iova+uint64_t(i)*4096))return -2;
@@ -324,6 +330,15 @@ extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
  return CheeseburgerGpu::lookupLeaf(tables,iova,*pte,gStartLevel);
 }
 extern "C" void cheeseburger_gpu_smmu_setup(void){
+ // Migration bridge to the official sheng ArmSmmu4K path. Once a device round
+ // confirms the probe fence, map and user submission on it, the pinned
+ // sequence below is removed and the kit becomes the only path.
+ { unsigned k=0;
+   if(PE_parse_boot_argn("cheeseburger-gpu-smmu4k",&k,sizeof k)&&k){
+    int kr=cheeseburger_gpu_smmu4k_setup();
+    if(kr==0){IOLog("CB GPU SMMU: sheng ArmSmmu4K path active\n");return;}
+    IOLog("CB GPU SMMU: sheng ArmSmmu4K setup failed %d; using the pinned sequence\n",kr);
+   } }
  reset();
  W *smp=smmuMap();if(!smp){cb_smmu[0]=1;return;}
  W &s=*smp;
