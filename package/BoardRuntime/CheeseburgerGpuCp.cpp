@@ -41,6 +41,8 @@ volatile uint32_t native_adreno_rtmap[8];
 volatile uint32_t native_adreno_rtmap2[8];
 // Physical-page test: map rc, PA, sequence and submit rc for a user-owned PA.
 volatile uint32_t native_adreno_pa_test[8];
+// CP_MEM_TO_MEM read of a user address: rc, sequence, copied words and source.
+volatile uint32_t native_adreno_copy_test[8];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -549,6 +551,39 @@ extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1
 extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t **va,unsigned *words){
  if(!gScratchVA||!gScratchGva||!gScratchWords)return -1;
  if(gva)*gva=gScratchGva;if(va)*va=gScratchVA;if(words)*words=gScratchWords;return 0;
+}
+extern "C" int cheeseburger_gpu_engine_copy_test(uint64_t srcIova){
+ if(!gEngine||!gScratchVA||!gRing||!gFence||!gSubmitLock)return -1;
+ if(gEngineSubmitFailed)return -2;
+ // One CP_MEM_TO_MEM (0x73) word: read the address the user IB writes and
+ // store it in the proven GPMU page. A successful copy proves the CP can read
+ // the user page; the user command stream is untouched and no user page is
+ // written.
+ volatile uint32_t *ib=gScratchVA+0x80;      // byte 0x200
+ volatile uint32_t *dst=gScratchVA+0x100;    // byte 0x400
+ const uint64_t dstGva=gScratchGva+0x400;
+ dst[0]=0;dst[1]=0;
+ ib[0]=CheeseburgerGpu::packet7(0x73,5);ib[1]=1u<<30;
+ ib[2]=uint32_t(dstGva);ib[3]=uint32_t(dstGva>>32);
+ ib[4]=uint32_t(srcIova);ib[5]=uint32_t(srcIova>>32);
+ flush_dcache((vm_offset_t)ib,64,FALSE);
+ flush_dcache((vm_offset_t)dst,64,FALSE);
+ CheeseburgerGpu::Startup<Mmio>::Ib one{gScratchGva+0x200,6};
+ CheeseburgerGpu::Record rec;
+ IOLockLock(gSubmitLock);
+ uint32_t s=gFenceSeq+1;if(!s)s=1;
+ int rc=gEngine->submit(&one,1,gFenceGva,s,gFence,rec,gRingWords,0,true);
+ if(rc==0)gFenceSeq=s;else gEngineSubmitFailed=true;
+ IOLockUnlock(gSubmitLock);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)dst,64,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ native_adreno_copy_test[0]=uint32_t(rc);native_adreno_copy_test[1]=uint32_t(s);
+ native_adreno_copy_test[2]=dst[0];native_adreno_copy_test[3]=dst[1];
+ native_adreno_copy_test[4]=uint32_t(srcIova);
+ IOLog("CB GPU engine: copy test rc=%d seq=%u src=%llx dst=%x/%x\n",
+  rc,s,srcIova,dst[0],dst[1]);
+ return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){

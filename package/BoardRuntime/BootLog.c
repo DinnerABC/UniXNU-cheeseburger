@@ -76,7 +76,8 @@ extern volatile uint32_t native_adreno_rtmap2[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pa_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
-extern volatile uint32_t native_adreno_bo_atos[16] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_bo_atos[18] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_stage_gva __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pwr[14] __attribute__((weak_import));
@@ -623,10 +624,20 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_ib_head[6],native_adreno_ib_head[7],cb_boot_id);
     at=put(out,at,cap,ibh,sizeof ibh);
    }
+   /* CP_MEM_TO_MEM read of the write target's page: rc, sequence, the copied
+    * words and the source address. A successful read with 0xdeadbeef proves
+    * the CP sees user pages while their GPU writes still fail. */
+   if (&native_adreno_copy_test[0] && native_adreno_copy_test[4]) {
+    char cpy[176];
+    snprintf(cpy,sizeof cpy,"GCPY rc=%d seq=%u src=%x dst=%x/%x bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_copy_test[0],native_adreno_copy_test[1],
+      native_adreno_copy_test[4],native_adreno_copy_test[2],native_adreno_copy_test[3],cb_boot_id);
+    at=put(out,at,cap,cpy,sizeof cpy);
+   }
    /* Hardware translation of every mapped BO, including the write target that
     * is never part of the submission. */
-   if (&native_adreno_bo_atos[0] && native_adreno_bo_atos[15]) {
-    unsigned rows=native_adreno_bo_atos[15]<2?native_adreno_bo_atos[15]:2;
+   if (&native_adreno_bo_atos[0] && native_adreno_bo_atos[16]) {
+    unsigned rows=native_adreno_bo_atos[16]<2?native_adreno_bo_atos[16]:2;
     for (unsigned i=0;i<rows;++i) {
      const volatile uint32_t *r=&native_adreno_bo_atos[i*8];
      char boa[192];

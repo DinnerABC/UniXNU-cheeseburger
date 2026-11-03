@@ -37,11 +37,12 @@ volatile uint32_t native_adreno_ib_head[8];
 // Up to four (slot, v0, v1, v2) rows read back from the mapped BOs after the
 // submission: the user IB's memory writes land here even without a fence.
 volatile uint32_t native_adreno_bo_dump[16];
+// Up to two (iova, pa, pte, par, rc) rows plus the row count at index 16.
 // Hardware translation of every mapped BO: iova, physical page, leaf PTE, raw
 // PAR and ATOS result. The write target is never in the submit list, so its
 // leaf is the one a MEM_WRITE inside the IB depends on and the one never
 // checked by the submission's own ATOS gate.
-volatile uint32_t native_adreno_bo_atos[16];
+volatile uint32_t native_adreno_bo_atos[18];
 extern volatile uint32_t native_adreno_submit_staged;
 extern volatile uint64_t native_adreno_submit_stage_gva;
 extern "C" void proc_selfname(char *, int);
@@ -57,6 +58,7 @@ int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
+int cheeseburger_gpu_engine_copy_test(uint64_t);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 void pmap_set_cache_attributes(ppnum_t,unsigned int);
 }
@@ -523,7 +525,17 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
          n,(unsigned long long)b.iova,(unsigned long long)b.physical,
          (unsigned long long)pte,rc,(unsigned long long)par);
         ++n; }
-      native_adreno_bo_atos[15]=n; }
+      native_adreno_bo_atos[16]=n; }
+    // Read-only check that the CP can read the page its commands will write.
+    // A failed kick abandons the engine inside the helper (gEngineSubmitFailed),
+    // so nothing touches the bus or rings a doorbell afterwards.
+    { uint64_t tgt=0;
+      for(unsigned i=0;i<MaxBo&&!tgt;++i){ Bo &b=bos_[i];
+        if(!b.handle||!b.mapped||b.handle==s.buffers[0].handle)continue;
+        tgt=b.iova; }
+      if(tgt&&cheeseburger_gpu_engine_copy_test(tgt)){
+        native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
+        return kIOReturnIOError; } }
     uint32_t seq=0;
     // Record the first IB from the kernel's own view. The submit itself uses
     // the client's mapping again: the staging copy has served its purpose and
