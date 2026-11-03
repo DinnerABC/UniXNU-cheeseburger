@@ -811,8 +811,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  }
  if (&cb_reset[0] && cb_reset[0]) {
   char rst[200];
-  snprintf(rst,sizeof rst,"AUTORESET requested=%llu elapsed=%llu main=%llu mrc=%llx mstart=%llu gstart=%llu gfire=%llu grc=%llx",
-    cb_reset[1],cb_reset[2],cb_reset[3],cb_reset[4],cb_reset[5],cb_reset[6],cb_reset[7],cb_reset[8]);
+  snprintf(rst,sizeof rst,"AUTORESET requested=%llu elapsed=%llu main=%llu mrc=%llx mstart=%llu gstart=%llu gfire=%llu grc=%llx mhold=%llu ghold=%llu",
+    cb_reset[1],cb_reset[2],cb_reset[3],cb_reset[4],cb_reset[5],cb_reset[6],cb_reset[7],cb_reset[8],cb_reset[9],cb_reset[10]);
   at=put(out,at,cap,rst,sizeof rst);
  }
  if (&cb_rails[0] && cb_rails[0]) {

@@ -18,17 +18,20 @@ struct State {
     bool main_returned = false;  // PSCI returned without resetting
     bool guard_started = false;  // the guard thread was created
     bool guard_fired = false;    // the guard issued PSCI
+    bool panic = false;          // a panic screen is holding, sampled at the deadline
 };
 
 inline bool main_should_fire(const State &s, unsigned elapsed, unsigned deadline) {
-    return s.main_started && !s.main_fired && elapsed >= deadline;
+    // A panic is terminal, not a stuck boot: resetting hides the only record of
+    // it and the panic screen must be read first. Normal boots keep the bound.
+    return s.main_started && !s.main_fired && !s.panic && elapsed >= deadline;
 }
 
 inline bool guard_should_fire(const State &s, unsigned elapsed, unsigned deadline, unsigned grace) {
     // Exactly one backup attempt. A main PSCI that reset the device means this
     // thread never runs again; on a live CPU at deadline+grace the main either
     // never ran, returned without resetting, or is stuck, so the guard fires.
-    return s.guard_started && !s.guard_fired && elapsed >= deadline + grace;
+    return s.guard_started && !s.guard_fired && !s.panic && elapsed >= deadline + grace;
 }
 
 }  // namespace CheeseburgerAutoReset

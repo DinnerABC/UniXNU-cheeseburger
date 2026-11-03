@@ -90,6 +90,17 @@ int main() {
         t.run(409, false);
         check(t.guard_fire == 0, "guard/waits-grace");
     }
+    // A panic screen is terminal: neither worker may reset the device, so the
+    // panic text stays readable; the normal deadline is unaffected.
+    {
+        Timeline t(400, 10);
+        t.s.main_started = t.s.guard_started = true;
+        t.s.panic = true;
+        t.run(500, true);
+        check(t.main_fire == 0 && t.guard_fire == 0, "panic/hold");
+        State s; s.main_started = s.guard_started = true; s.panic = true;
+        check(!main_should_fire(s, 400, 400) && !guard_should_fire(s, 410, 400, 10), "panic/predicates");
+    }
     if (failures) std::printf("auto_reset_policy_model: FAIL %d\n", failures);
     else std::printf("auto_reset_policy_model: PASS\n");
     return failures ? 1 : 0;
