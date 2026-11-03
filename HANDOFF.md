@@ -1,3 +1,19 @@
+## 2026-11-03：P21-Tern 结果（冷启动读值有效，排空仍失败）· P21-Wren
+
+- **P21-Tern 实机（boot `0x469fd0f4`，日志 `out/p21/persistent-logs/20261103T121338Z/`）**：68 轮、0 写错误，msgbuf 到 **398.43 s**，心跳 338 s；400 s 计时正常回 Recovery；显示 `frames=5`，`GPSVC open=1 sub=1`、2 个 BO 映射，用户提交仍 `GSUB rc=-4 stage=3 fr=34`（CP 取环失败，既有问题）。
+- `SIRQ ... ready=1`，`CB GPU SMMU IRQ: attach rc=0 rb=a002 ctlr=12 ds=0 id=361`。
+- `CB GPU SMMU4K: cold drain unverified r/w/me/vbif/im=0/0/303/0/0 unpowered=0` → 冷读**不是**全 1，排空检查失败（我们不做写入前的排空判断），按 `-10` 回退旧序列 → GPU 保持可用，系统稳定。
+- **sheng 对照**：`NativeAdrenoGmuContext` 的顺序是 `读 ID2 → allocate → prepare → program → attach → vm.attach → map`，**没有 drain 步骤**；`ArmSmmu4KLive.h` 只把"所有 master 静止"列为平台前置条件。本机 4K setup 发生在 `CB GPU start: begin`（~106 s）之前，冷读 `r=0 w=0` 证明环为空、CP 未启动，满足该前置条件。
+- **P21-Wren 修复（提交 `9c6ecb7`）**：
+  1. 冷启动改为**只读采样**（不再写 MEControl/VBIFHalt 做排空）；`r==w` 即视为 quiescent 继续 4K 编程，仅当读取失败或 `r!=w`（有在途提交）才 `-10` 回退。
+  2. 为 4K 的每个 `-8` 站点加步骤日志：`step=micro/slots/preflight/fault-after-preflight/program/fault-after-program/attach/visibility/fault-after-attach`，下次可直接定位。
+- 候选 `out/p21/p21-wren`：内核 `a2a614c1f099f505784c948e4bfa9bbab8ffbf97d54335fc7fbe0bbe1469cbff`、payload 展开 `cdf699c2…`、固件 `3faac30c…`、镜像 `out/p21/p21-wren/uefi/boot-p21-up1.img` SHA-256 `2d9f2bca0d3cb81af8824fd2798dbf41ac7d885054fa29499bfef97715ba496b`，gate `20261103T122129Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；12:21:54Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`cold r/w/me/vbif/im=0/0/303/0/0` 后应出现 `bank0 streams sid0/sid2 attached` 与 `cb_smmu[20]=0x4b340001`；任何 `step=…` 失败都按该步定位。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Tern** | `47eceeb4…` | `4a721f90…` | 冷启动不再直接禁用 GPU；冷读有效但排空失败，按 `-10` 回退；提交仍 stage=3 |
+  | 2026-11-03 | **P21-Wren** | `2d9f2bca…` | `a2a614c1…` | 按 sheng 顺序冷启动只读采样、不排空；4K 各失败点加步骤日志；结果待回收 |
+
 ## 2026-11-03：P21-Swift 结果（IRQ 修复生效，4K 冷启动 -8 禁用 GPU）· P21-Tern
 
 - **P21-Swift 实机（boot `0x44abb46f`，日志 `out/p21/persistent-logs/20261103T115652Z/`）**：68 轮、0 写错误，msgbuf 到 **394.63 s**，心跳 338 s；Recovery 11:53:19（命令后约 400 s），计时正常。显示 `clients=125 frames=5`。
