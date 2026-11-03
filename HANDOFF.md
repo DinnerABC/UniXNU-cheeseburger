@@ -3,7 +3,11 @@
 - 新增 `package/BoardRuntime/CheeseburgerGpuSmmu4K.cpp`：用 sheng 的 `NativeAdrenoSmmuContext` + `ArmSmmu4K` 建表（32 页表池，`NativeAdrenoMemory` 分配）、`program()` 编程 CB0、`attach()` **精确接管 DTB 流**（`gfx3d_user` SID0→slot0、`gfx3d_secure` SID2→slot2），增量映射走 `ArmSmmu4KLiveUpdateContext`（每次更新内含 TLB 同步与镜像校验）。板级只保留 kit 明确留给平台的部分：SMMU 全局 SCR、vendor ACTLR `0x70000000`、micro-MMU `0x6000` resume。
 - 迁移桥：`cheeseburger_gpu_smmu_setup` 在 `cheeseburger-gpu-smmu4k=1` 时优先走 4K 路径，成功即返回；失败回退到已固化的 sagit 序列。`cheeseburger_gpu_smmu_map/unmap` 在 4K 激活时转发给 kit。**实机确认 probe fence + 映射 + 用户提交后，删除旧路径、默认使用 kit。**
 - 启用方法：在候选 `config/unixnu.toml` 的 args 里追加 `cheeseburger-gpu-smmu4k=1`（当前 644 B，仍 <700）。下一设备轮次应先用该参数做 A/B。
-- 构建：`batch17` 正在验证链接；S1 的 vendored 层（Memory/Vm/SmmuContext/Ring/Submit/Cpu/Sha256/Timer + ArmSmmu4K + AdrenoPM4）已在 batch16 链接通过（内核 `a50cec2c…`）。
+- 构建：S1 的 vendored 层（Memory/Vm/SmmuContext/Ring/Submit/Cpu/Sha256/Timer + ArmSmmu4K + AdrenoPM4）在 batch16 链接通过（内核 `a50cec2c…`）；S2 的 4K 路径在 batch17 链接通过（内核 `1cedb7d4…`）。
+- **下一步（设备恢复后按序）**：
+  1. 先回收 batch15 日志（boot 未知，`GSMM/GSMC/GPLT`），确认 05:32 那次为何没有自动回 Recovery；
+  2. 在 batch17 的 `config/unixnu.toml` args 追加 `cheeseburger-gpu-smmu4k=1`，重建 payload/固件、跑 gate、单次启动；用 `cb_smmu[20]=0x4b340001` 与日志 "SMMU4K ... attached" 确认 kit 生效；
+  3. 验证点：probe fence（`CB GPU start: fence OK`）、`GRTM/GRT2`、`GBOA`、用户提交 fence；全部通过后删除 `CheeseburgerGpuSmmu.cpp` 的旧序列，默认走 kit，并继续 S3（Ring/Submit）与 S4（GMU/power）、S5（Service/Publish）。
 
 ## 2026-11-03：转向 sheng 官方方案迁移（进行中）
 
