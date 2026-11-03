@@ -479,9 +479,11 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
         if(!o.handle||!o.mapped)continue;
         if(m.iova<o.iova+o.bytes&&o.iova<m.iova+bo->bytes)return kIOReturnBusy;
     }
-    IOByteCount span=0;
-    uint64_t pa=bo->buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
-    if(!pa||span<bo->bytes)return kIOReturnNoMemory;
+    // The low pool hands out pages of one contiguous block, so use the exact
+    // physical address recorded at allocation instead of re-reading only the
+    // block's first segment.
+    uint64_t pa=bo->physical;
+    if(!pa||(pa&4095))return kIOReturnNoMemory;
     int rc=cheeseburger_gpu_smmu_map(m.iova,pa,unsigned(bo->bytes/4096));
     if(rc){
         // A failed map should leave no entry, but if the rollback cannot sync

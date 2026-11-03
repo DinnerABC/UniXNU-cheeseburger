@@ -243,17 +243,15 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  static Buf ring,pm4,pfp,gpmu,fence;
  if(!allocBuf(ring,8192*4)){cb_cp[0]=3;return;}
  // Reserve user-buffer pages in the same early allocation window as the ring:
- // the CP fetches its ring/IB from here, while the later 64-page pool landed
- // near 0x127e... where an IB fetch wedges the bus. Take single 4 KiB pages so
- // the bump allocator keeps them adjacent to the ring region.
- { for(unsigned i=0;i<8;++i){
-    IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
-      kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
-    if(!b)break;
-    IOByteCount sp=0;uint64_t pa=b->getPhysicalSegment(0,&sp,kIOMemoryMapperNone);
-    if(!pa||(pa&4095)||sp<4096||pa>=0x140000000ull){b->release();break;}
-    void *v=b->getBytesNoCopy();if(v){memset(v,0,4096);flush_dcache((vm_offset_t)v,4096,FALSE);}
-    gLowPage[gLowPageCount]=b;gLowPagePa[gLowPageCount]=pa;++gLowPageCount;
+ // the CP fetches its ring/IB from here, while single 4 KiB allocations land
+ // near 0x127e/0x1286 where an IB fetch wedges the bus. A 32 KiB contiguous
+ // block is the class the ring itself uses, so take one and hand out its pages.
+ { static Buf pool;
+   if(allocBuf(pool,8192*4)){
+    for(unsigned p=0;p<8;++p){
+     gLowPage[gLowPageCount]=pool.d;gLowPagePa[gLowPageCount]=pool.pa+4096ull*p;++gLowPageCount;
+    }
+    pool.d->retain();
    }
    native_adreno_low_pool[0]=gLowPageCount;
    if(gLowPageCount){native_adreno_low_pool[1]=uint32_t(gLowPagePa[0]);
