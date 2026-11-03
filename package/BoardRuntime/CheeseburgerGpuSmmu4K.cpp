@@ -235,6 +235,13 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
   const uint32_t gotS2=srd(s2cr),gotSMR=srd(smr);
   IOLog("CB GPU SMMU4K: route slot=%u sid=%u s2cr=%x smr=%x\n",route.slot,route.sid,gotS2,gotSMR);
   if(gotS2!=0u||gotSMR!=(0x80000000u|route.sid)){
+   // The secure context stream is owned by the secure world: its SMR reads
+   // back as invalid here. Protected content is not used by this port, so the
+   // user SID is routed and the secure route is left to the firmware.
+   if(route.sid==2u){
+    IOLog("CB GPU SMMU4K: secure sid=2 smr=%x not writable; left to firmware\n",gotSMR);
+    continue;
+   }
    cb_smmu[20]=0xe100u+route.slot;return -8;
   }
  }
@@ -246,7 +253,7 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  gActive=true;
  cb_smmu[0]=0;
  cb_smmu[20]=0x4b340001u;  // "smmu4k path active"
- IOLog("CB GPU SMMU4K: bank0 streams sid0/sid2 attached, tables=%u pages\n",(unsigned)TablePages);
+ IOLog("CB GPU SMMU4K: bank0 sid0 routed (sid2 secure-owned), tables=%u pages\n",(unsigned)TablePages);
  return 0;
 }
 
