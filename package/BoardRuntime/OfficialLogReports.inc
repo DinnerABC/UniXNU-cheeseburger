@@ -85,17 +85,60 @@ static size_t compose_official(char *out, size_t cap, uint32_t slot, unsigned no
   // The traced processes' threads with the highest context-switch rate (they are idle in every stack sample but woken hundreds of times a second).
   /* Not selected: boot_ui_trace_hot_rows */
   // The newest ring submissions (fence, ring range, then the words the CP reads) and the first words of their IBs.
-  /* Not selected: native_adreno_ring_log, native_adreno_ring_log_count */
-  /* Not selected: native_adreno_ib_log, native_adreno_ib_log_count */
+  if (&native_adreno_ring_log_count && native_adreno_ring_log_count) {
+    const uint32_t newest = native_adreno_ring_log_count - 1;
+    for (unsigned back = 0; back < 2 && back < native_adreno_ring_log_count; ++back) {
+      const volatile uint32_t *r = native_adreno_ring_log[(newest - back) & 3];
+      char row[130];
+      snprintf(row, sizeof row, "[ring] fence=%u ring %x..%x words=%u", r[0], r[1], r[2], r[3]);
+      at = put(out, at, cap, row, sizeof row);
+      const uint32_t words = r[3] < 112 ? r[3] : 112;
+      for (uint32_t i = 0; i < words; i += 8) {
+        int n = snprintf(row, sizeof row, "R%03x", i);
+        for (uint32_t k = i; k < i + 8 && k < words && n > 0 && n < 110; ++k) n += snprintf(row + n, sizeof row - n, " %08x", r[4 + k]);
+        at = put(out, at, cap, row, sizeof row);
+      }
+    }
+  }
+  if (&native_adreno_ib_log_count && native_adreno_ib_log_count) {
+    const uint32_t newest = native_adreno_ib_log_count - 1;
+    for (unsigned back = 0; back < 2 && back < native_adreno_ib_log_count; ++back) {
+      const volatile uint32_t *r = native_adreno_ib_log[(newest - back) & 3];
+      char row[130];
+      snprintf(row, sizeof row, "[ib] fence=%u iova=%x%08x bytes=%u", r[0], r[2], r[1], r[3]);
+      at = put(out, at, cap, row, sizeof row);
+      for (uint32_t i = 0; i < 28; i += 8) {
+        int n = snprintf(row, sizeof row, "I%02x", i);
+        for (uint32_t k = i; k < i + 8 && k < 28 && n > 0 && n < 110; ++k) n += snprintf(row + n, sizeof row - n, " %08x", r[4 + k]);
+        at = put(out, at, cap, row, sizeof row);
+      }
+    }
+  }
   // Kernel GPU methods by number: calls, failures, last status and total time (the calls of the last 2 s are the difference of two slots).
   /* Not selected: native_adreno_method_stats */
-  /* Not selected: native_adreno_vm_phase_us */
-  /* Not selected: native_adreno_pool_stats, native_adreno_pool_status, native_adreno_pool_wc */
+  if (&native_adreno_vm_phase_us && (native_adreno_vm_phase_us[0][0] || native_adreno_vm_phase_us[1][0])) {
+    char row[170];
+    for (unsigned k = 0; k < 2; ++k) {
+      const volatile uint64_t *p = native_adreno_vm_phase_us[k];
+      if (!p[0]) continue;
+      snprintf(row, sizeof row, "[vm %s] n=%llu us: observe1=%llu %s=%llu batch=%llu observe2=%llu %s=%llu max=%llu MiB=%llu", k ? "unmap" : "map",
+               (unsigned long long)p[0], (unsigned long long)p[1], k ? "acquire" : "publish", (unsigned long long)p[2], (unsigned long long)p[3],
+               (unsigned long long)p[4], k ? "retire" : "-", (unsigned long long)p[5], (unsigned long long)p[6], (unsigned long long)(p[7] >> 20));
+      at = put(out, at, cap, row, sizeof row);
+    }
+  }
+  if (&native_adreno_pool_stats) {
+    char row[200];
+    snprintf(row, sizeof row, "[bo pool] %u MiB (last reserve status %x, wc %x): %u BOs from it, %u fell back, in use %u MiB (peak %u) | scattered: %u BOs %u spans | import spans %u",
+             native_adreno_pool_stats[0], native_adreno_pool_status, &native_adreno_pool_wc ? native_adreno_pool_wc : 0, native_adreno_pool_stats[1], native_adreno_pool_stats[2], native_adreno_pool_stats[3],
+             native_adreno_pool_stats[4], native_adreno_pool_stats[5], native_adreno_pool_stats[6], native_adreno_pool_stats[7]);
+    at = put(out, at, cap, row, sizeof row);
+  }
   // GPU clients: name opens/refused/closes, live slot (- none), highest GPU address its mappings reached (MiB), last refusal.
   /* Not selected: native_adreno_client_log */
   /* Not selected: native_adreno_metal_askers */
   // The IO-coherence proof (GpuPowerProbe coherenceProbe) and the maintenance passes it saved: map, unmap, submission, completion.
-  /* Not selected: native_adreno_coherent_skips, native_adreno_io_coherent, native_gpu_coherence_row, native_gpu_idle_sleeps, native_gpu_idle_spins */
+  /* Not selected: native_gpu_coherence_row, native_gpu_idle_sleeps, native_gpu_idle_spins */
   // Edge contacts (drivers/NativeHidInput edge::): wrapper installed, contacts begun, of them from an edge, events skipped.
   if (&native_touch_edge_stats) {
     char row[100];
@@ -105,14 +148,24 @@ static size_t compose_official(char *out, size_t cap, uint32_t slot, unsigned no
   }
   // The submissions' write-combine work: audits, IB lines compared and found dirty, pages set back to write-combined, the re-assertion's
   // total time, and the CPU cache maintenance passes (count, total ms, MiB).
-  /* Not selected: native_adreno_cache_stats, native_adreno_reassert_ticks, native_adreno_wc_audit */
+  if (&native_adreno_wc_audit && &native_adreno_reassert_ticks && &native_adreno_cache_stats) {
+    uint64_t f = 0;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    if (!f) f = 19200000;
+    char row[200];
+    snprintf(row, sizeof row, "[wc] audited=%u lines=%u dirty=%u reset=%u reassert_ms=%llu | maintenance passes=%llu ms=%llu MiB=%llu",
+             native_adreno_wc_audit[0], native_adreno_wc_audit[1], native_adreno_wc_audit[2], native_adreno_wc_audit[5],
+             (unsigned long long)(native_adreno_reassert_ticks * 1000 / f), (unsigned long long)native_adreno_cache_stats[3],
+             (unsigned long long)(native_adreno_cache_stats[0] * 1000 / f), (unsigned long long)(native_adreno_cache_stats[1] >> 20));
+    at = put(out, at, cap, row, sizeof row);
+  }
   // CPU clusters and L3 as voted (CpuFreqProbe, refreshed every round) and the GPU's initial HFI perf/bandwidth vote.
   /* Not selected: native_cpufreq_row, native_gpu_perf_vote */
   // Touch strokes in panel pixels as the digitizer published them (y mirrored, 0 = the edge the UI calls top): where each finger came
   // down and lifted, how long and over how many frames, and the extent of every contact so far (edge gestures need the outer pixels).
   /* Not selected: native_touch_extent, native_touch_stroke_count, native_touch_strokes */
   /* Not selected: native_adreno_map_fail */
-  /* Not selected: native_adreno_fence_wait, native_adreno_wait_outer */
+  /* Not selected: native_adreno_wait_outer */
   if (&native_gop_wait_stats && native_gop_wait_stats[0]) {
     char row[160];
     snprintf(row, sizeof row, "[scanout wait] calls=%llu timeouts=%llu asked=%llums last=%lluus min=%lluus max=%lluus mean=%lluus", native_gop_wait_stats[0],
@@ -121,7 +174,7 @@ static size_t compose_official(char *out, size_t cap, uint32_t slot, unsigned no
     at = put(out, at, cap, row, sizeof row);
   }
   /* Not selected: native_adreno_view_diag */
-  /* Not selected: native_adreno_import_diag, native_adreno_import_fail_offset, native_adreno_import_fail_pa, native_adreno_import_stage */
+  /* Not selected: native_adreno_import_diag */
   if (boot_log_reset_probe_text[0]) {
     at = put(out, at, cap, "[reset]", 8);
     at = put(out, at, cap, boot_log_reset_probe_text, sizeof boot_log_reset_probe_text);
