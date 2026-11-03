@@ -6,6 +6,12 @@
 - Adreno740 上游 clone 未成功，使用固定副本 `4e0314d`；AdrenoMetal 使用新 clone `243d63c`。A740 硬件模块、前端、AirNir/AdrenoFirmware、tools 均未编译；sheng 的 SM8550 GPU 胶水（GpuPowerProbe、prepare-sheng-gmu* 等）未同步。详见 `docs/P21_SHENG_GPU_SYNC_20261103.md`。
 - 本轮未接触设备、未写分区、未生成 prelink/UEFI/payload/boot 镜像。下一步：如需实机验证，先按 batch18 记录构建 payload/UEFI 与 gate，再做单次 `fastboot boot`；A540 的 SMMU4K `prepare -4` 问题仍需按 batch17 日志单独修复。
 
+## 2026-11-03：完整同步后的首次编译/启动验证（batch18）
+
+- batch18 = 完整同步后的候选（`package/BoardRuntime/sheng/` 397 文件）：内核源码构建 PASS（`028187e8…`）；prelink/patch/check/payload PASS。
+- **上游拉取带来的破坏点**：`UniXNU-sheng` 7cff07e 已无 `board.toml`，`prelink.py` 读 `[kernel.prelink]` 失败。已在 batch18 的 `scripts/prelink.py` 中**固化**该输入（kernelcache `f18b4df8…`、early_security_init `com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0`，取自 batch17 记录）。审计时请核对这两个值与 `out/p12/inputs/A/kernelcache.macho` 及早期安全初始化地址一致。
+- 待完成：固件构建 → pack/gate → 单次启动 → 回收日志；判定点是“合并后能正常启动、框架无 panic、GPU 探针与既有一致”（4K SMMU 路径当前会在 `prepare` 失败后回退，属已知）。
+
 ## 2026-11-03：同步来源更正（用户指出）
 
 - **官方仓库在 `/Volumes/NAS-MacData/Project/IOS/upstream/`**：`UniXNU`（框架/移植指南/通用接口）与 `UniXNU-sheng`（设备适配：GPU 服务、BO 内存、缓存一致性、提交生命周期；sheng 用 A740，硬件寄存器/固件不可套用）。
