@@ -1,3 +1,16 @@
+## 2026-11-03：P21-Robin 结果（FAULT 不可回写；找到 sheng bypass 案例）· P21-Martlet
+
+- **P21-Robin 实机（boot `0x44a78308`，日志 `out/p21/persistent-logs/20261103T124601Z/`）**：68 轮、0 写错误，msgbuf 到 398.7 s，400 s 计时正常回 Recovery；显示 `frames=8`；4K 仍 `-8`（GPU 禁用），`GPSVC open=0`。
+- `normalize s2cr slot=0 banked=0 fault=0`：写 bank(0) 生效并回读 0；再写 FAULT(`0x20000`) 回读仍为 0。说明本固件不接受 FAULT 回写（sheng `SmmuBypass.h` 注释亦指出某些 TYPE 在该固件回读成 FAULT）。
+- **找到可合并的 sheng 案例**：`upstream/UniXNU-sheng/package/SmmuBypass.h` 是该平台自己的流路由方案——`S2CR=bank` 先写并回读，再写 `SMR=0x80000000|sid`；从不写 FAULT。kit 的"必须先精确 FAULT"前置条件在此固件不适用。
+- **P21-Martlet 修复**：上下文仍由 kit `prepare/program/observe` 与 `LiveUpdateContext` 负责；流的接管改用 sheng bypass 序列（S2CR=bank 回读 → SMR=Valid|sid 回读），跳过 `CheckFaultedStreams`/`attach`，随后 `observe()`、可见性绑定与 fault 检查。
+- 候选 `out/p21/p21-martlet`：内核 `ae8ddaf14736cb720987c29aa091ab69895b3272a2c46bb4a02eaea2df492b46`、payload 展开 `6ee1b535…`、固件 `3406a42e…`、镜像 `out/p21/p21-martlet/uefi/boot-p21-up1.img` SHA-256 `d2f3c4603ca3c088f504e1ba0bc03441ae2135d0225b1d84498f8a74bf3bcbc4`，gate `20261103T125544Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；12:56:04Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`route slot=0 sid=0 s2cr=0 smr=80000000`、`route slot=2 sid=2 ...`、`cb_smmu[20]=0x4b340001`，以及用户提交是否仍 stage=3。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Robin** | `0c9e26e6…` | `e1eeeb30…` | 先写 bank 再写 FAULT；FAULT 不可回写，`-8` |
+  | 2026-11-03 | **P21-Martlet** | `d2f3c460…` | `ae8ddaf1…` | 合并 sheng `SmmuBypass.h` 序列接管 SID0/SID2；结果待回收 |
+
 ## 2026-11-03：P21-Wren 结果（4K 到 slots，CBNDX 不可直写）· P21-Robin
 
 - **P21-Wren 实机（boot `0x45587522`，日志 `out/p21/persistent-logs/20261103T122923Z/`）**：68 轮、0 写错误，msgbuf 到 **397.49 s**，心跳 338 s，400 s 计时正常回 Recovery；显示 `frames=5`；因 4K 在 66 s 失败并走 `-8`，`GPSVC ready=0 open=0`、无提交。
