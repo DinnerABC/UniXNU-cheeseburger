@@ -37,6 +37,8 @@ volatile uint64_t native_adreno_probe_exec;
 volatile uint32_t native_adreno_selftest[8];
 // Runtime-map test: rc, map rc, three target words, the leaf PTE and the IOVA.
 volatile uint32_t native_adreno_rtmap[8];
+// Same test with the buffer mapped inside the user window (0x4020000).
+volatile uint32_t native_adreno_rtmap2[8];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -459,39 +461,42 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     }
     gFenceSeq=3;
    }
-   // Runtime-map test: a buffer mapped after the CP started, written by a
-   // known IB from the proven page. Boot-mapped targets work (above); if this
-   // faults, runtime mappings never became visible to the CP's DMA and the
-   // user window is not special.
-   {
-    const uint64_t rtGva=0x2017000ULL;
+   // Runtime-map tests: a buffer mapped after the CP started, written by a
+   // known IB from the proven page. The first uses the proven 0x2xxxxxx
+   // window; the second the user window. A kernel page that works in the
+   // proven window but not in the user window points at the window, not at
+   // the mapping path or the command stream.
+   auto rtTest=[&](uint64_t gva,uint32_t seed,uint32_t seqno,volatile uint32_t *out)->int {
     volatile uint32_t *fp=(volatile uint32_t*)fence.va;
     volatile uint32_t *rib=(volatile uint32_t*)stage.va+0x200;   // byte 0x800
-    volatile uint32_t *rtt=(volatile uint32_t*)rt.va;
-    int rmap=cheeseburger_gpu_smmu_map(rtGva,rt.pa,1);
-    uint64_t rtPte=0;cheeseburger_gpu_smmu_lookup(rtGva,&rtPte);
-    rib[0]=CheeseburgerGpu::packet7(0x3d,5);rib[1]=uint32_t(rtGva);rib[2]=uint32_t(rtGva>>32);
-    rib[3]=0x5b5b0001u;rib[4]=0x5b5b0002u;rib[5]=0x5b5b0003u;
-    rtt[0]=0;rtt[1]=0;rtt[2]=0;
+    volatile uint32_t *tv=(volatile uint32_t*)rt.va;
+    int m=cheeseburger_gpu_smmu_map(gva,rt.pa,1);
+    uint64_t pte=0;cheeseburger_gpu_smmu_lookup(gva,&pte);
+    rib[0]=CheeseburgerGpu::packet7(0x3d,5);rib[1]=uint32_t(gva);rib[2]=uint32_t(gva>>32);
+    rib[3]=seed;rib[4]=seed+1;rib[5]=seed+2;
+    tv[0]=0;tv[1]=0;tv[2]=0;
     flush_dcache((vm_offset_t)rib,64,FALSE);
-    flush_dcache((vm_offset_t)rtt,64,FALSE);
-    CheeseburgerGpu::Startup<Mmio>::Ib rone{stage.gva+0x800,6};
-    CheeseburgerGpu::Record rrec;
-    int rrc=rmap?rmap:engine.submit(&rone,1,fence.gva,4,fp,rrec,ring.bytes/4,0,true);
+    flush_dcache((vm_offset_t)tv,64,FALSE);
+    CheeseburgerGpu::Startup<Mmio>::Ib one{stage.gva+0x800,6};
+    CheeseburgerGpu::Record rec;
+    int rc=m?m:engine.submit(&one,1,fence.gva,seqno,fp,rec,ring.bytes/4,0,true);
     __asm__ volatile("dsb sy":::"memory");
-    flush_dcache((vm_offset_t)rtt,64,FALSE);
+    flush_dcache((vm_offset_t)tv,64,FALSE);
     __asm__ volatile("dsb sy":::"memory");
-    native_adreno_rtmap[0]=uint32_t(rrc);native_adreno_rtmap[1]=uint32_t(rmap);
-    native_adreno_rtmap[2]=rtt[0];native_adreno_rtmap[3]=rtt[1];native_adreno_rtmap[4]=rtt[2];
-    native_adreno_rtmap[5]=uint32_t(rtPte);native_adreno_rtmap[6]=uint32_t(rtPte>>32);
-    native_adreno_rtmap[7]=uint32_t(rtGva);
-    IOLog("CB GPU start: runtime map rc=%d map=%d pte=%llx tgt=%x/%x/%x\n",
-     rrc,rmap,rtPte,rtt[0],rtt[1],rtt[2]);
-    if(rrc||rtt[0]!=0x5b5b0001u){
-     cb_cp[38]=16;cb_cp[39]=uint64_t(int32_t(rrc));IOSleep(8000);return;
-    }
-    gFenceSeq=4;
+    out[0]=uint32_t(rc);out[1]=uint32_t(m);out[2]=tv[0];out[3]=tv[1];out[4]=tv[2];
+    out[5]=uint32_t(pte);out[6]=uint32_t(pte>>32);out[7]=uint32_t(gva);
+    IOLog("CB GPU start: runtime map rc=%d map=%d pte=%llx tgt=%x/%x/%x iova=%x\n",
+     rc,m,pte,tv[0],tv[1],tv[2],uint32_t(gva));
+    return rc;
+   };
+   if(rtTest(0x2017000ULL,0x5b5b0001u,4,native_adreno_rtmap)||native_adreno_rtmap[2]!=0x5b5b0001u){
+    cb_cp[38]=16;cb_cp[39]=uint64_t(int32_t(native_adreno_rtmap[0]));IOSleep(8000);return;
    }
+   gFenceSeq=4;
+   if(rtTest(0x4020000ULL,0x5c5c0001u,5,native_adreno_rtmap2)||native_adreno_rtmap2[2]!=0x5c5c0001u){
+    cb_cp[38]=17;cb_cp[39]=uint64_t(int32_t(native_adreno_rtmap2[0]));IOSleep(8000);return;
+   }
+   gFenceSeq=5;
    // The engine and its pages now belong to the persistent GPU service. The
    // probe worker keeps them for the boot lifetime (statics) and never frees
    // them; submission from userland is serialized by gSubmitLock.

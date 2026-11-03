@@ -72,6 +72,7 @@ extern volatile uint64_t native_adreno_submit_atos_expect __attribute__((weak_im
 extern volatile uint64_t native_adreno_submit_atos_pte __attribute__((weak_import));
 extern volatile uint32_t native_adreno_selftest[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_rtmap[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_rtmap2[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
@@ -653,6 +654,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      native_adreno_rtmap[2],native_adreno_rtmap[3],native_adreno_rtmap[4],
      native_adreno_rtmap[7],cb_boot_id);
    at=put(out,at,cap,rtm,sizeof rtm);
+  }
+  if (&native_adreno_rtmap2[0] && native_adreno_rtmap2[7]) {
+   /* Same runtime test, but mapped inside the user window. */
+   char rt2[192];
+   snprintf(rt2,sizeof rt2,"GRT2 rc=%d map=%d pte=%llx tgt=%x/%x/%x iova=%x bid=%llx",
+     (int)(int16_t)(uint16_t)native_adreno_rtmap2[0],(int)(int16_t)(uint16_t)native_adreno_rtmap2[1],
+     ((uint64_t)native_adreno_rtmap2[6]<<32)|native_adreno_rtmap2[5],
+     native_adreno_rtmap2[2],native_adreno_rtmap2[3],native_adreno_rtmap2[4],
+     native_adreno_rtmap2[7],cb_boot_id);
+   at=put(out,at,cap,rt2,sizeof rt2);
   }
   if (&native_adreno_pwr[0]) {
    /* Pre-kick core power and CP liveness, sampled while the bus was healthy. */
