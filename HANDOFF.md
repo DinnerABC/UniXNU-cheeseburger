@@ -1,3 +1,17 @@
+## 2026-11-03：P21-Osprey 结果（4K 下 probe 全通，BO 映射被运行时排空拦截）· P21-Kite
+
+- **P21-Osprey 实机（boot `0x488980ca`，日志 `out/p21/persistent-logs/20261103T133820Z/`）**：67 轮、0 写错误，msgbuf 到 ~395 s，400 s 计时正常回 Recovery；显示 `frames=5`。
+- 4K 激活后 probe 全部通过：ring/PM4/PFP/GPMU/fence 的 `CB GPU CP map ... r=0`、`GCTL rc=0 stage=7 fence=2`、`fence OK`、`userpath fence rc=0`、`kick rc=0`。
+- 用户服务 `GPSVC open=1 bo=2 calls=5`，但 `map=0 err=1 st=e00002bd sel=3`：selector 3 是 `BoMap`，`cheeseburger_gpu_smmu_map` 失败后 boMap 返回 `kIOReturnNoMemory`。日志中 GPW：`me=0 vbif=f0000`，新 `mapping_begin` 在运行时引擎要求 `me==0 && vbif==0` 才能停流，`f0000` 使其失败并置 `gEngineSubmitFailed`。
+- **sheng 对照**：sheng 更新映射时以"masters quiesced + 每次更新 TLBIALL"为前提，不做 CP/VBIF 停流；探针完成后环为空（`rptr=wptr`），没有在途取指，正是该前提。
+- **P21-Kite 修复（提交 `04e5568`）**：`mapping_begin` 在 `gEngine` 存在时先读 `RBRead/RBWrite`；环为空（`r==w`）则按 sheng 前提直接更新表，不做停流；仅当环非空才执行 `drainForTables`。engine 未构造时依旧直接放行。
+- 候选 `out/p21/p21-kite`：内核 `4aa05439955631245e01902cd9c59a72bae5d80c7020088a0dafe5f45d03f7d0`、payload 展开 `13848960…`、固件 `fb33457e…`、镜像 `out/p21/p21-kite/uefi/boot-p21-up1.img` SHA-256 `99da8f559ec435d96c8d135e5d0920ad7916bf9e7387f2766e16b151d090fbf5`，gate `20261103T134609Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；13:46:39Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`GPSVC map=2`、`sub=1`、`GSUB` 是否越过 stage=3。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Osprey** | `90f28c3d…` | `06911dcd…` | 4K 下 probe 全通；用户 BO 映射被运行时排空拦截（NoMemory） |
+  | 2026-11-03 | **P21-Kite** | `99da8f55…` | `4aa05439…` | 空环视为 quiesced，不再停流；让用户映射与提交继续；结果待回收 |
+
 ## 2026-11-03：P21-Nightingale 结果（4K 首次激活；engine 前映射被排空拦截）· P21-Osprey
 
 - **P21-Nightingale 实机（boot `0x4f5fdd5a`，日志 `out/p21/persistent-logs/20261103T132004Z/`）**：66 轮、0 写错误，msgbuf 到 ~396.6 s，400 s 计时正常回 Recovery；显示 `frames=8`。
