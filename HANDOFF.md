@@ -1,3 +1,16 @@
+## 2026-11-03：P21-Ibis 结果（PA 假设推翻）· P21-Jay
+
+- **P21-Ibis 实机（boot `0x4d418916`，日志 `out/p21/persistent-logs/20261103T145439Z/`）**：66 轮、0 写错误；显示 `frames=5`。
+- `GLOP pool=8 first=10ac1f000`，BO 页 `pa=10ac26000/10ac25000`——**已与 ring/PM4 同区**（`0x10ac…`，CP 取指正常区），ATOS `rc=0 par` 正确；提交仍 `GSUB rc=-4 stage=3`、总线 `ffffffff`。**用户页物理地址假设被推翻。**
+- **sheng 案例（`NativeAdrenoSubmit.cpp` 注释与实现）**：记录"用户 BO 为 write-combined、未做维护时，IB 若仍在 CPU 缓存，CP 会读到旧/零命令并停在第一个 IB"；其修法是在门铃前对 IB 做缓存维护（`reassertWriteCombined` + `auditRange`）。用户 IB 是首次 `0x3f` 取指，probe 自身从未提交 IB，因此这一症状与本轮完全吻合。
+- **P21-Jay 修复**：`AGXDeviceUserClient::submit()` 在门铃前对每个被提交 BO 的物理页做 `flush_dcache`（clean+invalidate，经内核同物理页视图），再执行 `engine_submit`；与 sheng 的提交前维护一致。
+- 候选 `out/p21/p21-jay`：内核 `3e211b0119a348ff3d587968f8ecb8e0de3c03297fe57ead20254e5e9bdfc591`、payload 展开 `07704579…`、固件 `f529a34a…`、镜像 `out/p21/p21-jay/uefi/boot-p21-up1.img` SHA-256 `4c594abaf8113b4784a17830b8ac8f5dde372d391c6f108d34c738293c40ffe8`，gate `20261103T150610Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；15:06:31Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`GSUB` 是否越过 stage=3，目标 BO 是否出现 `adc0de1/feed0002/600d0003`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Ibis** | `0497cf11…` | `709fa722…` | 用户页已在 ring 同区、ATOS 正确，仍 stage=3 → PA 排除 |
+  | 2026-11-03 | **P21-Jay** | `4c594aba…` | `3e211b01…` | 门铃前维护 IB 缓存行（sheng 提交前维护）；结果待回收 |
+
 ## 2026-11-03：P21-Heron 结果（4 KiB 分配类仍落高区）· P21-Ibis
 
 - **P21-Heron 实机（boot `0x46fbb26b`，日志 `out/p21/persistent-logs/20261103T143834Z/`）**：67 轮、0 写错误，msgbuf 到 ~398.7 s，400 s 计时正常回 Recovery；显示 `frames=5`。
