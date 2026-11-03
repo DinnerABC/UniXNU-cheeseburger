@@ -1,4 +1,12 @@
-## 2026-11-03：晚分配内核页对照（batch13 构建中）
+## 2026-11-03：启动期低位页池（batch14 构建中）
+
+- **batch13 实机（boot `0x561d238f`，日志 `out/p21/persistent-logs/20261103T050613Z/`，镜像 `010b0dca…`，内核 `c0a1c292…`）**：`GLTE rc=-4 pa=142dc7000 map=0 tgt=0/0/0` —— **提交时新分配的内核页（无用户映射，PA 5.41 GB）同样不可写**。
+  - 结论定稿：**失败随“晚分配/高物理地址页”走，与用户映射、BO、SMMU 翻译无关**。早期分配（≤4.96 GB，ring/fence/stage/rt）可读写；晚分配（≥5.0 GB）读写都超时。GPU 可访问的物理范围约为 <5 GB，来自启动链配置（XPU/VBIF 类），不是 XNU 侧属性。
+  - 失败路径已按规则保留页（不再 unmap/释放可能仍被 GPU 访问的页）。
+- 本轮（batch14）：probe 阶段（早期分配天然落在 4.1–4.7 GB）预留最多 64 个 4 KiB 页（优先带 `<4 GiB` 掩码，失败则普通、接受 <5 GiB），`GLOP pool/first` 记录；4 KiB 的 BO 从池中取页（其余大小仍走原路径），用户提交恢复正常执行。
+- batch14 判定：`GLOP pool>0` 且 `GBOA` 的 PA <5 GB、`GCPY`/用户提交出现 fence → 边界成立且修复有效；`GLOP pool=0` → probe 期也拿不到低页，需要 DarwinBoot 预留低位池（boot args + UEFI 改动）。
+
+## 2026-11-03：晚分配内核页对照（batch13）
 
 - **batch12 实机（boot `0x5fa8920e`，日志 `out/p21/persistent-logs/20261103T044448Z/`，镜像 `ec1e90d9…`）**：`GLOW low=0 high=2` —— 单页、无连续标志、带 `<4 GiB` 掩码的分配**仍失败**（PA `0x138c17000`、`0x138ae9000`，约 5.24 GB）。`GCPY rc=-4`；fail-closed 正常。
 - 结论：**运行期拿不到 4 GiB 以下的页**（低位内存已被系统占用/掩码在运行期不满足），要验证“物理地址边界”就得在启动期预留。
