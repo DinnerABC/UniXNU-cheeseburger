@@ -1,3 +1,16 @@
+## 2026-11-03：P21-Heron 结果（4 KiB 分配类仍落高区）· P21-Ibis
+
+- **P21-Heron 实机（boot `0x46fbb26b`，日志 `out/p21/persistent-logs/20261103T143834Z/`）**：67 轮、0 写错误，msgbuf 到 ~398.7 s，400 s 计时正常回 Recovery；显示 `frames=5`。
+- 用户页改在 ring 之后用 4 KiB 连续分配预留，但 `CB GPU low pool: count=8 first=128668000`，BO 页 `pa=128680000/12866e000`——**4 KiB 连续分配这一类仍落在 0x128… 高区**；ATOS 仍 `rc=0`，提交仍 `GSUB rc=-4 stage=3`、总线 `ffffffff`。
+- 观察：ring/PM4/PFP/GPMU 是 **32/20 KiB 连续块**，落在 `0x10ac…`（CP 取指正常）；4 KiB 连续块（fence、pool）落在 `0x1275c/0x1286…`。分配大小类别对应不同的物理区。
+- **P21-Ibis 实验**：按 ring 的尺寸类别分配一块 **32 KiB 连续块**，切成 8 个 4 KiB 页给用户 BO；`boMap` 改用分配时记录的 `bo->physical`（不再用 `getPhysicalSegment(0)`，那只返回块首）。若 IB 取指恢复 → 用户页 PA 假设成立；若仍 stage=3 → 排除 PA。
+- 候选 `out/p21/p21-ibis`：内核 `709fa72267cabae04d0248710e8ba69924126b24c111d6b3bea6cc4c4fde180f`、payload 展开 `d2e65e80…`、固件 `36ca5061…`、镜像 `out/p21/p21-ibis/uefi/boot-p21-up1.img` SHA-256 `0497cf1195570b904834445d0b2933e2b350086a2be7c85d18f808f6027a5ded`，gate `20261103T144640Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；14:47:11Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`CB GPU low pool` 的 PA 是否落在 `0x10ac…`、`GSUB` 是否越过 stage=3。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Heron** | `5612905c…` | `81dcbd26…` | 4 KiB 分配类落 0x1286…，提交仍 stage=3 |
+  | 2026-11-03 | **P21-Ibis** | `0497cf11…` | `709fa722…` | ring 尺寸的 32 KiB 块切页；验证用户页 PA 假设；结果待回收 |
+
 ## 2026-11-03：P21-Finch 结果（ATOS 通过，CP 取用户 IB 挂总线）· P21-Heron
 
 - **P21-Finch 实机（boot `0x46772d33`，日志 `out/p21/persistent-logs/20261103T141233Z/`）**：68 轮、0 写错误，msgbuf 到 ~398.7 s，400 s 计时正常回 Recovery；显示 `frames=5`。
