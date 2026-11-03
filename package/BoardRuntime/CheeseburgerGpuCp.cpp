@@ -241,15 +241,14 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  cb_cp[2]=fw.cpBytes(0);cb_cp[3]=fw.cpBytes(1);cb_cp[4]=fw.gpmuWords();
  if(!fw.cpBytes(0)||!fw.cpBytes(1)||!fw.gpmuWords()){cb_cp[0]=2;return;}
  static Buf ring,pm4,pfp,gpmu,fence;
- if(!allocBuf(ring,8192*4)||!allocBuf(pm4,fw.cpBytes(0))||!allocBuf(pfp,fw.cpBytes(1))||
-    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)){cb_cp[0]=3;return;}
- // Reserve low 4 KiB pages for GPU buffers now, while early allocations still
- // land below the CP's accessible range.
- { for(unsigned i=0;i<64;++i){
-    IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-      kIODirectionInOut|kIOMemoryMapperNone,4096,0x00000000fffff000ull);
-    if(!b)b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
-      kIODirectionInOut|kIOMemoryMapperNone,4096,4096);
+ if(!allocBuf(ring,8192*4)){cb_cp[0]=3;return;}
+ // Reserve user-buffer pages in the same early allocation window as the ring:
+ // the CP fetches its ring/IB from here, while the later 64-page pool landed
+ // near 0x127e... where an IB fetch wedges the bus. Take single 4 KiB pages so
+ // the bump allocator keeps them adjacent to the ring region.
+ { for(unsigned i=0;i<8;++i){
+    IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+      kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
     if(!b)break;
     IOByteCount sp=0;uint64_t pa=b->getPhysicalSegment(0,&sp,kIOMemoryMapperNone);
     if(!pa||(pa&4095)||sp<4096||pa>=0x140000000ull){b->release();break;}
@@ -261,6 +260,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
      native_adreno_low_pool[2]=uint32_t(gLowPagePa[0]>>32);}
    IOLog("CB GPU low pool: count=%u first=%llx\n",gLowPageCount,
      (unsigned long long)(gLowPageCount?gLowPagePa[0]:0));}
+ if(!allocBuf(pm4,fw.cpBytes(0))||!allocBuf(pfp,fw.cpBytes(1))||
+    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)){cb_cp[0]=3;return;}
  if(!fw.copyCP(0,pm4.va,pm4.bytes)||!fw.copyCP(1,pfp.va,pfp.bytes)||
     !fw.gpmuCommands((uint32_t*)gpmu.va,gpmu.bytes/4)){cb_cp[0]=4;return;}
  flush_dcache((vm_offset_t)pm4.va,pm4.bytes,FALSE);
