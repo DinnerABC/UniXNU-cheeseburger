@@ -9,7 +9,13 @@
 
   | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
   |---|---|---|---|---|
-  | 2026-11-03 | **P21-Lark** | `fa3748fb…` | `8ec8232a…` | 最新 HEAD 去掉 batch15 诊断；用户确认进入系统，日志待回收 |
+  | 2026-11-03 | **P21-Lark** | `fa3748fb…` | `8ec8232a…` | 最新 HEAD 去掉 batch15 诊断；实机稳定到 400 s、显示 `clients=123 frames=13`、GPU 用户服务打开；用户提交仍 `GSUB rc=-4 stage=3`；4K `setup failed -9`（fault IRQ 安装失败）后回退 |
+
+- **P21-Lark 实机结果（boot `0x46e1467b`，日志 `out/p21/persistent-logs/20261103T113529Z/`）**：67 轮、0 写错误，msgbuf 到 **394.98 s**，心跳 328 s；Recovery 11:34:48 启动（命令后约 412 s），400 s 计时正常生效。显示 `clients=123`、`frames=13`；`CB GPU open: ok ... name=mediaserverd ready=1`（139.39 s）、2 个 BO 映射成功、`GPSVC open=1 sub=1 calls=9`。
+- GPU 用户提交仍失败：`submit rc=-4 stage=3 seq=3 rptr=ffffffff wptr=ffffffff irq=ffffffff fr=34 fenced=0`，`GSUB rc=-4 stage=3`；`GPWR pre=778000/140000 post=140000/140000 me/vbif=0 st=80000101 micro=178/0 gpmu=babeface/0`。即客户端与映射已就绪，失败仍在 CP 取环/门铃这一阶段（既有的用户提交问题），不是 launchd/显示。
+- 4K SMMU：`setup failed -9`；源码定位为 `CheeseburgerGpuSmmu4K.cpp:143` 的 `installFaultIrq()` 返回失败（`armcpu_spi_attach` 未安装成功），随后安全回退到钉住的旧序列。
+- 结论（设备已验证，机制未定）：同一 HEAD 下，**带 batch15 诊断的 panic-hold 停机，去掉后 P21-Lark 稳定**；但被移除代码在失败轮次不可达，因此只记录为"移除后设备验证通过"，不宣称已解释停机机制。
+- 下一步：①先修 `installFaultIrq()` 的 `-9`（SPI 0x149 的附加条件/参数），让 S2 的 4K 路径真正接管；②用户提交 `GSUB rc=-4 stage=3` 仍是主线，按 sheng Ring/Submit 迁移（S3）处理，不要再回到 batch14。
 
 ## 2026-11-03：batch14→15 代码对比与 batch15 诊断移除（候选已启动）
 
