@@ -1,3 +1,16 @@
+## 2026-11-03：P21-Wren 结果（4K 到 slots，CBNDX 不可直写）· P21-Robin
+
+- **P21-Wren 实机（boot `0x45587522`，日志 `out/p21/persistent-logs/20261103T122923Z/`）**：68 轮、0 写错误，msgbuf 到 **397.49 s**，心跳 338 s，400 s 计时正常回 Recovery；显示 `frames=5`；因 4K 在 66 s 失败并走 `-8`，`GPSVC ready=0 open=0`、无提交。
+- 4K 已越过冷启动采样：`CB GPU SMMU4K: cold r/w/me/vbif/im=0/0/303/0/0`，随后 `step=slots slot=0 smr=0 s2cr=200ff` → 写 `0x20000` 后回读仍是 `0x200ff`，`-8` 禁用 GPU。
+- **sheng 对照（`ArmSmmu4KStreams.c`）**：`FAULT = 2<<16`；翻译路由写 `bank|valid_s2cr`；`scan()` 要求未附着目标流**精确等于 FAULT**；`bank>255` 拒绝。S2CR 的 CBNDX 字段只在翻译类型下可写，直接写 FAULT 不会清掉 `0xff`。
+- **P21-Robin 修复**：规整序列改为"先写 bank(0)（翻译类型、写 CBNDX），再写 FAULT"，并记录 `banked`/`fault` 两次回读；成功后再走 kit 的 `CheckFaultedStreams → program → attach`。
+- 候选 `out/p21/p21-robin`：内核 `e1eeeb302675f027503d2214690680bbf04fcec13566878d9e165db5b1475039`、payload 展开 `c603f4cb…`、固件 `45d84968…`、镜像 `out/p21/p21-robin/uefi/boot-p21-up1.img` SHA-256 `0c9e26e6bb6f99af7c8ef7c8c257020a5fddc90fd2e31b672640aef5933aeb40`，gate `20261103T123806Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；12:38:24Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`normalize s2cr slot=0 banked=… fault=20000`、`bank0 streams sid0/sid2 attached`、`cb_smmu[20]=0x4b340001`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Wren** | `2d9f2bca…` | `a2a614c1…` | 冷启动只读采样、不排空；4K 到 slots，`0x20000` 写入不生效 → `-8` |
+  | 2026-11-03 | **P21-Robin** | `0c9e26e6…` | `e1eeeb30…` | 先写 bank 再写 FAULT 规整 S2CR；结果待回收 |
+
 ## 2026-11-03：P21-Tern 结果（冷启动读值有效，排空仍失败）· P21-Wren
 
 - **P21-Tern 实机（boot `0x469fd0f4`，日志 `out/p21/persistent-logs/20261103T121338Z/`）**：68 轮、0 写错误，msgbuf 到 **398.43 s**，心跳 338 s；400 s 计时正常回 Recovery；显示 `frames=5`，`GPSVC open=1 sub=1`、2 个 BO 映射，用户提交仍 `GSUB rc=-4 stage=3 fr=34`（CP 取环失败，既有问题）。
