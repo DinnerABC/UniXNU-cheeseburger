@@ -136,6 +136,9 @@ struct GpuIo {
  void delay(unsigned us){IODelay(us);}
  void publish(){__asm__ volatile("dsb oshst":::"memory");}
 };
+// Read-only cold sample. sheng expects the platform to have quiesced every
+// master before the SMMU is programmed; this probe runs before the CP exists,
+// so it records the ring/engine state instead of issuing halt writes.
 static bool drainColdGpu(){
  IODeviceMemory *mem=IODeviceMemory::withRange(0x5000000,0x40000);
  gGpu.map=mem?mem->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
@@ -149,8 +152,7 @@ static bool drainColdGpu(){
  native_smmu_cold[3]=io.read(CheeseburgerGpu::VBIFHalt);
  native_smmu_cold[4]=io.read(CheeseburgerGpu::InterruptMask);
  native_smmu_cold[5]=0x636f6c64u;  // "cold"
- CheeseburgerGpu::DrainState state{};
- return CheeseburgerGpu::drainForTables(io,false,state);
+ return true;
 }
 }
 
@@ -173,23 +175,24 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  // not advertise that property. Use the sagit non-cacheable walk and retain
  // the kit's explicit table-page publication before each update.
  gCtx->configHandle()->coherent_walk=0;
- // Context programming also changes translations. Prove the cold CP and
- // GPU VBIF are drained before the first SMMU hardware write; leave them
- // halted until the existing start sequence owns and resumes them. Nothing in
- // the SMMU has been written at this point, so an unverified cold drain leaves
- // this path instead of disabling the GPU: before the probe powers it up the
- // reads are typically all ones, which is not evidence of a hung bus.
+ // sheng programs the SMMU (prepare -> program -> attach -> map) with the
+ // platform guaranteeing that no master is active; it has no drain step. This
+ // setup runs before the probe constructs or starts the CP, so the cold reads
+ // below are the quiescence evidence: an empty ring means no submission is in
+ // flight. Only a ring with work (or a read that cannot be taken) leaves the
+ // kit path; the pinned sequence then owns the GPU as before.
  if(!drainColdGpu()){
-  const bool unpowered=(native_smmu_cold[0]&native_smmu_cold[1]&native_smmu_cold[2]&
-   native_smmu_cold[3]&native_smmu_cold[4])==0xffffffffu;
-  IOLog("CB GPU SMMU4K: cold drain unverified r/w/me/vbif/im=%x/%x/%x/%x/%x unpowered=%d\n",
-   (unsigned)native_smmu_cold[0],(unsigned)native_smmu_cold[1],(unsigned)native_smmu_cold[2],
-   (unsigned)native_smmu_cold[3],(unsigned)native_smmu_cold[4],unpowered?1:0);
-  // Before the probe powers the GPU the whole register file reads all ones:
-  // there is no master to drain yet, and the pinned path also programs this
-  // SMMU before power-up. Any other unverified state leaves the kit path.
-  if(!unpowered)return -10;
+  IOLog("CB GPU SMMU4K: cold registers unavailable; using the pinned sequence\n");
+  return -10;
  }
+ if(native_smmu_cold[0]!=native_smmu_cold[1]){
+  IOLog("CB GPU SMMU4K: ring not quiescent r/w=%x/%x; using the pinned sequence\n",
+   (unsigned)native_smmu_cold[0],(unsigned)native_smmu_cold[1]);
+  return -10;
+ }
+ IOLog("CB GPU SMMU4K: cold r/w/me/vbif/im=%x/%x/%x/%x/%x\n",
+  (unsigned)native_smmu_cold[0],(unsigned)native_smmu_cold[1],(unsigned)native_smmu_cold[2],
+  (unsigned)native_smmu_cold[3],(unsigned)native_smmu_cold[4]);
  // No fallback is permitted after the first hardware mutation: the kit may
  // have left a partially programmed or poisoned context/stream lease.
  swr(0x0,(srd(0x0)&~(1u|(3u<<14)|(1u<<13)))|0x1c36);
@@ -198,7 +201,9 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
    cb_smmu[16]=micro.before;cb_smmu[17]=micro.after;
    cb_smmu[19]=uint64_t(int64_t(micro.result));
    if(micro.result==CheeseburgerGpu::MicroResult::Timeout||
-      micro.result==CheeseburgerGpu::MicroResult::Invalid)return -8; }
+      micro.result==CheeseburgerGpu::MicroResult::Invalid){
+    IOLog("CB GPU SMMU4K: step=micro before/after=%x/%x result=%d\n",
+     (unsigned)micro.before,(unsigned)micro.after,(int)micro.result);return -8; } }
  gIo=(ArmSmmu4KIo){.cookie=nullptr,.register_bytes=0x10000,
   .read32=ioRead32,.read64=ioRead64,.write32=ioWrite32,.write64=ioWrite64,.barrier=ioBarrier};
  const ArmSmmu4KStream routes[2]={{0,0},{2,2}};
@@ -209,18 +214,27 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
   unsigned smr=0x800+4*route.slot,s2cr=0xc00+4*route.slot;
   uint32_t match=srd(smr),value=srd(s2cr);
   if(match==0&&value==0x200ffu){swr(s2cr,0x20000u);value=srd(s2cr);}
-  if(match!=0||value!=0x20000u){cb_smmu[20]=0xe100u+route.slot;return -8;}
+  if(match!=0||value!=0x20000u){
+   IOLog("CB GPU SMMU4K: step=slots slot=%u smr=%x s2cr=%x\n",route.slot,match,value);
+   cb_smmu[20]=0xe100u+route.slot;return -8;}
  }
  ArmSmmu4KStreamResult preflight{};
  auto check=ArmSmmu4KCheckFaultedStreams(&gIo,routes,2,0,&preflight);
- if(check!=ArmSmmu4KSuccess){cb_smmu[20]=uint32_t(check);return -8;}
- if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE))return -8;
- if(gCtx->program(&gIo)!=kIOReturnSuccess){cb_smmu[20]=uint32_t(gCtx->programStatus());return -8;}
+ if(check!=ArmSmmu4KSuccess){
+  IOLog("CB GPU SMMU4K: step=preflight status=%d\n",(int)check);
+  cb_smmu[20]=uint32_t(check);return -8;}
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)){IOLog("CB GPU SMMU4K: step=fault-after-preflight\n");return -8;}
+ if(gCtx->program(&gIo)!=kIOReturnSuccess){
+  IOLog("CB GPU SMMU4K: step=program status=%d\n",(int)gCtx->programStatus());
+  cb_smmu[20]=uint32_t(gCtx->programStatus());return -8;}
  // DTB arm,smmu-kgsl: gfx3d_user = SID 0, gfx3d_secure = SID 2, one-to-one SMR slots.
- if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE))return -8;
- if(gCtx->attach(routes,2)!=kIOReturnSuccess){cb_smmu[20]=uint32_t(gCtx->attachStatus());return -8;}
- if(NativeAdrenoBindSmmuVisibility(gTables,&gVis)!=kIOReturnSuccess)return -8;
- if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE))return -8;
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)){IOLog("CB GPU SMMU4K: step=fault-after-program\n");return -8;}
+ if(gCtx->attach(routes,2)!=kIOReturnSuccess){
+  IOLog("CB GPU SMMU4K: step=attach status=%d\n",(int)gCtx->attachStatus());
+  cb_smmu[20]=uint32_t(gCtx->attachStatus());return -8;}
+ if(NativeAdrenoBindSmmuVisibility(gTables,&gVis)!=kIOReturnSuccess){
+  IOLog("CB GPU SMMU4K: step=visibility\n");return -8;}
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)){IOLog("CB GPU SMMU4K: step=fault-after-attach\n");return -8;}
  gActive=true;
  cb_smmu[0]=0;
  cb_smmu[20]=0x4b340001u;  // "smmu4k path active"
