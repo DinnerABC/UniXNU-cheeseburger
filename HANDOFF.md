@@ -1,3 +1,13 @@
+## 2026-11-03：batch17 实机（S2 首次验证，setup -4）
+
+- boot `0x3fa116fe`，日志 `out/p21/persistent-logs/20261103T064452Z/`，镜像 `fee46f3a…`、内核 `69d26bb5…`、gate `20261103T063439Z` PASS（args 670 B）、misc 回读一致。
+- 结果：`CB GPU SMMU: sheng ArmSmmu4K setup failed -4; using the pinned sequence` —— 4K 路径在 `NativeAdrenoSmmuContext::prepare` 失败并**安全回退**旧序列（probe `GCTL` 仍 OK，自动回 Recovery 正常）。本轮 `frames=0`、`GPSVC open=0`，用户客户端未启动，因此没有 `GPLT/GBOA/用户提交` 数据。
+- `-4` 的最可能原因：vendored 的 `NativeAdrenoSmmuContext::prepare` **把 input_bits 写死为 32**，而我传的 aperture 是 128 MiB/leaf_budget 8192/32 页表池；kit 对表池容量与 leaf 数、以及 32 位输入窗口的校验不满足。修复方向：
+  1. 把表池加大（例如 128 页 = 512 KiB，`NativeAdrenoMemory::allocate(128*4096,36,true,1MiB)`），`leaf_budget` 按 aperture 实际需要设置（128 MiB/4K = 32768，或收窄 aperture）；
+  2. 或给 `NativeAdrenoSmmuContext` 增加 `input_bits` 参数（本地补丁，保持 sheng 语义）以用 36 位；
+  3. 失败时把 `prepare` 的返回码/`ArmSmmu4KStatus` 记入 `cb_smmu`，避免只有 `-4`。
+- 另注：连续两个 boot（batch15、batch17）出现 `frames=0` 且用户客户端不启动；这与 GPU 改动无关（用户态发现未推进），下一轮需先用**旧路径**确认是否本轮镜像的偶发（同镜像重跑一次）再判定 S2。
+
 ## 2026-11-03：S2 候选 batch17（含 `cheeseburger-gpu-smmu4k=1`）构建状态
 
 - batch17 = batch16 内核（`1cedb7d4…`，含 sheng vendored 层 + 4K SMMU 路径）+ `unixnu.toml` args 追加 `cheeseburger-gpu-smmu4k=1`（约 674 B，仍 <700）。payload 已重建并写入 `config/CompressedPayload.h`、`Expected.h`；`check-kernel.py` PASS。
