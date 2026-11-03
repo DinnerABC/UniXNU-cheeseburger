@@ -63,8 +63,7 @@ int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_engine_copy_test(uint64_t);
 int cheeseburger_gpu_engine_late_test(void);
 int cheeseburger_gpu_low_take(uint64_t *,IOBufferMemoryDescriptor **);
-int cheeseburger_gpu_engine_pool_late_test(void);
-int cheeseburger_gpu_smmu_dump(void);
+
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 void pmap_set_cache_attributes(ppnum_t,unsigned int);
 }
@@ -571,10 +570,6 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // Publish all mapped objects, not just IBs: an IB can reference another
     // BO as data or as its GPU writeback destination.
     __asm__ volatile("dsb sy":::"memory");
-    cheeseburger_gpu_smmu_dump();
-    if(cheeseburger_gpu_engine_pool_late_test()){
-        native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
-        return kIOReturnIOError; }
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     // Kernel-side readback of every mapped BO: the IB's write target is one of
     // them, and the values show whether the commands ran even without a fence.
