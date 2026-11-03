@@ -6,6 +6,18 @@
 - Adreno740 上游 clone 未成功，使用固定副本 `4e0314d`；AdrenoMetal 使用新 clone `243d63c`。A740 硬件模块、前端、AirNir/AdrenoFirmware、tools 均未编译；sheng 的 SM8550 GPU 胶水（GpuPowerProbe、prepare-sheng-gmu* 等）未同步。详见 `docs/P21_SHENG_GPU_SYNC_20261103.md`。
 - 本轮未接触设备、未写分区、未生成 prelink/UEFI/payload/boot 镜像。下一步：如需实机验证，先按 batch18 记录构建 payload/UEFI 与 gate，再做单次 `fastboot boot`；A540 的 SMMU4K `prepare -4` 问题仍需按 batch17 日志单独修复。
 
+## 2026-11-03：batch18 早停可复现（同步后回归待隔离）
+
+- batch18 第一次（boot `0x3e102a7e`）：日志 ~139 s 停止、心跳 78 s/14 records、`frames=0`、`GPSVC open=0`、`GCTL` 正常、`SMMU4K setup failed -4` 回退；无 panic 文本。
+- 同一镜像第二次（08:17:54Z 启动）：到 08:28（>10 min）USB 无设备、无自动返回、无新日志 → **早停在该镜像上可复现**（不同于 batch7 的同镜像重跑恢复）。
+- 现行怀疑：同步进来的 22 个 sheng 模块被编进板级归档，若含全局构造器/静态初始化会在启动早期执行（仓库既有规则：板级新增类必须移出 `__mod_init_func`，在 publish 时显式初始化）。
+- **隔离计划（设备恢复后执行）**：
+  1. 先回收第二次日志，确认停止点；
+  2. 建 `batch19`：同一同步代码，但构建清单**只 vendor 不编译** sheng 模块，并让 `CheeseburgerGpuSmmu.cpp` 的 4K 分发在未编译时编译为空（`#if` 或弱符号），即回到 batch14 的运行时行为；单次启动对比；
+  3. 若恢复 → 逐模块二分（先 `NativeAdrenoVm/Memory`，再 `Ring/Submit`），并把需要的构造器移出 `__mod_init_func`（参照 sheng `build-adreno740-accelerator.py` 的 late 处理）；
+  4. 若不恢复 → 查 payload/固件层（与代码无关）。
+- 检查命令：对 `package/BoardRuntime/sheng/**` 的 .o 或归档执行 `llvm-objdump --macho --section=__DATA,__mod_init_func` / `nm | grep __GLOBAL__sub_I`，确认是否存在早期构造器。
+
 ## 2026-11-03：完整同步后的首次编译/启动验证（batch18）
 
 - batch18 = 完整同步后的候选（`package/BoardRuntime/sheng/` 397 文件）：内核源码构建 PASS（`028187e8…`）；prelink/patch/check/payload PASS。
