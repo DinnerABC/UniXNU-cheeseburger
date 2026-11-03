@@ -1,3 +1,20 @@
+## 2026-11-03：暂停"panic 后的自动复位"（候选 panic-hold 已启动，结果待回收）
+
+- **问题**：`gpu-smmu-irq-drain` 镜像启动后设备约 48 s 就回到 Recovery（Recovery btime 09:47:22 主机时间，Fastboot 命令 09:46:34），本轮持久日志窗口完全未变（仍为 boot `0x3f5e540c`、SHA-256 `12b25457…`），即内核没有写入任何记录。用户报告 UEFI 选择后"闪一下自动重启"，判断为 panic。
+- **代码定位**：仓库中**没有**单独的"panic 触发复位"实现。唯一会在一轮里自动发 PSCI SYSTEM_RESET 的板级代码是 `package/BoardRuntime/CheeseburgerAutoReset.cpp`（`cheeseburger-auto-reset=400`，主线程 400 s、guard 410 s），它原先**不区分是否已 panic**，因此 panic 后仍会在计时到点时复位。`patch-xnu-entry-probe.py --panic-screen --no-reset` 的 panic screen 只绘制并 `park()`，不复位；本机 `PE_halt_restart` 也没有板级/kext 安装实现，XNU 的 panic/debugger 重启路径在本镜像上不会走到 PSCI。`ArmDTPlatform::platformStageReset` 只在 `sheng-platform-stage=1/2/3` 时触发，当前参数未启用。
+- **改动（提交 `fe3fd3a`）**：
+  - `CheeseburgerAutoResetPolicy.h` 的 `State` 增加 `panic`；主线程和 guard 的 `should_fire` 都要求 `!panic`。
+  - `CheeseburgerAutoReset.cpp` 在到达各自 deadline 时读取 `boot_progress_panic_vinfo`（与 panic screen 相同的 vc_info ABI）末行前两个像素的标记 `0xC0FFEE11/0x5CEEDA7A`；命中则不发 PSCI，分别记 `cb_reset[9]`（main held）/`cb_reset[10]`（guard held）。默认启用；`cheeseburger-panic-hold=0` 可恢复旧行为。未命中时 400 s 计时完全不变。
+  - `BootLog.c` 的 `AUTORESET` 行增加 `mhold/ghold`；`tests/auto_reset_policy_model.cpp` 增加 panic/hold 用例，宿主模型 PASS。
+- **未解释**：上一轮约 48 s 的复位早于 400 s 计时（而且没有日志说明显示探针是否运行），本改动**不能**证明能阻止那次复位；若下次仍在 <400 s 无日志复位，应先做同镜像/旧镜像差分并确认 UEFI/DarwinBoot 实际显示的内容，而不是继续归因于 panic。
+- **候选**：`out/p21/panic-hold`（复用已验证的固件 overlay，增量编译；prelink 输入为编译产物的 `mach.development.bcm2837.unstripped.noctf`，不是 stripped 主文件）。
+  - 内核 `9bd74c5a30fc2fa2e32d95d293fdcd6376c5b9ffc165dfeea6ff37162aa81ef3`（prelink `2416412f…`；`check-kernel` PASS）；
+  - payload 展开 `8a45d44d19e2906d5bd6747cd66fea1e976ef021959cdae1e7b6322dfe56839b`（128,413,696 B）；
+  - 固件 `bbbdb2720c333d8139bb41683efb689624ca33e63ee93e0c303a864c95811331`，三项 pin 在 FV/EFI 命中；
+  - 镜像 `out/p21/panic-hold/uefi/boot-p21-up1.img` SHA-256 `5283186c92ee975ca1416605a40ed2dd05d77470332783d408436208b2c3219d`（82,767,872 B），gate `20261103T103137Z` PASS（args 670 B）。
+  - misc：仅首块 command=`boot-recovery`，备份/请求/回读一致（`8698abf4…`），未写其他分区。2026-11-03T10:32:06Z 对 `3b25cc7c` 单次 `fastboot boot` Sending/Booting OKAY；本轮结果与新 boot ID 日志尚未回收。
+- **下一步**：回收新日志；若仍早停/无日志，先区分"内核未启动（UEFI/DarwinBoot）"与"内核早期失败"，再决定是否回退本轮 GPU cold-start drain 改动（`drainForTables` 在电源未确认前读取 MEControl/VBIF 存在总线挂死风险）。
+
 ## 2026-11-03：SMMU4K 接入修复（已编译，尚未实机）
 
 - 对照 `.work/p21-official-framework/drivers/Adreno740/NativeAdrenoSmmuContext.cpp` 与 `package/BoardRuntime/sheng/kits/ArmSmmu4K/ArmSmmu4KLive.h`：128 MiB aperture 的预算修为 32768 页，连续表池扩大到 128 页（原先 8192/32 必然拒绝；真实 kit 宿主测试确认需 66 页）。保留 upstream 的 32 位输入及本机 36 位输出，不声称等同原 36 位输入配置。
