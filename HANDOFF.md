@@ -1,3 +1,12 @@
+## 2026-11-03：panic-hold 实机结果（boot `0x47d33baa`，黑屏且不自动返回）
+
+- 日志 `out/p21/persistent-logs/20261103T104649Z/`，boot `0x47d33baa`，16 轮、写错误 0，窗口 SHA-256 `090e69d0…`。Recovery btime 10:46:41（启动命令 10:32:19），即用户约 14 分钟后手动恢复，**400 s 计时没有把设备自动带回 Recovery**。
+- 内核正常跑到约 **138 s** 后日志停止（msgbuf 最后为 tccd/studentd/analyticsd 等 launchd 服务，无 panic 文本）；`BootLog` 从 ~60 s（`kprintf initialized`）写到 ~138 s，共 16 轮。`AUTORESET requested=400 elapsed=60 mstart=1 gstart=1` 已启动但日志里从未到点。
+- **panic-hold 未被触发**（`mhold=0 ghold=0`）：本轮不是 panic 屏导致的复位/黑屏；上轮 ~48 s 的快速复位与本轮现象不同，仍未解释。
+- GPU 路径：`CB GPU SMMU: sheng ArmSmmu4K setup failed -9; using the pinned sequence`（较 batch17 的 `-4` 更早失败，与新增的 cold-start `drainForTables` 失败返回一致），随后旧序列成功：`CB GPU start: fence OK seq=1`、`userpath fence rc=0 stage=7 fence=2`、`CB GPU service publish rc=0`、`kick rc=0`、`GCTL rc=0 stage=7`。
+- 用户态阻塞：`GPSVC ready=1 open=0`、显示 `clients=0 frames=0`（`TOUCH frames=2012` 是触摸轮询，不是显示帧）。即 `adrenoprobed`/GPU 用户服务从未被 launchd 启动，显示也没有客户端，黑屏与此一致；这与 batch18 的 `GPSVC open=0`、`frames=0` 同一症状。
+- 结论：本轮复现 **batch18 的 ~138 s 后停机**，不是 panic；panic-hold 改动本身未被考验。下一步仍应是 batch18 记录的隔离计划（sheng 模块只 vendor 不编译，单次启动对比），并单独查 launchd 为什么没有加载 GPU 用户服务；若继续 SMMU4K，先修正 `mapping_begin` 在冷启动返回 -1（新 drain 读取未上电 GPU 的总线风险）。
+
 ## 2026-11-03：暂停"panic 后的自动复位"（候选 panic-hold 已启动，结果待回收）
 
 - **问题**：`gpu-smmu-irq-drain` 镜像启动后设备约 48 s 就回到 Recovery（Recovery btime 09:47:22 主机时间，Fastboot 命令 09:46:34），本轮持久日志窗口完全未变（仍为 boot `0x3f5e540c`、SHA-256 `12b25457…`），即内核没有写入任何记录。用户报告 UEFI 选择后"闪一下自动重启"，判断为 panic。
