@@ -1,3 +1,10 @@
+## 2026-11-03：S2 落地（ArmSmmu4K 接管 bank/流）
+
+- 新增 `package/BoardRuntime/CheeseburgerGpuSmmu4K.cpp`：用 sheng 的 `NativeAdrenoSmmuContext` + `ArmSmmu4K` 建表（32 页表池，`NativeAdrenoMemory` 分配）、`program()` 编程 CB0、`attach()` **精确接管 DTB 流**（`gfx3d_user` SID0→slot0、`gfx3d_secure` SID2→slot2），增量映射走 `ArmSmmu4KLiveUpdateContext`（每次更新内含 TLB 同步与镜像校验）。板级只保留 kit 明确留给平台的部分：SMMU 全局 SCR、vendor ACTLR `0x70000000`、micro-MMU `0x6000` resume。
+- 迁移桥：`cheeseburger_gpu_smmu_setup` 在 `cheeseburger-gpu-smmu4k=1` 时优先走 4K 路径，成功即返回；失败回退到已固化的 sagit 序列。`cheeseburger_gpu_smmu_map/unmap` 在 4K 激活时转发给 kit。**实机确认 probe fence + 映射 + 用户提交后，删除旧路径、默认使用 kit。**
+- 启用方法：在候选 `config/unixnu.toml` 的 args 里追加 `cheeseburger-gpu-smmu4k=1`（当前 644 B，仍 <700）。下一设备轮次应先用该参数做 A/B。
+- 构建：`batch17` 正在验证链接；S1 的 vendored 层（Memory/Vm/SmmuContext/Ring/Submit/Cpu/Sha256/Timer + ArmSmmu4K + AdrenoPM4）已在 batch16 链接通过（内核 `a50cec2c…`）。
+
 ## 2026-11-03：转向 sheng 官方方案迁移（进行中）
 
 - 用户指示：**完全采用 sheng（官方 Adreno740）适配方案迁移合并，不再自研，禁止重复造轮子**。所有后续 GPU 工作以 sheng 的接口/生命周期/同步为基准；A540 的寄存器、固件、命令序列仍取 sagit，不搬 A740 硬件细节。
