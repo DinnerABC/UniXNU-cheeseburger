@@ -1,3 +1,55 @@
+## 2026-11-03：回退风险改动 + 单一功能变量（batch8）
+
+- **batch7 实机（镜像 `56263820…`，两次启动）**：
+  - 第一次 boot `0x3f6d67b8`（日志 `20261103T030125Z`）：`frames=0`、`GPROBE exec=0`、`GPSVC open=0`，日志写入器约 140 s 停、心跳到 348 s，没有用户提交。
+  - 重跑 boot `0x561a49ee`（日志 `20261103T031108Z`）：`frames=5`、`GPSVC open=2 sub=0`；`GSIB/GRTM/GRT2` 全部成功；**`GPAT map=0 pa=13c768000 seq=6 rc=-4`** —— 把用户目标 BO 的物理页 `0x13c768000` 重新映射到已验证窗口 `0x2018000` 再写，仍然中止。**用户 BO 的物理页对 GPU 不可写，与 IOVA 无关**。pa_test 失败后引擎被标记失败，用户 ABI 提交没有执行（sub=0）。
+  - 用户报告本轮出现 panic。两次 boot 的持久 `msgbuf` 均无 `panic(cpu …)`（第二次覆盖 72.8–397.5 s），panic 文本可能落在日志窗口外或只显示在屏上；`CheeseburgerPlatformPower` 有多处显式 `panic()`（PMGR 老问题候选）。**没有屏上原文前不下结论。**
+- 回退（提交 `58a62ab`）：移除 probe 的 IB 自检、运行期映射测试、暂存复制与 `pa_test`，用户提交恢复原样（不再替换 IB 地址）；保留 fence-only 对照（GCTL）、prefence barrier、ATOS 门禁、GIBH/GBOD/GSAT。
+- 本轮唯一功能变量：**移除 `b9f698f` 的 `VM_WIMG_WCOMB`**。用户页 GPU 写失败只剩这一处属性差异（SMMU leaf 与可用页完全相同）。
+- **两轮独立审计（只读）结论（batch7 的“panic/卡死”归因）**：
+  1. `pa_test` 失败只置 `abandonedFlag`，没有置 `gEngineSubmitFailed`；服务随后仍进入 `engine_submit`，`pre_kick` 在**失败后的 GPU/SMMU 总线**上读 `InterruptStatus/CPInterruptStatus/micro-MMU` 并写 `0xa887/0xa881`，即记录过的黑屏/卡死模式。与 boot `0x561a49ee` 的 `GPAT rc=-4` → `GPSVC sub=0`、`GPWR` 全 0、提交线程卡住、心跳仍继续吻合。**这是本轮可见 panic/卡死最可能的来源，相关代码已回退。**
+  2. `pa_test` 用第二别名改写用户目标 BO 前 3 字，破坏 `0xdeadbeef` 判据；`0x2017000/0x2018000` 实际落在 stage（16 KiB，4 页）内部，测试映射覆盖 stage 页；另有映射不 unmap 的悬挂风险。均已随回退移除。
+  3. 新增 submit 全为 `cpuFenceOnly`，不重走 `kickTo` 的 `InterruptStatus` 轮询；无新 IOKit 类/元类，`OSMetaClass`/launchd 老 panic 无新增触发。
+  4. BootLog 的 `GSAT` 读取弱符号前缺少 `&` 判定，已补；其余新增日志行均有弱符号守卫。
+- 回退后 batch8 只保留：probe fence、fence-only 对照（GCTL）、prefence barrier、ATOS 门禁、GIBH/GBOD/GSAT；用户提交路径与 b9f698f 一致，唯一功能变量是移除 WCOMB。
+- batch8 判定：用户提交成功（fence 出现、`GPSVC fence≥1`）→ WCOMB 就是页级失败原因；仍 `rc=-4` 且 `GBOD` 目标未变 → 转向用户映射本身（`clientMemoryForType`/`IOConnectMapMemory64`）或 XPU/页归属。若再次出现卡死/panic，先确认 `GPSVC sub` 与 `GPWR` 是否全 0，再对照本轮回退范围。
+
+
+## 2026-11-03：物理页 A/B（batch7 构建中）
+
+- **batch6 实机（boot `0x3f63b493`，日志 `out/p21/persistent-logs/20261103T024143Z/`，镜像 `f9ec6822…`，02:33:18Z 启动、02:40:16Z 自动回 Recovery）**：
+  - `GRTM rc=0 tgt=5b5b0001/0002/0003 iova=2017000`：运行期内核页在已验证窗口可写。
+  - `GRT2 rc=0 tgt=5c5c0001/0002/0003 iova=4020000`：**同一内核页映射到用户窗口 `0x4020000` 也可写**（PTE `60000127605e43` 与 0x2017000 相同）。
+  - `GSUB rc=-4 stg=1 fr=6a`、`GBOD` 目标页仍 `0xdeadbeef`：用户 IB 写 `0x4001000` 仍失败。
+  - 结论：窗口、运行期映射、PTE 属性、暂存取指与命令流**全部排除**；失败随**用户 BO 的物理页**走。
+- 本轮提交（batch7）：新增 `cheeseburger_gpu_engine_pa_test(pa)`。服务在用户提交前把目标 BO 的 PA 映射到已验证窗口 `0x2018000`，用已知 IB 写三个哨兵并 fence；结果 `GPAT map/pa/seq/rc`，随后 `GBOD` 可直接看到该 BO 是否被写入。若 `GPAT rc=0` 且 `GBOD` 出现 `5d5d0001…` → 物理页可写，问题在“用户窗口 IOVA + 用户页”的组合；若 `GPAT rc=-4` → 该物理页对 GPU 本身不可写（XPU/页状态/分配来源），与地址无关。
+- batch7 候选 `out/p21/gpu-dev-batch7/`，内核与 gate 见下文；宿主模型 PASS。
+
+## 2026-11-03：用户窗口 A/B（batch6 构建中）
+
+- **batch5 实机（boot `0x3f8c4e97`，日志 `out/p21/persistent-logs/20261103T022050Z/`，镜像 `76391219…`，02:12:28Z 启动、02:19:25Z 自动回 Recovery）**：
+  - `GRTM rc=0 map=0 pte=60000127abce43 tgt=5b5b0001/5b5b0002/5b5b0003 iova=2017000`：**CP 启动后新增的内核映射**（0x2017000）能被 CP 写入并完成 fence。→ 运行期映射本身可用，SMMU 路径没问题。
+  - `GSAT atos=0 pte=6000010ab7ce43`（暂存页）：PTE 属性与运行期页同格式（`...e43`）。
+  - `GSUB rc=-4 stg=1 fr=58`、`GBOD` 目标页仍 `0xdeadbeef`：用户 IB（复制到暂存页）写 `0x4001000` 仍失败。
+  - `GSIB` 再次成功。结论：只剩两种可能——(a) **0x4xxxxxx 用户窗口**对 CP 不可用；(b) 用户 BO 的物理页不可写。
+- 本轮提交（batch6）：把运行期测试做成两次：`0x2017000`（已验证窗口，`GRTM`）与 **`0x4020000`（用户窗口内，内核页）**（`GRT2`）。若 `GRT2` 成功 → 窗口没问题，差异在用户 BO 物理页；若失败 → 窗口/地址范围问题（再看 SMMU 侧 SID/stream 配置，而不是继续改用户 ABI）。
+- batch6 候选 `out/p21/gpu-dev-batch6/`，内核与 gate 见下文；宿主模型 PASS。
+
+## 2026-11-03：运行期映射 A/B（batch5 已构建，待启动）
+
+- **batch3（boot `0x3f75922b`，日志 `out/p21/persistent-logs/20261102T181438Z/`，镜像 `c3738225…`）**：
+  - `GSIB rc=0 stage=7 fenced=1 fence=3 tgt=5a5a0001/5a5a0002/5a5a0003`：内核在 GPMU 页（启动前映射、CP 已取过）构造的 6 dword IB 经 user-path 提交后**执行、CP_MEM_WRITE 写回、fence 完成**。IB 执行、MEM_WRITE 与 fence 全部可用。
+  - `GSUB rc=-4 seq=4 pf=0 fr=46`：用户 IB（0x4000000）仍在 IB 处中止，`fr=0x46` 等于该提交最终 WPTR。
+  - `GCTL rc=0 fence=2` 仍成立；`GPSVC sub=1 fence=0`。
+- **batch4（boot `0x3f809cbb`，日志 `out/p21/persistent-logs/20261103T011034Z/`，镜像 `a742b3a6…`）**：
+  - `GIBH 703d8003 4001000 0 adc0de1 …`：用户 IB 内容从内核自有视图读出，正是插件写入的 PM4（三条 `CP_MEM_WRITE` 写 `0x4001000/4/8`）。**IB 不是零页/陈旧页**。
+  - `GBOD n=2 0:703d8003/4001000/0 1:deadbeef/deadbeef/deadbeef`：目标 BO 仍为插件预填的 `0xdeadbeef`，写入没有发生。
+  - `GSUB rc=-4 stg=1 fr=46`：把同一 IB **复制到启动前映射的暂存页 0x2016000** 再提交，仍然中止。取指位置不是决定因素，失败点是命令中的**写入目标在运行期映射的用户页**。
+  - `GSIB` 同轮再次成功（写入启动前映射页）。结论收敛为：**启动前映射页可读可写；运行期新增映射页的 GPU 写入失败**（ATOS 硬件走表却显示其可翻译）。
+- 本轮提交 `105633a`（batch5）：probe 自检后再做 **运行期映射 A/B**——启动后把内核页映射到 `0x2017000`，用已知 IB 写入三个哨兵并回读（`GRTM rc/map/pte/tgt`）。同时把提交 IB 的原始 leaf PTE 写入 `GSAT pte=`，与已验证页比较属性。
+- batch5 候选 `out/p21/gpu-dev-batch5/`：内核 `95afce84…`（native `895a4a0e…` → prelink `b4ec25af…`），expanded payload、固件与 gate 见下文补充；宿主模型 PASS。**尚未启动。**
+- batch5 判定：`GRTM rc=0 tgt=5b5b0001/0002/0003` = 运行期映射内核页可用，问题只与用户 BO 页有关（再看 PTE 差异）；`GRTM rc=-4` = 运行期映射对 CP DMA 整体不可见，需要改 SMMU 映射/TLB 路径，而不是继续查用户窗口。
+
 ## 2026-11-03：内核 IB 自检（batch3 已临时启动）
 
 - **batch2 实机结果已回收**（boot `0x448ab1c5`，日志 `out/p21/persistent-logs/20261102T174905Z/`，17:41:48Z 启动、17:48:39Z 自动回 Recovery，约 411 s）。关键三行：

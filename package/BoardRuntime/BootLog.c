@@ -607,7 +607,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    at=put(out,at,cap,sub,sizeof sub);
    /* Hardware walk of the user IB before its doorbell: -3 is a translated
     * page that does not match the software leaf, other codes are ATOS faults. */
-   if (native_adreno_submit_atos_rc || native_adreno_submit_atos_expect) {
+   if (&native_adreno_submit_atos_rc && (native_adreno_submit_atos_rc || native_adreno_submit_atos_expect)) {
     char sat[176];
     snprintf(sat,sizeof sat,"GSAT atos=%d par=%llx expect=%llx pte=%llx bid=%llx",
       (int)native_adreno_submit_atos_rc,native_adreno_submit_atos_par,
