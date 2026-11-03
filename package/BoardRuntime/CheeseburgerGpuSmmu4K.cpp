@@ -55,7 +55,15 @@ static bool installFaultIrq(){
  IOReturn rc=armcpu_spi_attach(ContextIntid,false,contextFault,nullptr,&rb,&router);
  native_smmu_irq[1]=uint32_t(rc);native_smmu_irq[2]=rb;native_smmu_irq[3]=router;
  if(rc!=kIOReturnSuccess)return false;
- if((rb&7)!=3){
+ // GICD_CTLR.DS: with a single security state IGROUPR is RAZ/WI, so the
+ // readback reports group 0 for an interrupt that is still usable. What proves
+ // non-secure usability is the enable bit: a secure-only interrupt would ignore
+ // ISENABLER from this state as well. The touch SPI attach relies on the same.
+ const uint32_t ctlr=gGic.v[0];
+ const bool ds=(ctlr>>6)&1;
+ IOLog("CB GPU SMMU IRQ: attach rc=%d rb=%x ctlr=%x ds=%d id=%u\n",
+  (int)rc,rb,ctlr,ds?1:0,ContextIntid);
+ if(!(rb&2)){
   gGic.v[(0x180+(ContextIntid/32)*4)/4]=1u<<(ContextIntid%32);
   __asm__ volatile("dsb sy":::"memory");return false;
  }
