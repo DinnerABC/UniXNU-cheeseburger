@@ -1,3 +1,18 @@
+## 2026-11-03：P21-Swift 结果（IRQ 修复生效，4K 冷启动 -8 禁用 GPU）· P21-Tern
+
+- **P21-Swift 实机（boot `0x44abb46f`，日志 `out/p21/persistent-logs/20261103T115652Z/`）**：68 轮、0 写错误，msgbuf 到 **394.63 s**，心跳 338 s；Recovery 11:53:19（命令后约 400 s），计时正常。显示 `clients=125 frames=5`。
+- `SIRQ count=0 attach=0 rb=a002 route=0 id=361 ready=1` 与 `CB GPU SMMU IRQ: attach rc=0 rb=a002 ctlr=12 ds=0 id=361`：**fault IRQ 安装修复生效**（注意 GICD_CTLR=0x12，DS=0；rb 的 Group 位仍为 0，说明该中断在读取视角属于 group 0，但 enabled 位可写）。
+- 紧接着 `CB GPU SMMU: 4K hardware state uncertain; GPU disabled`（66.01 s）：`drainColdGpu()` 在冷启动失败返回 `-8`，分发把 `-8` 视为状态不确定并**直接禁用 GPU**（不回退）。结果 `GPSVC ready=0 open=0`、无 submit；显示不受影响。
+- **P21-Tern 修复（提交 `649b124`）**：
+  1. 冷启动排空失败改为返回 `-10`（此时尚未写任何 SMMU 寄存器），分发在非 `-8` 失败时调用新增的 `cheeseburger_gpu_smmu4k_abort()`：屏蔽刚安装的 fault IRQ、清 `gFaulted`，再回退旧序列，避免影响旧路径与提交闸门。
+  2. 记录冷读 `RBRead/RBWrite/MEControl/VBIFHalt/InterruptMask` 到 `native_smmu_cold`；若五者全为 `0xffffffff`（GPU 尚未上电、没有 master 需要排空，旧路径同样在上电前编程该 SMMU），则继续 4K 编程而不是回退。
+- 候选 `out/p21/p21-tern`：内核 `4a721f904312e426add22fd80ea8356ae8993b686425dcc618744df5566e45d7`、payload 展开 `82d41769…`、固件 `bbfeb122…`、镜像 `out/p21/p21-tern/uefi/boot-p21-up1.img` SHA-256 `47eceeb4a9cecf270d70d314cc13be73cb285c4dec2117b5b281d4311690db1b`，gate `20261103T120529Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；12:05:49Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`cold drain ... unpowered=?`、`bank0 streams sid0/sid2 attached`、`cb_smmu[20]=0x4b340001`；若出现 `-10` 回退，记录冷读值供下一步定位。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Swift** | `fd8a9879…` | `b96bb4ae…` | 修复 fault IRQ 的 `-9`；IRQ `ready=1`，但 4K 冷启动 `-8` 禁用 GPU |
+  | 2026-11-03 | **P21-Tern** | `47eceeb4…` | `4a721f90…` | 冷启动未验证不再禁用 GPU；全 1 视为未上电继续 4K；结果待回收 |
+
 ## 2026-11-03：SMMU fault IRQ `-9` 修复 · P21-Swift
 
 - **上游检索**：`upstream/UniXNU-sheng` 与 `Adreno740` 没有 SMMU fault IRQ 实现；`ArmSmmu4KLive.h` 只要求平台自行"安装 fault handling 并确保所有 master 静止"。可对照的本机案例是触摸的 SPI attach（`CheeseburgerTouch.cpp:359`），它只检查 attach 返回码，不检查 Group 位。
