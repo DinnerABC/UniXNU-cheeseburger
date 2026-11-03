@@ -61,6 +61,8 @@ int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_smmu4k_active(void);
+extern volatile uint32_t *cb_inline_ib;
+extern unsigned cb_inline_dwords;
 int cheeseburger_gpu_engine_copy_test(uint64_t);
 int cheeseburger_gpu_engine_late_test(void);
 int cheeseburger_gpu_low_take(uint64_t *,IOBufferMemoryDescriptor **);
@@ -586,6 +588,14 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         if(p){flush_dcache((vm_offset_t)p,(unsigned)ib->bytes,FALSE);}
     }
     __asm__ volatile("dsb sy":::"memory");
+    // The diagnostic inline path runs the client's first IB from the ring when
+    // the board enables gpu-inline-ib; publish its kernel view here.
+    if(s.buffer_count){
+        Bo *ib=find(s.buffers[0].handle);
+        void *p=ib&&ib->buf?ib->buf->getBytesNoCopy():nullptr;
+        cb_inline_ib=(volatile uint32_t *)p;
+        cb_inline_dwords=(p&&s.buffers[0].bytes<=ib->bytes)?unsigned(s.buffers[0].bytes/4):0;
+    }
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     // Kernel-side readback of every mapped BO: the IB's write target is one of
     // them, and the values show whether the commands ran even without a fence.

@@ -51,6 +51,10 @@ volatile uint32_t native_adreno_copy_test[8];
 volatile uint32_t native_adreno_late_test[8];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
+// Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
+// the ring instead of being fetched through CP_INDIRECT_BUFFER.
+volatile uint32_t *cb_inline_ib=nullptr;
+unsigned cb_inline_dwords=0;
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -728,7 +732,10 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  // per-job context switch; here it stalled the CP before the pre-IB fence ever
  // executed (boot 0x6330fe6c, pf=0/1). sheng instead invalidates the CB TLB in
  // the SMMU (top of submit) and sends no page-table packets per submission.
- int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,0,true);
+ unsigned inl=0;PE_parse_boot_argn("gpu-inline-ib",&inl,sizeof inl);
+ const uint32_t *inlineWords=(inl&&cb_inline_ib&&cb_inline_dwords)?(const uint32_t*)cb_inline_ib:nullptr;
+ int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,0,true,
+  inlineWords,inlineWords?cb_inline_dwords:0);
  if(rc==0){gFenceSeq=s;*seq=s;}
  else {
   gEngineSubmitFailed=true;

@@ -383,12 +383,13 @@ public:
     // before the IB so mappings added after CP start become visible.
     int submit(const Ib *ibs, unsigned count, uint64_t fenceVA, uint32_t sequence,
                volatile uint32_t *fenceCPU, Record &rec, unsigned ringDwords,
-               uint64_t pageTableVA = 0, bool cpuFenceOnly = false) {
+               uint64_t pageTableVA = 0, bool cpuFenceOnly = false,
+               const uint32_t *inlineWords = nullptr, unsigned inlineCount = 0) {
         if (!runningFlag || abandonedFlag || !ringPtr || ringDwords != RingDwords) {
             fail(rec, -40, 7); return rec.rc;
         }
         if (!fenceVA || (fenceVA & 4095) || !fenceCPU || count > 16 ||
-            (count && !ibs)) {
+            (count && !ibs) || (inlineWords && !inlineCount)) {
             fail(rec, -41, 7); return rec.rc;
         }
         for (unsigned i = 0; i < count; ++i)
@@ -412,8 +413,8 @@ public:
         // bit 31 and is proven, so the user batch keeps only the proven
         // structure: barriers, IB, barriers, fence.
         const bool prefence = false;
-        const unsigned need = count * 4 + 9 + (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3) +
-            (prefence ? 5 : 0);
+        const unsigned need = (inlineWords ? inlineCount : count * 4) + 9 +
+            (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3) + (prefence ? 5 : 0);
         if (need > ringDwords) { fail(rec, -43, 7); return rec.rc; }
         if (ringCursor + need >= ringDwords) {
             // NOP-fill the tail instead of letting a packet cross the wrap.
@@ -449,11 +450,19 @@ public:
             putPacket(0x12, nullptr, 0);                            // CP_WAIT_MEM_WRITES
             putPacket(0x26, nullptr, 0);                            // CP_WAIT_FOR_IDLE
         }
-        for (unsigned i = 0; i < count; ++i) {
-            ringPtr[ringCursor++] = packet7(0x3f, 3);                // CP_INDIRECT_BUFFER
-            ringPtr[ringCursor++] = uint32_t(ibs[i].va);
-            ringPtr[ringCursor++] = uint32_t(ibs[i].va >> 32);
-            ringPtr[ringCursor++] = ibs[i].dwords;
+        if (inlineWords) {
+            // Diagnostic control: run the client's commands directly from the
+            // ring instead of fetching them through CP_INDIRECT_BUFFER. This
+            // separates "the CP cannot fetch an IB" from "the CP does not run".
+            for (unsigned i = 0; i < inlineCount; ++i)
+                ringPtr[ringCursor++] = inlineWords[i];
+        } else {
+            for (unsigned i = 0; i < count; ++i) {
+                ringPtr[ringCursor++] = packet7(0x3f, 3);            // CP_INDIRECT_BUFFER
+                ringPtr[ringCursor++] = uint32_t(ibs[i].va);
+                ringPtr[ringCursor++] = uint32_t(ibs[i].va >> 32);
+                ringPtr[ringCursor++] = ibs[i].dwords;
+            }
         }
         // sagit barrier: wait for the IB's writes, then for the CP pipeline,
         // before the fence timestamp retires.
