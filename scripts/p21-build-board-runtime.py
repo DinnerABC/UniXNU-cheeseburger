@@ -40,7 +40,7 @@ for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=1'] if n=='N
 # hardware-independent VM/BO/ring/submit layer and the ArmSmmu4K and
 # AdrenoPM4 kits. Board hardware stays in the Cheeseburger runtime.
 A740=S/'adreno740';A740I=['-I',str(A740),'-I',str(A740/'ArmSmmu4K'),'-I',str(A740/'AdrenoPM4')]
-for n in ['NativeAdrenoMemory','NativeAdrenoVm','NativeAdrenoSmmuContext','NativeAdrenoRing','NativeAdrenoSubmit','NativeAdrenoSha256','NativeAdrenoTimer','NativeAdrenoCpu']:
+for n in ['NativeAdrenoMemory','NativeAdrenoVm','NativeAdrenoSmmuContext','NativeAdrenoRing','NativeAdrenoSubmit','NativeAdrenoSha256','NativeAdrenoTimer','NativeAdrenoCpu','NativeAdrenoSmmuMemory']:
  compile(A740/(n+'.cpp'),name='a740-'+n,flags=A740I)
 for p in sorted([q for q in list((A740/'ArmSmmu4K').glob('*.c'))+list((A740/'AdrenoPM4').glob('*.c')) if not q.stem.startswith('test_')]):
  compile(p,name='a740-'+p.parent.name+'-'+p.stem,flags=A740I)
