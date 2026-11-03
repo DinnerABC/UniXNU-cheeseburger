@@ -78,6 +78,10 @@ extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_atos[18] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
+/* Trusted preflight before the first client IB and the last ring streams. */
+extern volatile uint32_t native_adreno_preflight[13] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_low_pool[4] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_bo_low[2] __attribute__((weak_import));
@@ -616,6 +620,31 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      &native_adreno_submit_staged?native_adreno_submit_staged:0xdeadbeefu,
      cb_boot_id);
    at=put(out,at,cap,sub,sizeof sub);
+   /* Trusted preflight: rc/seq, the dwords the CP read from the client's IB
+    * page, the sentinels it wrote beside them, and the kernel's own view of
+    * that page's first word. cp != kview means the CP sees different bytes. */
+   if (&native_adreno_preflight[0] && native_adreno_preflight[1]) {
+    char pfl[200];
+    snprintf(pfl,sizeof pfl,"GPFL rc=%d seq=%u cp=%x/%x/%x/%x kview=%x sent=%x/%x/%x/%x fr=%x st=%u bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_preflight[0],native_adreno_preflight[1],
+      native_adreno_preflight[2],native_adreno_preflight[3],
+      native_adreno_preflight[4],native_adreno_preflight[5],native_adreno_preflight[10],
+      native_adreno_preflight[6],native_adreno_preflight[7],native_adreno_preflight[8],
+      native_adreno_preflight[9],native_adreno_preflight[12],
+      native_adreno_preflight[11],cb_boot_id);
+    at=put(out,at,cap,pfl,sizeof pfl);
+   }
+   /* Last submission as the CP reads it: seq, start, end and the first words
+    * of the stream, so a fence that never fires can be compared with what was
+    * actually placed in the ring. */
+   if (&native_adreno_ring_log540_count && native_adreno_ring_log540_count) {
+    const volatile uint32_t *ring=&native_adreno_ring_log540[(native_adreno_ring_log540_count-1)&3][0];
+    char rgl[200];
+    snprintf(rgl,sizeof rgl,"GRNG seq=%u %u..%u n=%u w=%x/%x/%x/%x/%x/%x %x/%x/%x/%x bid=%llx",
+      ring[0],ring[1],ring[2],ring[3],ring[4],ring[5],ring[6],ring[7],ring[8],ring[9],
+      ring[10],ring[11],ring[12],ring[13],cb_boot_id);
+    at=put(out,at,cap,rgl,sizeof rgl);
+   }
    /* Hardware walk of the user IB before its doorbell: -3 is a translated
     * page that does not match the software leaf, other codes are ATOS faults. */
    if (&native_adreno_submit_atos_rc && (native_adreno_submit_atos_rc || native_adreno_submit_atos_expect)) {

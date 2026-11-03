@@ -582,10 +582,14 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // that is still in a CPU cache makes the CP read stale or zero commands and
     // stop at the first packet. Clean+invalidate every submitted buffer through
     // the kernel view of the same physical pages.
-    for(unsigned i=0;i<s.buffer_count;++i){
-        Bo *ib=find(s.buffers[i].handle);
-        void *p=ib&&ib->buf?ib->buf->getBytesNoCopy():nullptr;
-        if(p){flush_dcache((vm_offset_t)p,(unsigned)ib->bytes,FALSE);}
+    // Publish every object this client has mapped, not just the submitted IBs:
+    // an IB can reference another BO as data or as its GPU write destination,
+    // and the kernel's view of a page must reach DRAM before the CP fetches.
+    for(unsigned i=0;i<MaxBo;++i){
+        Bo &b=bos_[i];
+        if(!b.handle||!b.buf)continue;
+        void *p=b.buf->getBytesNoCopy();
+        if(p)flush_dcache((vm_offset_t)p,(unsigned)b.bytes,FALSE);
     }
     __asm__ volatile("dsb sy":::"memory");
     // The diagnostic inline path runs the client's first IB from the ring when

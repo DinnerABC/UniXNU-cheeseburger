@@ -15,6 +15,7 @@
 #if __has_include("CheeseburgerGpuFirmware.h")
 #include "CheeseburgerGpuFirmware.h"
 #include "CheeseburgerGpuStart.h"
+#include "CheeseburgerGpuEngine540.h"
 #include "CheeseburgerGpuQuiesce.h"
 #include "CheeseburgerGpuWait.h"
 #define CB_GPU_FW 1
@@ -47,6 +48,10 @@ volatile uint32_t native_adreno_rtmap2[8];
 volatile uint32_t native_adreno_pa_test[8];
 // CP_MEM_TO_MEM read of a user address: rc, sequence, copied words and source.
 volatile uint32_t native_adreno_copy_test[8];
+// Trusted preflight before the first user IB: rc, sequence, the four dwords the
+// CP read from the user IB page, the three sentinels it wrote, the kernel's own
+// view of that page and the engine stage.
+volatile uint32_t native_adreno_preflight[13];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
 // Low pool: count and first page, filled at probe time.
@@ -201,6 +206,10 @@ static void powerCore(W &gp, volatile uint64_t *out){
 // the boot lifetime, like the mapped ring and fence pages.
 static Mmio *gMmio=nullptr;
 static CheeseburgerGpu::Startup<Mmio> *gEngine=nullptr;
+// User submissions run on the sagit-style engine; the startup above keeps the
+// reset/ME_INIT/GPMU/ZAP chain that the probe already proved with its fences.
+static CheeseburgerGpu::Engine540<Mmio> *gEngine540=nullptr;
+static bool gPreflightDone=false;
 static volatile uint32_t *gRing=nullptr,*gFence=nullptr;
 // The probe GPMU command page is pre-mapped and was already fetched by the CP;
 // expose it as a scratch IB/target page for the user-path bring-up test.
@@ -470,6 +479,14 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    // them; submission from userland is serialized by gSubmitLock.
    gRing=(volatile uint32_t*)ring.va;gRingGva=ring.gva;gRingWords=ring.bytes/4;
    gFence=(volatile uint32_t*)fence.va;gFenceGva=fence.gva;
+   // The probe's fences proved the ring, the doorbell and the +4 timestamp.
+   // Hand the live cursors to the submission engine; it continues the CPU
+   // sequence at the probe's last value.
+   gEngine540=new CheeseburgerGpu::Engine540<Mmio>(*gMmio);
+   if(!gEngine540||!gEngine540->adopt(gRing,gRingWords,gRingGva,gFence,gFenceGva,gFenceSeq)){
+    IOLog("CB GPU engine: adopt failed; user submits stay refused\n");
+    cb_cp[97]=1;
+   }
    unsigned svc=0;
    if(PE_parse_boot_argn("cheeseburger-gpu-service",&svc,sizeof svc)&&svc==1){
     int prc=cheeseburger_gpu_service_publish();
@@ -539,7 +556,6 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
 // the ring is idle when it wraps and a later BO cannot be freed under an
 // in-flight fetch.
 static bool gEngineSubmitFailed=false;
-static unsigned gEngineSubmitCount=0;
 // Internal result of the last failed user submission. The persistent log and
 // the heartbeat carry these so a wedged msgbuf does not erase them.
 volatile int32_t native_adreno_submit_rc=-1;
@@ -675,16 +691,60 @@ extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor *
  --gLowPageCount;*pa=gLowPagePa[gLowPageCount];*buf=gLowPage[gLowPageCount];
  return 0;
 }
+// Trusted preflight before the first client IB. It runs a kernel-owned IB from
+// the GPMU page the CP has already fetched: four CP_MEM_TO_MEM loads of the
+// client's IB page into a scratch page, then sentinels written beside it. The
+// stream is refused unless the CP both reads the client page and writes the
+// sentinels, so a failure names the page (translation) instead of blaming the
+// client's commands. Nothing here writes user memory.
+static int preflightUserPage(uint64_t userIova,uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec){
+ if(!gScratchVA||!gScratchGva||!gEngine540||!userIova)return -1;
+ volatile uint32_t *ib=gScratchVA+0x80;      // byte 0x200
+ volatile uint32_t *dst=gScratchVA+0x100;    // byte 0x400, four copied dwords
+ volatile uint32_t *tgt=gScratchVA+0x190;    // byte 0x640, four sentinels
+ CheeseburgerGpu::Encoder540 e((uint32_t*)ib,64);
+ // Sentinels before the loads: if the CP stalls inside CP_MEM_TO_MEM the board
+ // still shows that the ring ran and the client page is what blocked it.
+ const uint32_t sent[3]={0xf00d0001u,0xf00d0002u,0xf00d0003u};
+ const uint32_t after[1]={0xf00d0004u};
+ bool ok=e.memWrite(gScratchGva+0x640,sent,3);
+ for(unsigned i=0;i<4&&ok;++i)
+  ok=e.memToMem(gScratchGva+0x400+4ull*i,userIova+4ull*i);
+ if(ok)ok=e.memWrite(gScratchGva+0x64c,after,1);
+ if(!ok)return -1;
+ for(unsigned i=0;i<4;++i)dst[i]=0;
+ for(unsigned i=0;i<4;++i)tgt[i]=0;
+ flush_dcache((vm_offset_t)dst,32,FALSE);
+ flush_dcache((vm_offset_t)tgt,32,FALSE);
+ flush_dcache((vm_offset_t)ib,256,FALSE);
+ CheeseburgerGpu::Ib540 one={gScratchGva+0x200,e.size()};
+ int rc=gEngine540->submit(&one,1,sequence,1000000,rec);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)dst,32,FALSE);
+ flush_dcache((vm_offset_t)tgt,32,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ native_adreno_preflight[0]=uint32_t(rc);native_adreno_preflight[1]=sequence;
+ for(unsigned i=0;i<4;++i)native_adreno_preflight[2+i]=dst[i];
+ for(unsigned i=0;i<4;++i)native_adreno_preflight[6+i]=tgt[i];
+ native_adreno_preflight[10]=cb_inline_ib?((volatile uint32_t*)cb_inline_ib)[0]:0xdeadbeefu;
+ native_adreno_preflight[11]=rec.stage;
+ native_adreno_preflight[12]=rec.fence;
+ IOLog("CB GPU engine: preflight rc=%d seq=%u cp=%x/%x/%x/%x kview=%x sent=%x/%x/%x then=%x fr=%x\n",
+  rc,sequence,dst[0],dst[1],dst[2],dst[3],native_adreno_preflight[10],
+  tgt[0],tgt[1],tgt[2],tgt[3],rec.fence);
+ return rc;
+}
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
  if(!gEngine||!gRing||!gFence||!gFenceGva||!gSubmitLock||!seq||count>16||(count&&(!vas||!dwords)))return -1;
- // A submission that failed may have left the CP fetching a bad IB. Fail closed:
- // no further submission until reboot (the failure record names rc/stage).
- CheeseburgerGpu::Startup<Mmio>::Ib ibs[16];
+ CheeseburgerGpu::Ib540 ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
  IOLockLock(gSubmitLock);
- if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||gEngineSubmitCount>=1){IOLockUnlock(gSubmitLock);return -2;}
- gEngineSubmitCount++;
+ // A submission that failed may have left the CP fetching a bad IB. Fail
+ // closed until reboot; the engine refuses as well, so neither the ring nor a
+ // mapping is touched after an unproven stream.
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||!gEngine540||!gEngine540->ready()){
+  IOLockUnlock(gSubmitLock);return -2;}
  // Re-assert the core power domains and sample the engine before the doorbell.
  // A collapsed domain or a halted CP explains a ring the CP never reads; the
  // reads happen while the bus is still healthy (no failed kick yet).
@@ -694,21 +754,15 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   native_adreno_pwr[4],native_adreno_pwr[5],native_adreno_pwr[6],native_adreno_pwr[7],
   native_adreno_pwr[8],(int)native_adreno_pwr[9]);
  if(pwr){
-  gEngineSubmitFailed=true;native_adreno_submit_rc=pwr;
+  gEngineSubmitFailed=true;gEngine540->quarantine();native_adreno_submit_rc=pwr;
   native_adreno_submit_stage=0x80;
   IOLockUnlock(gSubmitLock);return pwr;
  }
  uint32_t s=gFenceSeq+1;if(!s)s=1;
- // Hardware translation gate for every IB. sheng invalidates the CB TLB per
- // submission; a leaf the SMMU walk cannot resolve stalls the CP fetch with no
- // CPU-visible record, and this board must not read GPU MMIO after a failed
- // kick. Compare the raw PAR with the software leaf and fail closed before the
- // doorbell instead of ringing an unfetchable IB.
+ // Software translation gate for every submitted IB. The pinned ATOS helper
+ // rewrites the live CB0, so when the kit owns the context its LiveUpdate is
+ // the only authority; a leaf missing from the kit's ledger is refused here.
  int atosRc=0;uint64_t atosPar=0,atosExpect=0,atosPte=0;
- // The pinned ATOS helper halts the micro-MMU and rewrites the live CB0
- // (SCTLR stall bit, CB_RESUME, FSR). When the kit owns the context its own
- // LiveUpdate already verified the leaf, so only the software lookup runs and
- // the hardware context is left untouched for the CP that is about to fetch.
  const bool kitPath=cheeseburger_gpu_smmu4k_active()!=0;
  for(unsigned i=0;i<count&&!atosRc;++i){
   uint64_t pte=0;
@@ -726,42 +780,42 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   native_adreno_submit_rc=atosRc;native_adreno_submit_stage=0x81;native_adreno_submit_seq=s;
   IOLockUnlock(gSubmitLock);return atosRc;
  }
- CheeseburgerGpu::Record rec;
- // The probe's own streams fetch from 0x2000000 without any CP_SMMU_TABLE_UPDATE,
- // so the SMMU CB0 TTBR0 installed by the kernel is the translation the CP uses.
- // The sagit pageTable sequence (0x53/0x43 under a protected-mode toggle) is a
- // per-job context switch; here it stalled the CP before the pre-IB fence ever
- // executed (boot 0x6330fe6c, pf=0/1). sheng instead invalidates the CB TLB in
- // the SMMU (top of submit) and sends no page-table packets per submission.
- unsigned inl=0;PE_parse_boot_argn("gpu-inline-ib",&inl,sizeof inl);
- const uint32_t *inlineWords=(inl&&cb_inline_ib&&cb_inline_dwords)?(const uint32_t*)cb_inline_ib:nullptr;
- // New mappings must reach the CP's own translation cache, not only the
- // SMMU's: send the kit's programmed TTBR0 with sagit's CP_SMMU_TABLE_UPDATE
- // and CP TLB invalidate packets ahead of the IB.
- uint64_t ttbr=0;
- if(cheeseburger_gpu_smmu4k_active()&&cheeseburger_gpu_smmu4k_ttbr(&ttbr))ttbr=0;
- int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,ttbr,true,
-  inlineWords,inlineWords?cb_inline_dwords:0);
+ // One trusted stream per boot before the client's own commands: it proves the
+ // CP still executes an IB and can reach the client's page. A failure keeps
+ // every object and refuses the client submit.
+ if(!gPreflightDone){
+  CheeseburgerGpu::SubmitRecord pre;
+  int prc=count?preflightUserPage(vas[0],s,pre):-1;
+  gPreflightDone=true;
+  if(prc){
+   gEngineSubmitFailed=true;gEngine540->quarantine();
+   native_adreno_submit_rc=prc;native_adreno_submit_stage=pre.stage?pre.stage:0x90;
+   native_adreno_submit_seq=s;native_adreno_submit_fence_raw=pre.fence;
+   IOLockUnlock(gSubmitLock);return prc;
+  }
+  gFenceSeq=s;++s;
+ }
+ CheeseburgerGpu::SubmitRecord rec;
+ // The probe's streams fetch from 0x2000000 without any CP table packet, so
+ // the table CB0 already holds is the one the CP walks. sagit's per-job
+ // 0x53/0x43 transition is available in the encoder but stays off here: it
+ // changed nothing on boot 0x4670c72a.
+ int rc=gEngine540->submit(ibs,count,s,1000000,rec);
  if(rc==0){gFenceSeq=s;*seq=s;}
  else {
   gEngineSubmitFailed=true;
   native_adreno_submit_rc=rc;native_adreno_submit_stage=rec.stage;
-  native_adreno_submit_irq=rec.irq;native_adreno_submit_cpirq=rec.cpIrq;
-  native_adreno_submit_seq=s;native_adreno_submit_post=rec.postRead?1:0;
-  native_adreno_submit_preirq=rec.preIrq;native_adreno_submit_precpirq=rec.preCpIrq;
+  // No post-doorbell MMIO read happened: the IRQ fields are unknown, not zero.
+  native_adreno_submit_irq=0xffffffffu;native_adreno_submit_cpirq=0xffffffffu;
+  native_adreno_submit_seq=s;native_adreno_submit_post=0;
+  native_adreno_submit_preirq=0;native_adreno_submit_precpirq=0;
   native_adreno_submit_fenced=rec.fenced?1:0;
-  native_adreno_submit_prefence=rec.prefence;
-  native_adreno_submit_prefence_valid=rec.prefenceValid?1:0;
-  native_adreno_submit_fence_raw=rec.fenceRaw;
-  // Bounded: a failing submission must say why. Unknown registers are
-  // 0xffffffff and postRead=0 means they were never sampled after failure.
-  // pre= are the latches sampled before the doorbell (stale bits), fenced=1
-  // means the CPU-visible fence page held the sequence despite the rc.
+  native_adreno_submit_prefence=rec.rptr;
+  native_adreno_submit_prefence_valid=0;
+  native_adreno_submit_fence_raw=rec.fence;
   static unsigned logged;
-  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x irq=%x cpirq=%x pre=%x/%x fenced=%u post=%u pf=%x/%u fr=%x stg=%u\n",
-    rc,rec.stage,s,rec.read,rec.write,rec.irq,rec.cpIrq,rec.preIrq,rec.preCpIrq,
-    (unsigned)rec.fenced,(unsigned)rec.postRead,rec.prefence,(unsigned)(rec.prefenceValid?1:0),rec.fenceRaw,
-    (unsigned)native_adreno_submit_staged);
+  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x fenced=%u fr=%x ring=%u\n",
+    rc,rec.stage,s,rec.rptr,rec.wptr,(unsigned)rec.fenced,rec.fence,rec.words);
  }
  IOLockUnlock(gSubmitLock);
  return rc;

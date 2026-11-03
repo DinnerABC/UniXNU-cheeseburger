@@ -17,6 +17,7 @@ R = Path(__file__).resolve().parents[1]
 OUT = R / 'out/p21/gpu-cp/host-tests'
 TESTS = [
     ('gpu_start_model', 'tests/gpu_start_model.cpp'),
+    ('gpu_engine540_model', 'tests/gpu_engine540_model.cpp'),
     ('gpu_wait_model', 'tests/gpu_wait_model.cpp'),
     ('gpu_bo_policy_model', 'tests/gpu_bo_policy_model.cpp'),
     ('qcom_pas_model', 'tests/qcom_pas_model.cpp'),
@@ -28,6 +29,7 @@ HEADERS = [
     'package/BoardRuntime/CheeseburgerAutoResetPolicy.h',
     'package/BoardRuntime/CheeseburgerAtosGate.h',
     'package/BoardRuntime/CheeseburgerGpuStart.h',
+    'package/BoardRuntime/CheeseburgerGpuEngine540.h',
     'package/BoardRuntime/CheeseburgerGpuWait.h',
     'package/BoardRuntime/CheeseburgerGpuBoPolicy.h',
     'package/BoardRuntime/CheeseburgerGpuWalk.h',
