@@ -406,7 +406,12 @@ public:
         // Worst case: optional transition (3) + page table (20) + prefence (5)
         // + pre-IB barrier (2) + barrier (2) + CACHE_FLUSH_TS (5) + IBs.
         const bool userPath = cpuFenceOnly;
-        const bool prefence = userPath && count != 0;
+        // The pre-IB CACHE_FLUSH_TS diagnostic wrote a plain timestamp without
+        // the IRQ bit; on this CP that packet precedes the IB and the whole
+        // batch never executes (pf=0/1 every round). The probe's own fence uses
+        // bit 31 and is proven, so the user batch keeps only the proven
+        // structure: barriers, IB, barriers, fence.
+        const bool prefence = false;
         const unsigned need = count * 4 + 9 + (pageTableVA ? 20 : 0) + (secureLeft ? 0 : 3) +
             (prefence ? 5 : 0);
         if (need > ringDwords) { fail(rec, -43, 7); return rec.rc; }

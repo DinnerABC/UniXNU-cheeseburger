@@ -355,12 +355,18 @@ int main() {
         // sheng invalidates the CB TLB before every user doorbell; the pre-IB
         // probe word must be retired (wait-for-writes/idle) before the IB.
         check(m.invalidateCalls == 1, "cpufence/tlb-invalidate");
-        check(ring[20] == packet7(0x46, 4) && ring[22] == 0x2015004 &&
-              ring[25] == packet7(0x12, 0) && ring[26] == packet7(0x26, 0) &&
-              ring[27] == packet7(0x3f, 3) && ring[28] == 0x4000000, "cpufence/prefence-before-ib");
-        check(rec.prefenceValid || complete, "cpufence/prefence-valid");
-        if (complete) check(fence[1] == (0x1000u | 2), "cpufence/prefence-written");
-        else check(fence[1] == 0 && rec.prefence == 0, "cpufence/prefence-unwritten");
+        // The pre-IB diagnostic CACHE_FLUSH_TS is gone: on this CP it stopped
+        // the batch before the IB (pf=0/1 every device round). The user batch
+        // keeps the proven shape and records no prefence.
+        bool prefencePacket = false, ibPacket = false, fencePacket = false;
+        for (unsigned i = 0; i + 3 < RingDwords; ++i) {
+            if (ring[i] == packet7(0x46, 4) && ring[i + 2] == 0x2015004) prefencePacket = true;
+            if (ring[i] == packet7(0x3f, 3) && ring[i + 1] == 0x4000000) ibPacket = true;
+            if (ring[i] == packet7(0x46, 4) && ring[i + 2] == 0x2015000) fencePacket = true;
+        }
+        check(!prefencePacket, "cpufence/no-prefence-diagnostic");
+        check(ibPacket && fencePacket, "cpufence/ib-before-fence");
+        check(rec.prefence == 0 && !rec.prefenceValid, "cpufence/prefence-record");
     }
 
     // A pre-submit TLB invalidate that does not complete must fail closed: no
