@@ -37,6 +37,8 @@ volatile uint32_t native_adreno_ib_head[8];
 // Up to four (slot, v0, v1, v2) rows read back from the mapped BOs after the
 // submission: the user IB's memory writes land here even without a fence.
 volatile uint32_t native_adreno_bo_dump[16];
+// BO allocations below 4 GiB (index 0) and fallbacks to the normal pool (1).
+volatile uint64_t native_adreno_bo_low[2];
 // Up to two (iova, pa, pte, par, rc) rows plus the row count at index 16.
 // Hardware translation of every mapped BO: iova, physical page, leaf PTE, raw
 // PAR and ATOS result. The write target is never in the submit list, so its
@@ -401,9 +403,22 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     unsigned index=MaxBo;
     for(unsigned i=0;i<MaxBo;++i)if(!bos_[i].handle){index=i;break;}
     if(index==MaxBo)return kIOReturnNoResources;
-    IOBufferMemoryDescriptor *buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+    // The CP cannot access pages above roughly 5 GB on this board: a runtime
+    // mapping at 0x2017000 (4.6 GB) is written and read normally, while every
+    // user page above 5.0 GB times out for both CP_MEM_TO_MEM reads (GCPY) and
+    // MEM_WRITE, even though ATOS reports a correct translation. Allocate GPU
+    // buffers from below 4 GiB, the same masked pool the SMMU tables use, and
+    // fall back to the normal pool when that is exhausted.
+    IOBufferMemoryDescriptor *buf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+        kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,(vm_size_t)a.bytes,
+        4096,0x00000000fffff000ull);
+    bool low=bool(buf);
+    if(buf){IOByteCount s0=0;uint64_t p0=buf->getPhysicalSegment(0,&s0,kIOMemoryMapperNone);
+        if(!p0||(p0&4095)||s0<a.bytes||p0>=0x100000000ull){buf->release();buf=nullptr;low=false;}}
+    if(!buf)buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
         kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,(vm_size_t)a.bytes,4096);
     if(!buf)return kIOReturnNoMemory;
+    native_adreno_bo_low[low?0:1]=native_adreno_bo_low[low?0:1]+1;
     IOByteCount span=0;
     uint64_t pa=buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
     if(!pa||(pa&4095)||span<a.bytes||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
