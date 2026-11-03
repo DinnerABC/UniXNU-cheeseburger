@@ -1,3 +1,16 @@
+## 2026-11-04：P21-Pelican 结果（prefence 排除，IB 取指成唯一差异）· P21-Raven
+
+- **P21-Pelican 实机（boot `0x455dbfb8`，日志 `out/p21/persistent-logs/20261103T163200Z/`）**：68 轮、0 写错误；显示 `frames=5`。
+- `pf=0/0`（prefence 已移除、批次结构回到"屏障→IB→屏障→fence"），但提交仍 `GSUB rc=-4 stage=3`、`fr=2d`。**prefence 诊断包被排除**；probe（count=0）批次可用，唯一新增元素是 `0x3f` IB 取指。
+- `fr` 记录来自 CPU fence 页；历史值 `0x2d/0x34` 更像是 RPTR 影子（与 fence 共用 dword0）的值，而不是我们的 sequence，说明批次没有被完整执行。
+- **P21-Raven 决定性对照（诊断开关 `gpu-inline-ib=1`）**：Service 把客户端第一个 IB 的内核视图交给引擎；`Startup::submit` 在开关打开时把这些 dword **直接内联进 ring**（不再发 `0x3f`），其余批次结构不变。若 CP 写 fence/目标 BO → 问题在 IB 取指；若仍不动 → 问题在 CP 执行/门铃路径，与 IB 无关。
+- 候选 `out/p21/p21-raven`：内核 `643793ec5c6445dfcbfe99fae0fb4f30ed570f7b00477ef6e356a5879926f2eb`、payload 展开 `6a5ab431…`、固件 `e57e5672…`、镜像 `out/p21/p21-raven/uefi/boot-p21-up1.img` SHA-256 `912ee99d4252836582033036b81edfed8244ae612f2b1c2079582c70cb27bc0e`，gate `20261103T163958Z` PASS（686 B，含 `gpu-inline-ib=1`）。misc 首块仅 `boot-recovery`、回读一致；16:40:18Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：内联后 `GSUB`/fence/目标 BO 是否变化。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Pelican** | `ce2c3cec…` | `b7a03453…` | 移除 prefence 诊断包；仍 stage=3 → prefence 排除 |
+  | 2026-11-04 | **P21-Raven** | `912ee99d…` | `643793ec…` | 诊断：客户端 IB 内联进 ring，验证是否 IB 取指问题；结果待回收 |
+
 ## 2026-11-03/04：P21-Owl 结果（ATOS 变量已生效，排除）· P21-Pelican
 
 - **P21-Owl 实机（boot `0x4590ad33`，日志 `out/p21/persistent-logs/20261103T155827Z/`）**：68 轮、0 写错误；显示 `frames=5`。
