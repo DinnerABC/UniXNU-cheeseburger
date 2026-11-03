@@ -1,3 +1,9 @@
+## 2026-11-03：S2 候选 batch17（含 `cheeseburger-gpu-smmu4k=1`）构建状态
+
+- batch17 = batch16 内核（`1cedb7d4…`，含 sheng vendored 层 + 4K SMMU 路径）+ `unixnu.toml` args 追加 `cheeseburger-gpu-smmu4k=1`（约 674 B，仍 <700）。payload 已重建并写入 `config/CompressedPayload.h`、`Expected.h`；`check-kernel.py` PASS。
+- 正在构建固件；完成后按标准链：复制 `MSM8998PKG_UEFI.fd`/DTB → `logs/build-uefi-01.json` → `scan-pins.py` → `pack.py` → `preboot-gate-p21.py` → 写 misc（点名 3b25cc7c/misc/首块 command=boot-recovery）→ 单次 `fastboot boot` → 400 s 后回收。
+- 验证点：日志出现 `CB GPU SMMU: sheng ArmSmmu4K path active`、`CB GPU SMMU4K: bank0 streams sid0/sid2 attached`、`cb_smmu[20]=0x4b340001`；随后 `CB GPU start: fence OK`、`GRTM/GRT2`、`GBOA`、用户提交 fence。任何一步失败即按 `setup` 日志的返回码定位（-1 映射/-2 micro-MMU/-3 表池/-4 prepare/-5 program/-6 attach/-7 visibility）。
+
 ## 2026-11-03：S2 落地（ArmSmmu4K 接管 bank/流）
 
 - 新增 `package/BoardRuntime/CheeseburgerGpuSmmu4K.cpp`：用 sheng 的 `NativeAdrenoSmmuContext` + `ArmSmmu4K` 建表（32 页表池，`NativeAdrenoMemory` 分配）、`program()` 编程 CB0、`attach()` **精确接管 DTB 流**（`gfx3d_user` SID0→slot0、`gfx3d_secure` SID2→slot2），增量映射走 `ArmSmmu4KLiveUpdateContext`（每次更新内含 TLB 同步与镜像校验）。板级只保留 kit 明确留给平台的部分：SMMU 全局 SCR、vendor ACTLR `0x70000000`、micro-MMU `0x6000` resume。
