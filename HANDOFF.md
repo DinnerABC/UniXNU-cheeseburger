@@ -1,3 +1,15 @@
+## 2026-11-03：P21-Kestrel 结果（ATOS 仍有第二处未改，变量未真正生效）· P21-Owl
+
+- **P21-Kestrel 实机（boot `0x474ff1cd`，日志 `out/p21/persistent-logs/20261103T154312Z/`）**：67 轮、0 写错误；显示 `frames=5`；提交仍 `GSUB rc=-4 stage=3`。
+- **关键纠正**：日志仍有 `bo atos0/1 ... par=40000001…` —— ATOS **实际仍在执行**。原因是 ATOS 有两个调用点：`engine_submit` 的预检（Kestrel 已跳过）和 **Service 提交里的每个 BO 遍历**（`CheeseburgerGpuService.cpp:548`，Kestrel 未覆盖）。因此上一轮"跳过 ATOS"的变量没有真正改变（这也说明后续实验必须先验证变量确实生效）。
+- **P21-Owl 修复**：Service 的 BO 遍历在 4K 激活时也跳过 pinned ATOS，`par` 直接填软件 lookup 得到的 PA；这样门铃前不再有对 live CB0 的 halt/SCTLR/CB_RESUME/FSR 改写。日志会出现 `bo atos … par=<PA>`（而非 `40000001…`），用于确认变量真的生效。
+- 候选 `out/p21/p21-owl`：内核 `a5d8ab7a1e15c8b508f84ca01372cf94e79fd440aecca31adfdb1d1979685a2a`、payload 展开 `6c9d967a…`、固件 `7f05727c…`、镜像 `out/p21/p21-owl/uefi/boot-p21-up1.img` SHA-256 `c3d160ce675bbfeab6480b3881eaf54d8f6a50e3c5946d3bed17ea79b05a229c`，gate `20261103T155018Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；15:50:38Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`bo atos … par=<PA>`（确认变量生效）、`GSUB` 是否越过 stage=3。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Kestrel** | `edaf2e01…` | `34368330…` | 只跳过 engine 预检的 ATOS；Service 遍历仍执行，变量未生效 |
+  | 2026-11-03 | **P21-Owl** | `c3d160ce…` | `a5d8ab7a…` | 两处 ATOS 在 4K 下都跳过；结果待回收 |
+
 ## 2026-11-03：P21-Jay 结果（缓存维护无效；ATOS 改写 live CB0 成新嫌疑）· P21-Kestrel
 
 - **P21-Jay 实机（boot `0x460367ea`，日志 `out/p21/persistent-logs/20261103T151759Z/`）**：68 轮、0 写错误；显示 `frames=5`。BO 页 `pa=10ac24000/10ac23000`（ring 同区），ATOS `rc=0`；提交仍 `GSUB rc=-4 stage=3`，**IB 缓存维护（内核视图 clean+invalidate）无效**。
