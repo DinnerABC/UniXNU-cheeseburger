@@ -29,6 +29,7 @@ extern volatile uint64_t cb_zap[32];
 extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
+int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 int cheeseburger_gpu_service_publish(void);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -43,6 +44,8 @@ volatile uint32_t native_adreno_rtmap2[8];
 volatile uint32_t native_adreno_pa_test[8];
 // CP_MEM_TO_MEM read of a user address: rc, sequence, copied words and source.
 volatile uint32_t native_adreno_copy_test[8];
+// Late kernel-page write control: rc, PA, target words, map rc and sequence.
+volatile uint32_t native_adreno_late_test[8];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -583,6 +586,47 @@ extern "C" int cheeseburger_gpu_engine_copy_test(uint64_t srcIova){
  native_adreno_copy_test[4]=uint32_t(srcIova);
  IOLog("CB GPU engine: copy test rc=%d seq=%u src=%llx dst=%x/%x\n",
   rc,s,srcIova,dst[0],dst[1]);
+ return rc;
+}
+// Late-allocation control: the same allocation call and the same moment as a
+// user BO, but with no user mapping. It separates "pages allocated late are
+// unreachable" from "the user mapping is what breaks the write".
+extern "C" int cheeseburger_gpu_engine_late_test(void){
+ if(!gEngine||!gScratchVA||!gRing||!gFence||!gSubmitLock)return -1;
+ if(gEngineSubmitFailed)return -2;
+ IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+  kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
+ if(!b)return -3;
+ IOByteCount span=0;uint64_t pa=b->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ void *va=b->getBytesNoCopy();
+ if(!pa||!va||span<4096){b->release();return -3;}
+ const uint64_t gva=0x2019000ULL;
+ int m=cheeseburger_gpu_smmu_map(gva,pa,1);
+ volatile uint32_t *t=(volatile uint32_t*)va;
+ t[0]=0;t[1]=0;t[2]=0;
+ flush_dcache((vm_offset_t)va,64,FALSE);
+ volatile uint32_t *ib=gScratchVA+0x80;    // byte 0x200
+ ib[0]=CheeseburgerGpu::packet7(0x3d,5);ib[1]=uint32_t(gva);ib[2]=uint32_t(gva>>32);
+ ib[3]=0x5e5e0001u;ib[4]=0x5e5e0002u;ib[5]=0x5e5e0003u;
+ flush_dcache((vm_offset_t)ib,64,FALSE);
+ CheeseburgerGpu::Startup<Mmio>::Ib one{gScratchGva+0x200,6};
+ CheeseburgerGpu::Record rec;
+ IOLockLock(gSubmitLock);
+ uint32_t s=gFenceSeq+1;if(!s)s=1;
+ int rc=m?m:gEngine->submit(&one,1,gFenceGva,s,gFence,rec,gRingWords,0,true);
+ if(rc==0)gFenceSeq=s;else gEngineSubmitFailed=true;
+ IOLockUnlock(gSubmitLock);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)va,64,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ native_adreno_late_test[0]=uint32_t(rc);native_adreno_late_test[1]=uint32_t(pa);
+ native_adreno_late_test[2]=uint32_t(pa>>32);native_adreno_late_test[3]=t[0];
+ native_adreno_late_test[4]=t[1];native_adreno_late_test[5]=t[2];
+ native_adreno_late_test[6]=uint32_t(m);native_adreno_late_test[7]=s;
+ IOLog("CB GPU engine: late test rc=%d pa=%llx map=%d tgt=%x/%x/%x seq=%u\n",
+  rc,pa,m,t[0],t[1],t[2],s);
+ if(!m)cheeseburger_gpu_smmu_unmap(gva,1);
+ b->release();
  return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,

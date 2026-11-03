@@ -78,6 +78,7 @@ extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_atos[18] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_bo_low[2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_stage_gva __attribute__((weak_import));
@@ -624,6 +625,17 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_ib_head[3],native_adreno_ib_head[4],native_adreno_ib_head[5],
       native_adreno_ib_head[6],native_adreno_ib_head[7],cb_boot_id);
     at=put(out,at,cap,ibh,sizeof ibh);
+   }
+   /* Late kernel-page write control, same allocation and moment as a user BO
+    * but without the user mapping. */
+   if (&native_adreno_late_test[0] && native_adreno_late_test[1]) {
+    char lte[192];
+    snprintf(lte,sizeof lte,"GLTE rc=%d pa=%llx map=%u tgt=%x/%x/%x seq=%u bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_late_test[0],
+      ((uint64_t)native_adreno_late_test[2]<<32)|native_adreno_late_test[1],
+      native_adreno_late_test[6],native_adreno_late_test[3],native_adreno_late_test[4],
+      native_adreno_late_test[5],native_adreno_late_test[7],cb_boot_id);
+    at=put(out,at,cap,lte,sizeof lte);
    }
    /* CP_MEM_TO_MEM read of the write target's page: rc, sequence, the copied
     * words and the source address. A successful read with 0xdeadbeef proves

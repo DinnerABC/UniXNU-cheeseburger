@@ -61,6 +61,7 @@ int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_engine_copy_test(uint64_t);
+int cheeseburger_gpu_engine_late_test(void);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 void pmap_set_cache_attributes(ppnum_t,unsigned int);
 }
@@ -547,13 +548,9 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // Read-only check that the CP can read the page its commands will write.
     // A failed kick abandons the engine inside the helper (gEngineSubmitFailed),
     // so nothing touches the bus or rings a doorbell afterwards.
-    { uint64_t tgt=0;
-      for(unsigned i=0;i<MaxBo&&!tgt;++i){ Bo &b=bos_[i];
-        if(!b.handle||!b.mapped||b.handle==s.buffers[0].handle)continue;
-        tgt=b.iova; }
-      if(tgt&&cheeseburger_gpu_engine_copy_test(tgt)){
+    if(cheeseburger_gpu_engine_late_test()){
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
-        return kIOReturnIOError; } }
+        return kIOReturnIOError; }
     uint32_t seq=0;
     // Record the first IB from the kernel's own view. The submit itself uses
     // the client's mapping again: the staging copy has served its purpose and
