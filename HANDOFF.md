@@ -18,7 +18,8 @@
   3. **S3**：用 sheng `Ring/Submit` 替换自研环/ME_INIT/提交；A540 的 `CP_ME_INIT`/GPMU 命令取 sagit。
   4. **S4**：用 sheng `GmuPlatform/GpuContext/Board` 替换 probe/GMU/电源，A540 寄存器（RBCCU/SP `0xa887/0xa881`、micro-MMU `0x6000`、DTB `attach-impl-defs`）作为板级输入，保留 PAS/ZAP。
   5. **S5**：采用 sheng 的 Service/Publish/UserClient/Accelerator 与 Info.plist personality，保留本机 sandbox grant 与 trust cache 集成。
-- 设备状态：batch15（镜像 `7fa6f4b5…`）05:32:57Z 启动后**未在 400 s 内回到 Recovery，USB 上完全没有设备**（05:53 仍无）。疑似 `GSMM` SMMU 寄存器读取或 `GPLT` 提交触发总线卡死/关机。**恢复电源并回到 Recovery 后，先回收 batch15 日志**（新 boot ID）再继续设备轮次。
+- **batch15 日志已回收（boot `0x7aefa0c4`，日志 `out/p21/persistent-logs/20261103T061746Z/`）**：`frames=0`、`GPSVC open=0`、`GLOP pool=64 first=10ff8d000`、`AUTORESET requested=400 elapsed=105 main=0 gfire=0`；日志约 105 s 停止、USB 全程无枚举。**用户客户端未启动（`GSMM/GPLT` 从未运行）**，失败是启动早期卡死/hung，与新增诊断无关；该 boot 的 `GSMMU 00200626 … 000200ff …` 仅显示 slot0 仍为 fault（与 `SMR0=0/S2CR0=0x200ff` 一致）。
+- 原记录：batch15（镜像 `7fa6f4b5…`）05:32:57Z 启动后未在 400 s 内回到 Recovery、USB 上完全没有设备（05:53 仍无）。疑似 `GSMM` SMMU 寄存器读取或 `GPLT` 提交触发总线卡死/关机。**恢复电源并回到 Recovery 后，先回收 batch15 日志**（新 boot ID）再继续设备轮次。
 - 迁移完成后，S2 应作为第一优先实机验证点（它直接替换当前失败所在的映射/BO 路径）。
 
 ## 2026-11-03：SMMU 流 dump + 池页晚映射（batch15）
