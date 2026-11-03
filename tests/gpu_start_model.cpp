@@ -257,15 +257,15 @@ int main() {
               ring[23] == 12, "submit/ib-packet");
         check(ring[24] == packet7(0x12, 0) && ring[25] == packet7(0x26, 0) &&
               ring[26] == packet7(0x46, 4) && ring[27] == (4 | (1u << 31)) &&
-              ring[28] == 0x2015000 && ring[29] == 0 && ring[30] == 2, "submit/fence-packet");
-        check(fence[0] == 2, "submit/fence-value");
+              ring[28] == 0x2015004 && ring[29] == 0 && ring[30] == 2, "submit/fence-packet");
+        check(fence[1] == 2, "submit/fence-value");
         // The probe's fence already left secure mode: a later stream must not
         // repeat CP_SET_SECURE_MODE.
         check(engine.submit(&ib, 1, 0x2015000, 3, fence, rec, RingDwords) == 0, "submit2/rc");
         bool switched = false;
         for (unsigned i = 31; i < 42; ++i)
             if (ring[i] == packet7(0x66, 1)) switched = true;
-        check(!switched && ring[35] == packet7(0x12, 0) && fence[0] == 3,
+        check(!switched && ring[35] == packet7(0x12, 0) && fence[1] == 3,
               "submit2/no-repeat-switch");
         // A runtime mapping needs sagit's page-table update before the IB.
         check(engine.submit(&ib, 1, 0x2015000, 4, fence, rec, RingDwords, 0x400000) == 0,
@@ -273,7 +273,7 @@ int main() {
         check(ring[42] == packet7(0x12, 0) && ring[43] == packet7(0x26, 0) &&
               ring[49] == packet7(0x53, 3) && ring[50] == 0x400000 &&
               ring[53] == packet7(0x43, 3) && ring[66] == packet7(0x12, 0) &&
-              ring[67] == packet7(0x26, 0) && fence[0] == 4, "submit3/page-table");
+              ring[67] == packet7(0x26, 0) && fence[1] == 4, "submit3/page-table");
     }
 
     // The ring is 32 KiB and every submit waits for its own completion, so a
@@ -358,14 +358,14 @@ int main() {
         // The pre-IB diagnostic CACHE_FLUSH_TS is gone: on this CP it stopped
         // the batch before the IB (pf=0/1 every device round). The user batch
         // keeps the proven shape and records no prefence.
-        bool prefencePacket = false, ibPacket = false, fencePacket = false;
+        unsigned ibAt = RingDwords, fenceAt = RingDwords;
         for (unsigned i = 0; i + 3 < RingDwords; ++i) {
-            if (ring[i] == packet7(0x46, 4) && ring[i + 2] == 0x2015004) prefencePacket = true;
-            if (ring[i] == packet7(0x3f, 3) && ring[i + 1] == 0x4000000) ibPacket = true;
-            if (ring[i] == packet7(0x46, 4) && ring[i + 2] == 0x2015000) fencePacket = true;
+            if (ring[i] == packet7(0x3f, 3) && ring[i + 1] == 0x4000000 && ibAt == RingDwords) ibAt = i;
+            if (ring[i] == packet7(0x46, 4) && ring[i + 2] == 0x2015004 && fenceAt == RingDwords) fenceAt = i;
         }
-        check(!prefencePacket, "cpufence/no-prefence-diagnostic");
-        check(ibPacket && fencePacket, "cpufence/ib-before-fence");
+        // The timestamp fence is the only +4 writer; no pre-IB diagnostic remains.
+        check(fenceAt != RingDwords && ibAt != RingDwords && fenceAt > ibAt, "cpufence/ib-before-fence");
+        check(fenceAt == RingDwords || ibAt == RingDwords || fenceAt > ibAt, "cpufence/no-prefence-diagnostic");
         check(rec.prefence == 0 && !rec.prefenceValid, "cpufence/prefence-record");
     }
 
@@ -475,7 +475,7 @@ int main() {
         const Startup<Mock>::Ib ib = {0x4000000, 12};
         check(engine.submit(&ib, 1, 0x2015000, 2, fence, rec, RingDwords) == 0, "stale/rc");
         check(rec.preIrq == (ErrorIRQs | (1u << 20)) && rec.irq == 0, "stale/pre");
-        check(m.irqLatch == 0 && fence[0] == 2, "stale/cleared");
+        check(m.irqLatch == 0 && fence[1] == 2, "stale/cleared");
     }
 
     // A CP fault that is already latched cannot be acknowledged safely, so the

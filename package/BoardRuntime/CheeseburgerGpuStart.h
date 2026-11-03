@@ -470,11 +470,14 @@ public:
         putPacket(0x26, nullptr, 0);                                // CP_WAIT_FOR_IDLE
         ringPtr[ringCursor++] = packet7(0x46, 4);                   // CACHE_FLUSH_TS + IRQ
         ringPtr[ringCursor++] = 4 | (1u << 31);
-        ringPtr[ringCursor++] = uint32_t(fenceVA); ringPtr[ringCursor++] = uint32_t(fenceVA >> 32);
+        // sheng's msm_rbmemptrs layout: +0 is the CP's RPTR shadow, the
+        // timestamp fence lives at +4. Writing dword0 collided with the shadow
+        // and the poll read the RPTR back (fr=2d/28/34) instead of the fence.
+        const uint64_t fenceAt = fenceVA + 4;
+        ringPtr[ringCursor++] = uint32_t(fenceAt); ringPtr[ringCursor++] = uint32_t(fenceAt >> 32);
         ringPtr[ringCursor++] = sequence;
-        fenceCPU[0] = 0;
-        if (prefence) fenceCPU[1] = 0;
-        r.clean((volatile void *)fenceCPU, prefence ? 8 : 4);
+        fenceCPU[1] = 0;
+        r.clean((volatile void *)fenceCPU, 8);
         r.clean((volatile void *)ringPtr, ringDwords * 4);
         c = ringCursor;
         // Sample the latches before this doorbell. sagit clears the owned RBBM
@@ -506,8 +509,8 @@ public:
             rec.status = rec.status3 = rec.me = rec.vbif = 0xffffffffu;
             rec.postRead = false;
             for (unsigned elapsed = 0; elapsed < 300000; elapsed += 10) {
-                r.clean((volatile void *)fenceCPU, 4);
-                if (fenceCPU[0] == sequence) {
+                r.clean((volatile void *)fenceCPU, 8);
+                if (fenceCPU[1] == sequence) {
                     rec.stage = 7; rec.rc = 0; rec.fenced = true;
                     secureLeft = true; r.mark("submitdone"); return 0;
                 }
@@ -516,7 +519,7 @@ public:
             // No MMIO reads or posted writes on an unresponsive bus. Keep all
             // mappings retained; this does not assert that the CP is halted.
             // The CPU fence page also holds the pre-IB probe word.
-            r.clean((volatile void *)fenceCPU, prefence ? 8 : 4);
+            r.clean((volatile void *)fenceCPU, 8);
             rec.prefenceValid = prefence;
             rec.prefence = prefence ? fenceCPU[1] : 0;
             rec.fenceRaw = fenceCPU[0];
@@ -528,13 +531,13 @@ public:
         if (kickTo(rec, c)) {
             // The fence page is CPU memory, not the possibly stalled bus: it
             // still tells whether the ring ran despite the latched error.
-            r.clean((volatile void *)fenceCPU, 4);
-            if (fenceCPU[0] == sequence) rec.fenced = true;
+            r.clean((volatile void *)fenceCPU, 8);
+            if (fenceCPU[1] == sequence) rec.fenced = true;
             return rec.rc;
         }
         for (unsigned elapsed = 0; elapsed < 100000; elapsed += 10) {
-            r.clean((volatile void *)fenceCPU, 4);
-            if (fenceCPU[0] == sequence) { rec.stage = 7; rec.rc = 0; secureLeft = true; r.mark("submitdone"); return 0; }
+            r.clean((volatile void *)fenceCPU, 8);
+            if (fenceCPU[1] == sequence) { rec.stage = 7; rec.rc = 0; secureLeft = true; r.mark("submitdone"); return 0; }
             r.delay(10);
         }
         fail(rec, -44, 7); return rec.rc;

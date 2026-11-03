@@ -395,7 +395,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     // the previous failure-path SMMU reads black-screened the device. The
     // success path still records the full SMMU fault set.
     __asm__ volatile("dsb sy":::"memory");
-    cb_cp[93]=*(volatile uint32_t*)fence.va;
+    cb_cp[93]=((volatile uint32_t*)fence.va)[1];
     __asm__ volatile("dmb sy":::"memory");
     IOLog("CB GPU start: kick FAILED rc=%d r=%x w=%x irq=%x cpirq=%x st=%x st3=%x me=%x vbif=%x scratch=%x\n",
      rc,uint32_t(cb_cp[42]),uint32_t(cb_cp[43]),uint32_t(cb_cp[44]),uint32_t(cb_cp[45]),
@@ -444,7 +444,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     IOSleep(8000);
     return;
    }
-   IOLog("CB GPU start: fence OK seq=%x\n",*(volatile uint32_t*)fence.va);
+   IOLog("CB GPU start: fence OK seq=%x\n",((volatile uint32_t*)fence.va)[1]);
    // Post-probe user-path control: the exact primitive the user client uses
    // (CPU fence only, no post-doorbell MMIO) with no indirect buffer. If this
    // fence completes, the ring, doorbell and fence page still work after the
@@ -456,7 +456,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     __asm__ volatile("dsb sy":::"memory");
     flush_dcache((vm_offset_t)fence.va,4096,FALSE);
     __asm__ volatile("dsb sy":::"memory");
-    const uint32_t fraw=*fp;
+    const uint32_t fraw=fp[1];
     cb_cp[127]=uint64_t(uint16_t(uint32_t(crc)))|(uint64_t(fraw)<<16)|(uint64_t(ctl.stage&0xff)<<48);
     IOLog("CB GPU start: userpath fence rc=%d stage=%u seq=2 fence=%x\n",crc,ctl.stage,fraw);
     if(crc){
@@ -507,7 +507,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    __asm__ volatile("dsb sy":::"memory");
    flush_dcache((vm_offset_t)fence.va,4096,FALSE);
    __asm__ volatile("dsb sy":::"memory");
-   cb_cp[93]=*(volatile uint32_t*)fence.va;
+   cb_cp[93]=((volatile uint32_t*)fence.va)[1];
    __asm__ volatile("dmb sy":::"memory");
    cb_cp[94]=m.read(0x831*4);cb_cp[95]=m.read(0x830*4);
    captureGpuFaults(m);captureSmmuFaults();
@@ -764,9 +764,10 @@ extern "C" int cheeseburger_gpu_engine_wait(uint32_t seq,uint64_t timeout_ns){
  if(!gFence||!seq||cheeseburger_gpu_smmu4k_faulted())return -1;
  auto read=[](){
   __asm__ volatile("dsb sy":::"memory");
-  flush_dcache((vm_offset_t)gFence,4,FALSE);
+  flush_dcache((vm_offset_t)gFence,8,FALSE);
   __asm__ volatile("dsb sy":::"memory");
-  return *gFence;
+  // The timestamp fence is at +4; +0 is the CP's RPTR shadow.
+  return gFence[1];
  };
  // One IODelay(50) represents 50000 ns; the helper owns the conversion.
  auto delay=[](){ IODelay(50); };
