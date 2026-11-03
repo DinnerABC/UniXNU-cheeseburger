@@ -36,6 +36,14 @@ def compile(src,name=None,flags=(),late=False):
 cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','BoardBootArgs','CheeseburgerUsb','CheeseburgerDispProbe','CheeseburgerGpuProbe','CheeseburgerGpuSmmu','CheeseburgerGpuCp','CheeseburgerGpuService','CheeseburgerGpuAccelerator','CheeseburgerGpuPas','CheeseburgerAutoReset','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
 late={'NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','NativeLegacyDisplay','NativeGOPPresenter','NativeHidInput','NativeKeyStoreEvents','CheeseburgerGpuService','CheeseburgerGpuAccelerator'}
 for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=1'] if n=='NativeHidInput' else [],late=n in late)
+# Official sheng modules vendored under package/BoardRuntime/adreno740: the
+# hardware-independent VM/BO/ring/submit layer and the ArmSmmu4K and
+# AdrenoPM4 kits. Board hardware stays in the Cheeseburger runtime.
+A740=S/'adreno740';A740I=['-I',str(A740),'-I',str(A740/'ArmSmmu4K'),'-I',str(A740/'AdrenoPM4')]
+for n in ['NativeAdrenoMemory','NativeAdrenoVm','NativeAdrenoSmmuContext','NativeAdrenoRing','NativeAdrenoSubmit','NativeAdrenoSha256','NativeAdrenoTimer','NativeAdrenoKernelTime']:
+ compile(A740/(n+'.cpp'),name='a740-'+n,flags=A740I)
+for p in sorted(list((A740/'ArmSmmu4K').glob('*.c'))+list((A740/'AdrenoPM4').glob('*.c'))):
+ compile(p,name='a740-'+p.parent.name+'-'+p.stem,flags=A740I)
 for n in ['BootWatchdogPolicy','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe','CheeseburgerLaunchdCache']:compile(S/(n+'.c'))
 subprocess.run([sys.executable,R/'scripts/p21-select-official-log-reports.py',*compiled],check=True)
 compile(S/'BootLog.c')
