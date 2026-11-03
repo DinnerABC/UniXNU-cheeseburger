@@ -213,7 +213,16 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  for(const auto &route:routes){
   unsigned smr=0x800+4*route.slot,s2cr=0xc00+4*route.slot;
   uint32_t match=srd(smr),value=srd(s2cr);
-  if(match==0&&value==0x200ffu){swr(s2cr,0x20000u);value=srd(s2cr);}
+  // This vendor leaves an idle stream as FAULT with CBNDX=0xff. CBNDX is only
+  // writable while the stream selects a bank, so write the bank first and then
+  // return the stream to FAULT; the kit accepts exactly FAULT.
+  if(match==0&&(value&0xffff0000u)==0x20000u&&value!=0x20000u){
+   swr(s2cr,0u);
+   const uint32_t banked=srd(s2cr);
+   swr(s2cr,0x20000u);
+   value=srd(s2cr);
+   IOLog("CB GPU SMMU4K: normalize s2cr slot=%u banked=%x fault=%x\n",route.slot,banked,value);
+  }
   if(match!=0||value!=0x20000u){
    IOLog("CB GPU SMMU4K: step=slots slot=%u smr=%x s2cr=%x\n",route.slot,match,value);
    cb_smmu[20]=0xe100u+route.slot;return -8;}
