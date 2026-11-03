@@ -1,4 +1,17 @@
-## 2026-11-03：启动期低位页池（batch14 构建中）
+## 2026-11-03：SMMU 流 dump + 池页晚映射（batch15 构建中）
+
+- **batch14 实机（boot `0x452f3116`，日志 `out/p21/persistent-logs/20261103T052329Z/`，镜像 `f6cda6f9…`，内核 `5d4c48b1…`）**：
+  - `GLOP pool=64 first=127cee000`、`GLOW low=2 high=0`：probe 期低位页池成功，两个 BO 都用池页（`0x128051000`、`0x12803d000`，≈4.97 GB，与可用 fence 页同一区间）。
+  - **`GSUB rc=-4 fr=34`、`GBOD` 目标页仍 `0xdeadbeef`** → **“约 5 GB 物理地址边界”被推翻**：同样物理区间的 probe 页可读写，BO 页不行。
+  - 至此排除：IB 内容、暂存、ATOS/翻译、PTE 属性、WCOMB、运行期映射（probe 期建的运行期映射 GRTM/GRT2 成功）、物理地址、分配时间（池页是 probe 期分配的）。
+  - 剩余两类差异：**①映射在 ~145 s 用户提交时才建立**；**②这些页被映射进了用户任务**（`clientMemoryForType`/`IOConnectMapMemory64`）。
+- 外部分析（sheng/ArmSmmu4K）：官方驱动**自有 SMMU 流路由**（SMR 精确匹配 + `S2CR=bank`，要求目标流原本 fault、全局 unmatched 必须 fault、禁止 bypass），自有 bank/ASID/aperture/表池，`output_bits` ≤ OAS；每次提交前 TLBIALL，并做 cache publish/acquire 与 WCOMB 重设。**我们从未写 SMR/S2CR**，只校验 `SMR0==0 && S2CR0==0x200ff` 后编程 CB0；DTB 里 `gfx3d_user`=SID0、`gfx3d_secure`=SID2，且节点带 vendor `attach-impl-defs` 寄存器表（0x6000…0x6b68），我们只处理了 0x6000 的 micro-MMU。
+- 本轮（batch15）：
+  1. 只读 `cheeseburger_gpu_smmu_dump()`：SCR、前 6 个 SMR/S2CR 槽、CB0 SCTLR/TTBR0/TCR/FSR/FSYNR0、CB1 SCTLR/TTBR0、全局 FSR（`GSMM/GSMC`）。
+  2. `cheeseburger_gpu_engine_pool_late_test()`：取一个 probe 期池页（低位、无用户映射），在**提交时**新建 SMMU 映射 `0x201a000` 并用已知 IB 写入、fence、回读（`GPLT`）。失败则 fail-closed（保留页，不再碰总线）。
+- 判定：`GPLT rc=0 tgt=5f5f0001…` → 运行时新建映射与低位页都可用，问题在**用户映射**或 0x4000000 这条 IOVA 路径；`GPLT rc=-4` → 问题在**提交时新建映射**本身（对照 sheng 的表更新/TLB 纪律），结合 `GSMM/GSMC` 看流是否真的路由到 CB0。
+
+## 2026-11-03：启动期低位页池（batch14）
 
 - **batch13 实机（boot `0x561d238f`，日志 `out/p21/persistent-logs/20261103T050613Z/`，镜像 `010b0dca…`，内核 `c0a1c292…`）**：`GLTE rc=-4 pa=142dc7000 map=0 tgt=0/0/0` —— **提交时新分配的内核页（无用户映射，PA 5.41 GB）同样不可写**。
   - 结论定稿：**失败随“晚分配/高物理地址页”走，与用户映射、BO、SMMU 翻译无关**。早期分配（≤4.96 GB，ring/fence/stage/rt）可读写；晚分配（≥5.0 GB）读写都超时。GPU 可访问的物理范围约为 <5 GB，来自启动链配置（XPU/VBIF 类），不是 XNU 侧属性。
