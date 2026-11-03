@@ -192,11 +192,6 @@ static volatile uint32_t *gRing=nullptr,*gFence=nullptr;
 static volatile uint32_t *gScratchVA=nullptr;
 static uint64_t gScratchGva=0;
 static unsigned gScratchWords=0;
-// Staging page in the pre-start mapped window; user IB copies are submitted
-// here to separate their content from the runtime user IOVA fetch.
-static volatile uint32_t *gStageVA=nullptr;
-static uint64_t gStageGva=0;
-static unsigned gStageWords=0;
 static uint64_t gRingGva=0,gFenceGva=0;
 static uint32_t gRingWords=0,gFenceSeq=0;
 static IOLock *gSubmitLock=nullptr;
@@ -230,10 +225,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  if(!CB_GPU_FW||!fw.open(gpu_firmware_blob,gpu_firmware_size)){cb_cp[0]=1;return;}
  cb_cp[2]=fw.cpBytes(0);cb_cp[3]=fw.cpBytes(1);cb_cp[4]=fw.gpmuWords();
  if(!fw.cpBytes(0)||!fw.cpBytes(1)||!fw.gpmuWords()){cb_cp[0]=2;return;}
- static Buf ring,pm4,pfp,gpmu,fence,stage,rt;
+ static Buf ring,pm4,pfp,gpmu,fence;
  if(!allocBuf(ring,8192*4)||!allocBuf(pm4,fw.cpBytes(0))||!allocBuf(pfp,fw.cpBytes(1))||
-    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)||!allocBuf(stage,16384)||
-    !allocBuf(rt,4096)){cb_cp[0]=3;return;}
+    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)){cb_cp[0]=3;return;}
  if(!fw.copyCP(0,pm4.va,pm4.bytes)||!fw.copyCP(1,pfp.va,pfp.bytes)||
     !fw.gpmuCommands((uint32_t*)gpmu.va,gpmu.bytes/4)){cb_cp[0]=4;return;}
  flush_dcache((vm_offset_t)pm4.va,pm4.bytes,FALSE);
@@ -275,12 +269,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  cb_cp[25]=ring.gva;cb_cp[26]=pm4.gva;cb_cp[27]=pfp.gva;
  cb_cp[30]=seq;
  if(!mapBuf(gpmu,gva,seq)){IOSleep(1000);return;}IOSleep(1000);gva+=gpmu.bytes;
- if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;} 
- // A staging page in the window the CP already fetched. A user command stream
- // copied here is fetched over the proven path, which separates its content
- // from the runtime user IOVA.
- gva+=fence.bytes;
- if(!mapBuf(stage,gva,seq)){IOSleep(1000);return;}
+ if(!mapBuf(fence,gva,seq)){IOSleep(1000);return;}
  cb_cp[28]=gpmu.gva;cb_cp[29]=fence.gva;
  cb_cp[30]=seq;cb_cp[0]=0;
  // Hardware walk of the installed tables before any CP write. A matching PAR
@@ -384,7 +373,6 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    }
    cb_cp[38]=4;cb_cp[39]=0;
    gScratchVA=(volatile uint32_t*)gpmu.va;gScratchGva=gpmu.gva;gScratchWords=gpmu.bytes/4;
-   gStageVA=(volatile uint32_t*)stage.va;gStageGva=stage.gva;gStageWords=stage.bytes/4;
    IOLog("CB GPU start: gpmu OK ready=%x err=%x rptr=%x\n",
     uint32_t(m.read(CheeseburgerGpu::GPMUReady)),uint32_t(m.read(CheeseburgerGpu::GPMUError)),
     uint32_t(m.read(CheeseburgerGpu::RBRead)));
@@ -432,73 +420,6 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     }
     gFenceSeq=2;
    }
-   // IB self-test inside the page window the CP has already fetched (the GPMU
-   // command page). One CP_MEM_WRITE of three sentinels through the same user
-   // path separates "the CP cannot fetch the user IB" from "the engine cannot
-   // execute an indirect buffer at all" before a user attempt is spent.
-   {
-    volatile uint32_t *fp=(volatile uint32_t*)fence.va;
-    volatile uint32_t *ib=(volatile uint32_t*)gpmu.va+0x80;
-    volatile uint32_t *tgt=(volatile uint32_t*)gpmu.va+0x100;
-    const uint64_t ibVA=gpmu.gva+0x200,tgtVA=gpmu.gva+0x400;
-    ib[0]=CheeseburgerGpu::packet7(0x3d,5);ib[1]=uint32_t(tgtVA);ib[2]=uint32_t(tgtVA>>32);
-    ib[3]=0x5a5a0001u;ib[4]=0x5a5a0002u;ib[5]=0x5a5a0003u;
-    tgt[0]=0;tgt[1]=0;tgt[2]=0;
-    flush_dcache((vm_offset_t)ib,64,FALSE);
-    flush_dcache((vm_offset_t)tgt,64,FALSE);
-    CheeseburgerGpu::Startup<Mmio>::Ib one{ibVA,6};
-    CheeseburgerGpu::Record srec;
-    int src=engine.submit(&one,1,fence.gva,3,fp,srec,ring.bytes/4,0,true);
-    __asm__ volatile("dsb sy":::"memory");
-    flush_dcache((vm_offset_t)tgt,64,FALSE);
-    __asm__ volatile("dsb sy":::"memory");
-    native_adreno_selftest[0]=uint32_t(src);native_adreno_selftest[1]=srec.stage;
-    native_adreno_selftest[2]=tgt[0];native_adreno_selftest[3]=tgt[1];native_adreno_selftest[4]=tgt[2];
-    native_adreno_selftest[5]=srec.fenced?1:0;native_adreno_selftest[6]=uint32_t(ibVA);
-    native_adreno_selftest[7]=*fp;
-    IOLog("CB GPU start: ib selftest rc=%d stage=%u fenced=%u fence=%x tgt=%x/%x/%x ib=%x\n",
-     src,srec.stage,unsigned(srec.fenced),*fp,tgt[0],tgt[1],tgt[2],uint32_t(ibVA));
-    if(src||tgt[0]!=0x5a5a0001u){
-     cb_cp[38]=15;cb_cp[39]=uint64_t(int32_t(src));IOSleep(8000);return;
-    }
-    gFenceSeq=3;
-   }
-   // Runtime-map tests: a buffer mapped after the CP started, written by a
-   // known IB from the proven page. The first uses the proven 0x2xxxxxx
-   // window; the second the user window. A kernel page that works in the
-   // proven window but not in the user window points at the window, not at
-   // the mapping path or the command stream.
-   auto rtTest=[&](uint64_t gva,uint32_t seed,uint32_t seqno,volatile uint32_t *out)->int {
-    volatile uint32_t *fp=(volatile uint32_t*)fence.va;
-    volatile uint32_t *rib=(volatile uint32_t*)stage.va+0x200;   // byte 0x800
-    volatile uint32_t *tv=(volatile uint32_t*)rt.va;
-    int m=cheeseburger_gpu_smmu_map(gva,rt.pa,1);
-    uint64_t pte=0;cheeseburger_gpu_smmu_lookup(gva,&pte);
-    rib[0]=CheeseburgerGpu::packet7(0x3d,5);rib[1]=uint32_t(gva);rib[2]=uint32_t(gva>>32);
-    rib[3]=seed;rib[4]=seed+1;rib[5]=seed+2;
-    tv[0]=0;tv[1]=0;tv[2]=0;
-    flush_dcache((vm_offset_t)rib,64,FALSE);
-    flush_dcache((vm_offset_t)tv,64,FALSE);
-    CheeseburgerGpu::Startup<Mmio>::Ib one{stage.gva+0x800,6};
-    CheeseburgerGpu::Record rec;
-    int rc=m?m:engine.submit(&one,1,fence.gva,seqno,fp,rec,ring.bytes/4,0,true);
-    __asm__ volatile("dsb sy":::"memory");
-    flush_dcache((vm_offset_t)tv,64,FALSE);
-    __asm__ volatile("dsb sy":::"memory");
-    out[0]=uint32_t(rc);out[1]=uint32_t(m);out[2]=tv[0];out[3]=tv[1];out[4]=tv[2];
-    out[5]=uint32_t(pte);out[6]=uint32_t(pte>>32);out[7]=uint32_t(gva);
-    IOLog("CB GPU start: runtime map rc=%d map=%d pte=%llx tgt=%x/%x/%x iova=%x\n",
-     rc,m,pte,tv[0],tv[1],tv[2],uint32_t(gva));
-    return rc;
-   };
-   if(rtTest(0x2017000ULL,0x5b5b0001u,4,native_adreno_rtmap)||native_adreno_rtmap[2]!=0x5b5b0001u){
-    cb_cp[38]=16;cb_cp[39]=uint64_t(int32_t(native_adreno_rtmap[0]));IOSleep(8000);return;
-   }
-   gFenceSeq=4;
-   if(rtTest(0x4020000ULL,0x5c5c0001u,5,native_adreno_rtmap2)||native_adreno_rtmap2[2]!=0x5c5c0001u){
-    cb_cp[38]=17;cb_cp[39]=uint64_t(int32_t(native_adreno_rtmap2[0]));IOSleep(8000);return;
-   }
-   gFenceSeq=5;
    // The engine and its pages now belong to the persistent GPU service. The
    // probe worker keeps them for the boot lifetime (statics) and never frees
    // them; submission from userland is serialized by gSubmitLock.
@@ -628,37 +549,6 @@ extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1
 extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t **va,unsigned *words){
  if(!gScratchVA||!gScratchGva||!gScratchWords)return -1;
  if(gva)*gva=gScratchGva;if(va)*va=gScratchVA;if(words)*words=gScratchWords;return 0;
-}
-extern "C" int cheeseburger_gpu_engine_stage(uint64_t *gva,volatile uint32_t **va,unsigned *words){
- if(!gStageVA||!gStageGva||!gStageWords)return -1;
- if(gva)*gva=gStageGva;if(va)*va=gStageVA;if(words)*words=gStageWords;return 0;
-}
-// Write three sentinels into an arbitrary physical page through a fresh map in
-// the proven window. The user window and runtime maps are known good, so a
-// failure here places the problem on the page itself.
-extern "C" int cheeseburger_gpu_engine_pa_test(uint64_t pa){
- if(!gEngine||!gStageVA||!gRing||!gFence||!gSubmitLock||!pa||(pa&4095))return -1;
- if(gEngineSubmitFailed)return -2;
- const uint64_t gva=0x2018000ULL;
- int m=cheeseburger_gpu_smmu_map(gva,pa,1);
- native_adreno_pa_test[0]=uint32_t(m);native_adreno_pa_test[1]=uint32_t(pa);
- native_adreno_pa_test[2]=uint32_t(pa>>32);
- if(m)return m;
- volatile uint32_t *rib=gStageVA+0x300;   // byte 0xC00
- rib[0]=CheeseburgerGpu::packet7(0x3d,5);rib[1]=uint32_t(gva);rib[2]=uint32_t(gva>>32);
- rib[3]=0x5d5d0001u;rib[4]=0x5d5d0002u;rib[5]=0x5d5d0003u;
- flush_dcache((vm_offset_t)rib,64,FALSE);
- CheeseburgerGpu::Startup<Mmio>::Ib one{gva+0xC00,6};
- CheeseburgerGpu::Record rec;
- IOLockLock(gSubmitLock);
- uint32_t s=gFenceSeq+1;if(!s)s=1;
- int rc=gEngine->submit(&one,1,gFenceGva,s,gFence,rec,gRingWords,0,true);
- if(rc==0)gFenceSeq=s;
- IOLockUnlock(gSubmitLock);
- native_adreno_pa_test[3]=uint32_t(s);
- native_adreno_pa_test[4]=uint32_t(rc);
- IOLog("CB GPU engine: pa test rc=%d seq=%u pa=%llx\n",rc,s,pa);
- return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){

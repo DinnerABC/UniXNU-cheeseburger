@@ -47,8 +47,6 @@ int cheeseburger_gpu_engine_wait(uint32_t,uint64_t);
 int cheeseburger_gpu_engine_window(uint64_t *,uint64_t *);
 int cheeseburger_gpu_engine_idle(void);
 int cheeseburger_gpu_engine_failed(void);
-int cheeseburger_gpu_engine_stage(uint64_t *,volatile uint32_t **,unsigned *);
-int cheeseburger_gpu_engine_pa_test(uint64_t);
 int cheeseburger_gpu_engine_scratch(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
@@ -402,12 +400,11 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     if(!pa||(pa&4095)||span<a.bytes||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
     void *cpu=buf->getBytesNoCopy();
     if(!cpu){buf->release();return kIOReturnNoMemory;}
-    // IOMapInhibitCache alone does not guarantee all aliases get the intended
-    // attribute on this XNU. Publish initialized cache lines, then set the
-    // owned physical pages write-combined as in sheng's NativeAdrenoMemory.
+    // Publish initialized cache lines before the pages are GPU-visible. The
+    // WCOMB attribute change from b9f698f is removed: a user-owned page that is
+    // not GPU-writable (GPAT rc=-4, boot 0x561a49ee) is the last difference
+    // from a working kernel page, and the SMMU leaf attributes are identical.
     flush_dcache((vm_offset_t)cpu,(unsigned)a.bytes,FALSE);
-    for(uint64_t off=0;off<a.bytes;off+=4096)
-        pmap_set_cache_attributes((ppnum_t)((pa+off)>>12),VM_WIMG_WCOMB);
     Bo &bo=bos_[index];
     bo=Bo();
     bo.handle=uint64_t(index)+1;
@@ -422,8 +419,6 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     bo.desc=IOMemoryDescriptor::withAddressRanges(&range,1,
         static_cast<IOOptionBits>(kIODirectionInOut)|static_cast<IOOptionBits>(kIOMemoryTypePhysical64),nullptr);
     if(!bo.desc){
-        for(uint64_t off=0;off<a.bytes;off+=4096)
-            pmap_set_cache_attributes((ppnum_t)((pa+off)>>12),VM_WIMG_USE_DEFAULT);
         buf->release();bo=Bo();return kIOReturnNoMemory;
     }
     bo.token=BoTokenBase+index;
@@ -506,38 +501,19 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
     uint32_t seq=0;
-    // Read the first IB from the kernel's own view and, when the pre-start
-    // staging page exists, submit a copy of it from that proven window. A
-    // runtime user-IOVA fetch failure and a bad command stream then give
-    // different results, and the head shows what the GPU would have fetched.
+    // Record the first IB from the kernel's own view. The submit itself uses
+    // the client's mapping again: the staging copy has served its purpose and
+    // the user path must run unmodified.
     for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=0;
     native_adreno_submit_staged=0;
     { Bo *ib=find(s.buffers[0].handle);
       const uint32_t *src=ib&&ib->buf?(const uint32_t*)ib->buf->getBytesNoCopy():nullptr;
       __asm__ volatile("dsb sy":::"memory");
-      if(src){
-        for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=src[i];
-        uint64_t sg=0;volatile uint32_t *stage=nullptr;unsigned sw=0;
-        const unsigned words=dwords[0];
-        if(cheeseburger_gpu_engine_stage(&sg,&stage,&sw)==0&&stage&&words&&words<=sw){
-          for(unsigned i=0;i<words;++i)stage[i]=src[i];
-          flush_dcache((vm_offset_t)stage,words*4,FALSE);
-          vas[0]=sg;native_adreno_submit_staged=1;native_adreno_submit_stage_gva=sg;
-        }
-      }
+      if(src)for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=src[i];
     }
     // Publish all mapped objects, not just IBs: an IB can reference another
     // BO as data or as its GPU writeback destination.
     __asm__ volatile("dsb sy":::"memory");
-    // The proven window, runtime maps and page attributes are all verified, so
-    // a write failure that follows the buffer points at its physical page.
-    // Map the write target's page into the proven window and write sentinels
-    // through a known IB before the user submission.
-    { uint64_t tpa=0;
-      for(unsigned i=0;i<MaxBo&&!tpa;++i){ Bo &b=bos_[i];
-        if(!b.handle||!b.mapped||b.handle==s.buffers[0].handle)continue;
-        tpa=b.physical; }
-      if(tpa)cheeseburger_gpu_engine_pa_test(tpa); }
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     // Kernel-side readback of every mapped BO: the IB's write target is one of
     // them, and the values show whether the commands ran even without a fence.
