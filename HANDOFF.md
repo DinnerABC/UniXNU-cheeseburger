@@ -1,3 +1,16 @@
+## 2026-11-03/04：P21-Owl 结果（ATOS 变量已生效，排除）· P21-Pelican
+
+- **P21-Owl 实机（boot `0x4590ad33`，日志 `out/p21/persistent-logs/20261103T155827Z/`）**：68 轮、0 写错误；显示 `frames=5`。
+- `bo atos0/1 ... par=10ac25000/10ac24000`（等于 PA，非硬件 PAR）——**两处 ATOS 都已跳过，变量真正生效**；提交仍 `GSUB rc=-4 stage=3`、`pf=0/1`。**ATOS 对 live CB0 的改写被排除。**
+- 剩余差异只剩 **提交前的 prefence 诊断包**：`userPath && count!=0` 时在 IB 前写入一个 `0x46 CACHE_FLUSH_TS`，目标是 `fence+4`，值为 `0x1000|seq` 且**不带 IRQ 位**；probe 已验证的批次没有这个包，而 `pf=0/1` 表明 CP 连它都没执行。
+- **P21-Pelican 修复**：`prefence` 固定为 false，用户批次回到已验证结构（屏障 → IB → 屏障 → fence）。宿主模型同步更新（`cpufence/no-prefence-diagnostic`、`ib-before-fence`），`HOST_MODELS_PASS`。
+- 候选 `out/p21/p21-pelican`：内核 `b7a03453316b710c03ba0c0da5ad5a1d27b4e72015182565622b1681d538521f`、payload 展开 `864f096b…`、固件 `7268d5d0…`、镜像 `out/p21/p21-pelican/uefi/boot-p21-up1.img` SHA-256 `ce2c3ceca6b31b76060a874057b25fc68640b4be0cc40289a4d9688817f87736`，gate `20261103T160555Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；16:06:15Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`GSUB` 是否越过 stage=3、目标 BO 是否出现 `adc0de1`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Owl** | `c3d160ce…` | `a5d8ab7a…` | 两处 ATOS 都跳过（变量生效）；仍 stage=3 → ATOS 排除 |
+  | 2026-11-04 | **P21-Pelican** | `ce2c3cec…` | `b7a03453…` | 移除 IB 前的 prefence 诊断包，恢复已验证批次结构；结果待回收 |
+
 ## 2026-11-03：P21-Kestrel 结果（ATOS 仍有第二处未改，变量未真正生效）· P21-Owl
 
 - **P21-Kestrel 实机（boot `0x474ff1cd`，日志 `out/p21/persistent-logs/20261103T154312Z/`）**：67 轮、0 写错误；显示 `frames=5`；提交仍 `GSUB rc=-4 stage=3`。
