@@ -411,7 +411,7 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     // fall back to the normal pool when that is exhausted.
     IOBufferMemoryDescriptor *buf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
         kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,(vm_size_t)a.bytes,
-        4096,0x00000000fffff000ull);
+        0x00000000fffff000ull);
     bool low=bool(buf);
     if(buf){IOByteCount s0=0;uint64_t p0=buf->getPhysicalSegment(0,&s0,kIOMemoryMapperNone);
         if(!p0||(p0&4095)||s0<a.bytes||p0>=0x100000000ull){buf->release();buf=nullptr;low=false;}}
