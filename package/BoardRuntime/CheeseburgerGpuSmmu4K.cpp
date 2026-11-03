@@ -19,12 +19,45 @@ void flush_dcache(vm_offset_t,unsigned,boolean_t);
 extern volatile uint64_t cb_smmu[24];
 extern volatile uint64_t cb_cp[128];
 int cheeseburger_gpu_mapping_begin(void);
-void cheeseburger_gpu_mapping_end(int);
+int cheeseburger_gpu_mapping_end(int,int);
+IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
+volatile uint64_t native_smmu_irq[6];
 }
 
 namespace {
 struct W { IOMemoryMap *map=nullptr; volatile uint32_t *v=nullptr; };
 static W gW;
+static W gGic;
+static volatile uint32_t gFaulted=0;
+static bool gIrqInstalled=false;
+// Device Android DTB: arm,smmu-kgsl interrupt 0 is GIC SPI 0x149,
+// level-high; GIC INTID adds 32. Mask before returning from hard IRQ and
+// quarantine rather than risking an interrupt storm or a blocking MMIO read.
+static const uint32_t ContextIntid=0x149+32;
+static void contextFault(void *){
+ __atomic_store_n(&gFaulted,1,__ATOMIC_RELEASE);
+ __atomic_fetch_add(&native_smmu_irq[0],1,__ATOMIC_RELAXED);
+ gGic.v[(0x180+(ContextIntid/32)*4)/4]=1u<<(ContextIntid%32);
+ __asm__ volatile("dsb sy":::"memory");
+}
+static bool installFaultIrq(){
+ if(gIrqInstalled)return true;
+ if(!&armcpu_spi_attach)return false;
+ IODeviceMemory *mem=IODeviceMemory::withRange(0x17a00000,0x10000);
+ gGic.map=mem?mem->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+ OSSafeReleaseNULL(mem);
+ gGic.v=gGic.map?(volatile uint32_t*)gGic.map->getVirtualAddress():nullptr;
+ if(!gGic.v)return false;
+ uint32_t rb=0;uint64_t router=0;
+ IOReturn rc=armcpu_spi_attach(ContextIntid,false,contextFault,nullptr,&rb,&router);
+ native_smmu_irq[1]=uint32_t(rc);native_smmu_irq[2]=rb;native_smmu_irq[3]=router;
+ if(rc!=kIOReturnSuccess)return false;
+ if((rb&7)!=3){
+  gGic.v[(0x180+(ContextIntid/32)*4)/4]=1u<<(ContextIntid%32);
+  __asm__ volatile("dsb sy":::"memory");return false;
+ }
+ gIrqInstalled=true;return true;
+}
 static bool mapSmmu(){
  if(gW.v)return true;
  IODeviceMemory *m=IODeviceMemory::withRange(0x5040000,0x10000);
@@ -89,6 +122,8 @@ struct MicroIo {
 extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  if(gActive)return 0;
  if(!mapSmmu())return -1;
+ if(!installFaultIrq())return -9;
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE))return -8;
  gTables=new NativeAdrenoMemory;
  if(!gTables)return -3;
  // A contiguous normal-memory table pool sized for the full aperture.
@@ -123,10 +158,13 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  ArmSmmu4KStreamResult preflight{};
  auto check=ArmSmmu4KCheckFaultedStreams(&gIo,routes,2,0,&preflight);
  if(check!=ArmSmmu4KSuccess){cb_smmu[20]=uint32_t(check);return -8;}
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE))return -8;
  if(gCtx->program(&gIo)!=kIOReturnSuccess){cb_smmu[20]=uint32_t(gCtx->programStatus());return -8;}
  // DTB arm,smmu-kgsl: gfx3d_user = SID 0, gfx3d_secure = SID 2, one-to-one SMR slots.
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE))return -8;
  if(gCtx->attach(routes,2)!=kIOReturnSuccess){cb_smmu[20]=uint32_t(gCtx->attachStatus());return -8;}
  if(NativeAdrenoBindSmmuVisibility(gTables,&gVis)!=kIOReturnSuccess)return -8;
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE))return -8;
  gActive=true;
  cb_smmu[0]=0;
  cb_smmu[20]=0x4b340001u;  // "smmu4k path active"
@@ -135,31 +173,32 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
 }
 
 extern "C" int cheeseburger_gpu_smmu4k_active(void){return gActive?1:0;}
+extern "C" int cheeseburger_gpu_smmu4k_faulted(void){return __atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)!=0;}
 
 extern "C" int cheeseburger_gpu_smmu4k_map(uint64_t iova,uint64_t pa,unsigned pages){
- if(!gActive||gPoisoned||!pages||(iova&4095)||(pa&4095))return -1;
+ if(!gActive||gPoisoned||cheeseburger_gpu_smmu4k_faulted()||!pages||(iova&4095)||(pa&4095))return -1;
  int token=cheeseburger_gpu_mapping_begin();if(token<0)return -3;
- if(gRangeCount>=sizeof(gRanges)/sizeof(gRanges[0])){cheeseburger_gpu_mapping_end(token);return -1;}
+ if(gRangeCount>=sizeof(gRanges)/sizeof(gRanges[0])){cheeseburger_gpu_mapping_end(token,1);return -1;}
  const ArmSmmu4KRange r={iova,pa,uint64_t(pages)*4096,ArmSmmu4KRead|ArmSmmu4KWrite,0,2};
  ArmSmmu4KLiveRegion lower{gCtx->arenaHandle(),gCtx->stateHandle(),gRanges,gRangeCount};
  ArmSmmu4KLiveResult res{};
  const auto status=ArmSmmu4KLiveUpdateContext(&gIo,0,gCtx->configHandle(),&lower,nullptr,0,&gVis,&r,1,gPoll,&res);
- if(status!=ArmSmmu4KSuccess){gPoisoned=gCtx->stateHandle()->poisoned;cb_smmu[20]=uint32_t(status);cheeseburger_gpu_mapping_end(token);return -2;}
+ if(status!=ArmSmmu4KSuccess){gPoisoned=true;cb_smmu[20]=uint32_t(status);cheeseburger_gpu_mapping_end(token,0);return -2;}
  size_t at=0;while(at<gRangeCount&&gRanges[at].iova<iova)++at;
  for(size_t i=gRangeCount;i>at;--i)gRanges[i]=gRanges[i-1];gRanges[at]=r;++gRangeCount;
- cheeseburger_gpu_mapping_end(token);return 0;
+ if(cheeseburger_gpu_mapping_end(token,1)){gPoisoned=true;return -3;}return 0;
 }
 
 extern "C" int cheeseburger_gpu_smmu4k_unmap(uint64_t iova,unsigned pages){
- if(!gActive||gPoisoned||!pages||(iova&4095))return -1;
+ if(!gActive||gPoisoned||cheeseburger_gpu_smmu4k_faulted()||!pages||(iova&4095))return -1;
  int token=cheeseburger_gpu_mapping_begin();if(token<0)return -3;
  size_t at=0;while(at<gRangeCount&&(gRanges[at].iova!=iova||gRanges[at].bytes!=uint64_t(pages)*4096))++at;
- if(at==gRangeCount){cheeseburger_gpu_mapping_end(token);return -1;}
+ if(at==gRangeCount){cheeseburger_gpu_mapping_end(token,1);return -1;}
  const ArmSmmu4KRange r=gRanges[at];
  ArmSmmu4KLiveRegion lower{gCtx->arenaHandle(),gCtx->stateHandle(),gRanges,gRangeCount};
  ArmSmmu4KLiveResult res{};
  const auto status=ArmSmmu4KLiveUpdateContext(&gIo,0,gCtx->configHandle(),&lower,nullptr,0,&gVis,&r,0,gPoll,&res);
- if(status!=ArmSmmu4KSuccess){gPoisoned=gCtx->stateHandle()->poisoned;cb_smmu[20]=uint32_t(status);cheeseburger_gpu_mapping_end(token);return -2;}
+ if(status!=ArmSmmu4KSuccess){gPoisoned=true;cb_smmu[20]=uint32_t(status);cheeseburger_gpu_mapping_end(token,0);return -2;}
  for(size_t i=at+1;i<gRangeCount;++i)gRanges[i-1]=gRanges[i];--gRangeCount;
- cheeseburger_gpu_mapping_end(token);return 0;
+ if(cheeseburger_gpu_mapping_end(token,1)){gPoisoned=true;return -3;}return 0;
 }

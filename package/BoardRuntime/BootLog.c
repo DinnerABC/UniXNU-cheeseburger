@@ -244,6 +244,7 @@ extern volatile uint64_t cb_disp[128] __attribute__((weak_import));
 extern volatile uint64_t cb_gpu[80] __attribute__((weak_import));
 extern volatile uint64_t cb_reset[12] __attribute__((weak_import));
 extern volatile uint64_t cb_smmu[24] __attribute__((weak_import));
+extern volatile uint64_t native_smmu_irq[6] __attribute__((weak_import));
 extern volatile uint64_t cb_map[4] __attribute__((weak_import));
 extern volatile uint64_t cb_cp[128] __attribute__((weak_import));
 extern volatile uint64_t cb_zap[32] __attribute__((weak_import));
@@ -428,6 +429,11 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   {int n=snprintf(gpu,sizeof gpu,"GPU3 gpu");
    for(unsigned k=0;k<17;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[28+k]&0xffffffffull);}
    at=put(out,at,cap,gpu,sizeof gpu);}
+  if (&native_smmu_irq[0]) {
+   char irq[160];snprintf(irq,sizeof irq,"SIRQ count=%llu attach=%x rb=%x route=%llx bid=%llx",
+    native_smmu_irq[0],(unsigned)native_smmu_irq[1],(unsigned)native_smmu_irq[2],native_smmu_irq[3],cb_boot_id);
+   at=put(out,at,cap,irq,sizeof irq);
+  }
   {int n=snprintf(gpu,sizeof gpu,"GSMMU");
    for(unsigned k=0;k<15;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[45+k]&0xffffffffull);}
    at=put(out,at,cap,gpu,sizeof gpu);}

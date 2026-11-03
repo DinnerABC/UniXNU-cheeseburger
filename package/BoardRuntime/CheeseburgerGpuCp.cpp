@@ -15,6 +15,7 @@
 #if __has_include("CheeseburgerGpuFirmware.h")
 #include "CheeseburgerGpuFirmware.h"
 #include "CheeseburgerGpuStart.h"
+#include "CheeseburgerGpuQuiesce.h"
 #include "CheeseburgerGpuWait.h"
 #define CB_GPU_FW 1
 #else
@@ -30,6 +31,8 @@ extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
+int cheeseburger_gpu_smmu4k_active(void);
+int cheeseburger_gpu_smmu4k_faulted(void);
 int cheeseburger_gpu_service_publish(void);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -272,6 +275,14 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  // reads are proven safe (gpu-probe alone boots to the desktop) and this state
  // is the input for the CP init sequence, so it must survive a later hang.
  W gp;if(!mapw(gp,0x5000000,0x40000)){cb_cp[0]=9;return;}
+ // The 4K mapper needs the actual GPU registers and submission lock even
+ // for the first cold mappings, before the CP engine is constructed.
+ if(cheeseburger_gpu_smmu4k_active()){
+  if(!gMmio)gMmio=new Mmio;
+  if(!gSubmitLock)gSubmitLock=IOLockAlloc();
+  if(!gMmio||!gSubmitLock){cb_cp[0]=9;return;}
+  gMmio->v=gp.v;
+ }
  cb_cp[9]=rd(gp,0x20c8);cb_cp[10]=rd(gp,0xc200);cb_cp[11]=rd(gp,0xc204);
  cb_cp[12]=rd(gp,0x2000);cb_cp[13]=rd(gp,0x2008);cb_cp[14]=rd(gp,0x2018);cb_cp[15]=rd(gp,0x201c);
  cb_cp[16]=rd(gp,0x13d4)|(uint64_t(rd(gp,0x14c0))<<32);
@@ -577,14 +588,14 @@ extern "C" int cheeseburger_gpu_pre_kick(void){
  if((int32_t)native_adreno_pwr[9]<0)return -3;
  return 0;
 }
-extern "C" int cheeseburger_gpu_engine_failed(void){return gEngineSubmitFailed?1:0;}
+extern "C" int cheeseburger_gpu_engine_failed(void){return (gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted())?1:0;}
 extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t **va,unsigned *words){
  if(!gScratchVA||!gScratchGva||!gScratchWords)return -1;
  if(gva)*gva=gScratchGva;if(va)*va=gScratchVA;if(words)*words=gScratchWords;return 0;
 }
 extern "C" int cheeseburger_gpu_engine_copy_test(uint64_t srcIova){
  if(!gEngine||!gScratchVA||!gRing||!gFence||!gSubmitLock)return -1;
- if(gEngineSubmitFailed)return -2;
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted())return -2;
  // One CP_MEM_TO_MEM (0x73) word: read the address the user IB writes and
  // store it in the proven GPMU page. A successful copy proves the CP can read
  // the user page; the user command stream is untouched and no user page is
@@ -620,7 +631,7 @@ extern "C" int cheeseburger_gpu_engine_copy_test(uint64_t srcIova){
 // unreachable" from "the user mapping is what breaks the write".
 extern "C" int cheeseburger_gpu_engine_late_test(void){
  if(!gEngine||!gScratchVA||!gRing||!gFence||!gSubmitLock)return -1;
- if(gEngineSubmitFailed)return -2;
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted())return -2;
  IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,4096);
  if(!b)return -3;
@@ -668,7 +679,7 @@ extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor *
 // physical address.
 extern "C" int cheeseburger_gpu_engine_pool_late_test(void){
  if(!gEngine||!gScratchVA||!gRing||!gFence||!gSubmitLock)return -1;
- if(gEngineSubmitFailed)return -2;
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted())return -2;
  uint64_t pa=0;IOBufferMemoryDescriptor *pb=nullptr;
  if(cheeseburger_gpu_low_take(&pa,&pb)!=0||!pb)return -3;
  void *va=pb->getBytesNoCopy();
@@ -709,7 +720,7 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  CheeseburgerGpu::Startup<Mmio>::Ib ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
  IOLockLock(gSubmitLock);
- if(gEngineSubmitFailed||gEngineSubmitCount>=1){IOLockUnlock(gSubmitLock);return -2;}
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||gEngineSubmitCount>=1){IOLockUnlock(gSubmitLock);return -2;}
  gEngineSubmitCount++;
  // Re-assert the core power domains and sample the engine before the doorbell.
  // A collapsed domain or a halted CP explains a ring the CP never reads; the
@@ -779,7 +790,7 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  return rc;
 }
 extern "C" int cheeseburger_gpu_engine_wait(uint32_t seq,uint64_t timeout_ns){
- if(!gFence||!seq)return -1;
+ if(!gFence||!seq||cheeseburger_gpu_smmu4k_faulted())return -1;
  auto read=[](){
   __asm__ volatile("dsb sy":::"memory");
   flush_dcache((vm_offset_t)gFence,4,FALSE);
@@ -797,7 +808,7 @@ extern "C" int cheeseburger_gpu_engine_idle(void){
  // After a failed submission the CP may be fetching a bad IB and the GPU AHB
  // can be stalled; a register read here can hang the caller. Report unknown so
  // the BO policy keeps every mapping instead of touching that bus.
- if(gEngineSubmitFailed)return -1;
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted())return -1;
  // 1 only after reset read back both stop controls halted. An abandoned or
  // not-started engine without that readback is unknown, not stopped.
  const bool confirmed=gEngine->haltConfirmed();
@@ -814,25 +825,30 @@ extern "C" int cheeseburger_gpu_engine_idle(void){
 // constructed the probe owns the (halted) GPU exclusively; afterwards the
 // observed idle state and the update must be protected by the same lock as a
 // doorbell, not merely checked before taking it.
+static CheeseburgerGpu::DrainState gTableDrain;
 extern "C" int cheeseburger_gpu_mapping_begin(void){
- if(!gSubmitLock)return gEngine?-1:0;
+ if(!gSubmitLock||!gMmio||!gMmio->v)return -1;
  IOLockLock(gSubmitLock);
- if(!gEngine||!gMmio||gEngineSubmitFailed||gEngine->abandoned()){
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||(gEngine&&gEngine->abandoned())){
   IOLockUnlock(gSubmitLock);return -1;
  }
- if(!gEngine->running()){
-  if(gEngine->haltConfirmed())return 1;
+ const bool running=gEngine&&gEngine->running();
+ if(gEngine&&!running&&!gEngine->haltConfirmed()){
   IOLockUnlock(gSubmitLock);return -1;
  }
- uint32_t r=gMmio->read(CheeseburgerGpu::RBRead),w=gMmio->read(CheeseburgerGpu::RBWrite);
- uint32_t st=gMmio->read(CheeseburgerGpu::Status),st3=gMmio->read(CheeseburgerGpu::Status3);
- if(r==0xffffffffu||w==0xffffffffu||st==0xffffffffu||st3==0xffffffffu||
-    r!=w||!CheeseburgerGpu::idleStatus(st)||(st3&(1u<<24))){
-  IOLockUnlock(gSubmitLock);return -1;
+ gTableDrain={};
+ if(!CheeseburgerGpu::drainForTables(*gMmio,running,gTableDrain)){
+  gEngineSubmitFailed=true;IOLockUnlock(gSubmitLock);return -1;
  }
  return 1;
 }
-extern "C" void cheeseburger_gpu_mapping_end(int token){if(token==1)IOLockUnlock(gSubmitLock);}
+extern "C" int cheeseburger_gpu_mapping_end(int token,int success){
+ if(token!=1)return -1;
+ bool ok=success&&!cheeseburger_gpu_smmu4k_faulted();
+ if(ok)ok=CheeseburgerGpu::resumeAfterTables(*gMmio,gTableDrain);
+ if(!ok)gEngineSubmitFailed=true;
+ IOLockUnlock(gSubmitLock);return ok?0:-1;
+}
 // Address window the user client may map BOs into. 0x2020000 (beside the
 // probe's fetched pages) panicked the kernel on the first user submission, so
 // it is not used. Keep the original window until the CP-visible aperture is
