@@ -1,3 +1,15 @@
+## 2026-11-03：batch14 控制启动结果（回归在镜像侧，非 Data/环境）
+
+- 日志 `out/p21/persistent-logs/20261103T111306Z/`，boot `0x45ca2f65`，68 轮、0 写错误，msgbuf 到 **399.16 s**，心跳 338 s。
+- `clients=75`、`frames=3`、`GPSVC ready=1 open=1`、`GCTL rc=0 stage=7`；Recovery btime 11:08:17，即启动命令（11:01:38）后约 **399 s** 由 400 s 计时自动返回。
+- 对比 batch13/14 原记录（`clients=117 frames=5`）与 batch15+/panic-hold（`clients=0 frames=0`、136–188 s 停止、400 s 不复位）：**同一硬件与持久 Data 下 batch14 仍工作**，因此不是 Data/环境问题，而是 batch15 起的镜像差异。
+- userland addon/trustcache 在 batch14/15/18/panic-hold 完全一致（`2cf8f934…` / `0a7d5a32…`），排除这两项。
+- batch14→15 唯一代码提交是 `b61ceab`（SMMU dump + 池页晚测 + BootLog 字段）；其运行路径都在 `AGXDeviceUserClient::submit()` 内，而失败轮次 `GPSVC open=0` 说明该路径未执行，单凭源码无法解释。后续 batch17+ 又叠加了 `cheeseburger-gpu-smmu4k=1`（本轮日志为 `setup failed -9` 后回退）。
+- 下一步（按单变量）：
+  1. 用当前 HEAD 仅把 `cheeseburger-gpu-smmu4k` 设为 0（其余不变）重建 payload/固件并单次启动：仍停在 ~136 s → 4K 尝试不是触发点；恢复到 ~399 s → 4K 的 SMMU 编程/回退副作用是触发点；
+  2. 若 1 仍停，再关闭 `cheeseburger-gpu-start`（跳过 GPU probe）对照，区分“GPU probe/总线”与“其它内核差异”；
+  3. 不建议在触发点未定位前继续 sheng 隔离或 S2 硬件验证。
+
 ## 2026-11-03：日志"独立线"分析 + batch14 控制启动（结果待回收）
 
 - **日志独立线不可行（有证据）**：日志 writer 与心跳本来就是独立内核线程，但本轮一起停在 kernel ~138 s；更关键的是 `AUTORESET` 线程不碰日志/UFS（只 `IOSleep` + PSCI），60 s 时 `mstart=1 gstart=1` 却在 400 s 没有触发复位（设备为 14 分钟后手动恢复）。因此停的是整机调度/CPU（或全局自旋锁），第二条软件日志线同样无法存活；可改进的只是取证：writer 提前启动（当前 ~60 s）、周期缩短（当前 ~4.8 s）、增加 stall supervisor + stackshot/panic 落盘，但不能跨越整机停机。
