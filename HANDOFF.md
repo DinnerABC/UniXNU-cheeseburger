@@ -1,3 +1,11 @@
+## 2026-11-03：sheng GPU 代码完整同步（除 A540 驱动）
+
+- 新增 `package/BoardRuntime/sheng/`：`Adreno740/`（官方驱动全部文件，tests 不编译）、`kits/{AdrenoPM4,ArmSmmu4K,AdrenoFirmware,AirNir}/`、`frontend/AdrenoMetal/`（最新 main `243d63c`）、`tools/`（102 个 GPU/Metal 脚本，只 vendor）。旧 `package/BoardRuntime/adreno740/` 已逐文件比对一致后删除。
+- `CheeseburgerGpuSmmu4K.cpp` 仅改 4 行 include 到 `sheng/...`；`scripts/p21-build-board-runtime.py` 的 include 根与 kit 路径改到新结构。A540 板级文件（`Cheeseburger*`、`BootLog.c` 等）未改。
+- 构建只编译 22 个硬件无关模块（9 个 Adreno740 + ArmSmmu4K 8 + AdrenoPM4 5）。`out/p21/gpu-dev-batch18` 由 batch17 复制并改路径后跑 `p21-compile-atos-gate.py`：`OFFICIAL_KERNEL_SOURCE_BUILD_PASS`，内核 `out/p21/gpu-dev-batch18/native/kernel.macho`，SHA-256 `028187e8b198ab542f1247ba460d53e20edd86a4741cf4c61876c23c7913988f`，board runtime 66 objects、`archive_sha256=de98b7ca…`。
+- Adreno740 上游 clone 未成功，使用固定副本 `4e0314d`；AdrenoMetal 使用新 clone `243d63c`。A740 硬件模块、前端、AirNir/AdrenoFirmware、tools 均未编译；sheng 的 SM8550 GPU 胶水（GpuPowerProbe、prepare-sheng-gmu* 等）未同步。详见 `docs/P21_SHENG_GPU_SYNC_20261103.md`。
+- 本轮未接触设备、未写分区、未生成 prelink/UEFI/payload/boot 镜像。下一步：如需实机验证，先按 batch18 记录构建 payload/UEFI 与 gate，再做单次 `fastboot boot`；A540 的 SMMU4K `prepare -4` 问题仍需按 batch17 日志单独修复。
+
 ## 2026-11-03：同步来源更正（用户指出）
 
 - **官方仓库在 `/Volumes/NAS-MacData/Project/IOS/upstream/`**：`UniXNU`（框架/移植指南/通用接口）与 `UniXNU-sheng`（设备适配：GPU 服务、BO 内存、缓存一致性、提交生命周期；sheng 用 A740，硬件寄存器/固件不可套用）。

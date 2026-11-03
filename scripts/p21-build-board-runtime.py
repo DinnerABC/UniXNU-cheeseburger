@@ -28,7 +28,7 @@ def compile(src,name=None,flags=(),late=False):
   elif a in ('-MF','-MJ','-MT'):i+=1
   elif a not in ('-MD','-MMD','-MP'):cmd.append(a)
   i+=1
- cmd+=['-I',str(S),'-I',str(S/'adreno740'),'-I',str(S/'adreno740/ArmSmmu4K'),'-I',str(S/'adreno740/AdrenoPM4'),'-I',str(O/'abi'),'-I',str(T/'.cache/xnu-work/osfmk'),'-I',str(U/'kits/VerifiedRoot/include'),'-Wno-error','-mgeneral-regs-only',*flags]
+ cmd+=['-I',str(S),'-I',str(S/'sheng/Adreno740'),'-I',str(S/'sheng/kits/ArmSmmu4K'),'-I',str(S/'sheng/kits/AdrenoPM4'),'-I',str(O/'abi'),'-I',str(T/'.cache/xnu-work/osfmk'),'-I',str(U/'kits/VerifiedRoot/include'),'-Wno-error','-mgeneral-regs-only',*flags]
  run(cmd,name+'-compile',rec['directory']);commands.append({'source':str(src.relative_to(R)),'source_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),'command':cmd,'cwd':rec['directory'],'object_sha256':hashlib.sha256(obj.read_bytes()).hexdigest()})
  if late:
   transformed=O/(name+'.late.o');run(['/opt/homebrew/opt/llvm/bin/llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_'+src.name,obj,transformed],name+'-late');obj=transformed
@@ -36,13 +36,15 @@ def compile(src,name=None,flags=(),late=False):
 cpp=['IOKitMatchTrace','NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','RamLateRegistration','MediaInventory','DataActivation','RootAuth','CacheAuth','NativeLegacyDisplay','NativeGOPPresenter','LegacyDisplayProbe','HidInputProbe','NativeHidInput','CheeseburgerButtons','CheeseburgerTouch','BoardBootArgs','CheeseburgerUsb','CheeseburgerDispProbe','CheeseburgerGpuProbe','CheeseburgerGpuSmmu','CheeseburgerGpuSmmu4K','CheeseburgerGpuCp','CheeseburgerGpuService','CheeseburgerGpuAccelerator','CheeseburgerGpuPas','CheeseburgerAutoReset','NativeKeyStoreEvents','KeyStoreProbe','KeyStoreFixture']
 late={'NativeUfs','CheeseburgerPlatformPower','NativeRamBlock','NativeLegacyDisplay','NativeGOPPresenter','NativeHidInput','NativeKeyStoreEvents','CheeseburgerGpuService','CheeseburgerGpuAccelerator'}
 for n in cpp:compile(S/(n+'.cpp'),flags=['-DUNIXNU_HID_TOUCH_SOURCE=1'] if n=='NativeHidInput' else [],late=n in late)
-# Official sheng modules vendored under package/BoardRuntime/adreno740: the
-# hardware-independent VM/BO/ring/submit layer and the ArmSmmu4K and
-# AdrenoPM4 kits. Board hardware stays in the Cheeseburger runtime.
-A740=S/'adreno740';A740I=['-I',str(A740),'-I',str(A740/'ArmSmmu4K'),'-I',str(A740/'AdrenoPM4')]
+# Official sheng GPU sources vendored under package/BoardRuntime/sheng: the
+# hardware-independent VM/BO/ring/submit layer (sheng/Adreno740) and the
+# ArmSmmu4K and AdrenoPM4 kits (sheng/kits). A740 hardware modules, AdrenoMetal
+# frontend and tools stay vendored but unbuilt; board hardware stays in the
+# Cheeseburger runtime.
+A740=S/'sheng/Adreno740';KITS=S/'sheng/kits';A740I=['-I',str(A740),'-I',str(KITS/'ArmSmmu4K'),'-I',str(KITS/'AdrenoPM4')]
 for n in ['NativeAdrenoMemory','NativeAdrenoVm','NativeAdrenoSmmuContext','NativeAdrenoRing','NativeAdrenoSubmit','NativeAdrenoSha256','NativeAdrenoTimer','NativeAdrenoCpu','NativeAdrenoSmmuMemory']:
  compile(A740/(n+'.cpp'),name='a740-'+n,flags=A740I)
-for p in sorted([q for q in list((A740/'ArmSmmu4K').glob('*.c'))+list((A740/'AdrenoPM4').glob('*.c')) if not q.stem.startswith('test_')]):
+for p in sorted([q for q in list((KITS/'ArmSmmu4K').glob('*.c'))+list((KITS/'AdrenoPM4').glob('*.c')) if not q.stem.startswith('test_')]):
  compile(p,name='a740-'+p.parent.name+'-'+p.stem,flags=A740I)
 for n in ['BootWatchdogPolicy','ObserverAnchor','CompactObserver','DisplayObservation','BootProcessProbe','P20ExitProbe','BootFaultProbe','StartupWaitProbe','CheeseburgerLaunchdCache']:compile(S/(n+'.c'))
 subprocess.run([sys.executable,R/'scripts/p21-select-official-log-reports.py',*compiled],check=True)

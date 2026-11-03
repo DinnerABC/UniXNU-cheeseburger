@@ -8,10 +8,10 @@
 #include <IOKit/IODeviceMemory.h>
 #include <pexpert/pexpert.h>
 #include <string.h>
-#include "adreno740/NativeAdrenoMemory.h"
-#include "adreno740/NativeAdrenoSmmuContext.h"
-#include "adreno740/NativeAdrenoSmmuMemory.h"
-#include "adreno740/ArmSmmu4K/ArmSmmu4K.h"
+#include "sheng/Adreno740/NativeAdrenoMemory.h"
+#include "sheng/Adreno740/NativeAdrenoSmmuContext.h"
+#include "sheng/Adreno740/NativeAdrenoSmmuMemory.h"
+#include "sheng/kits/ArmSmmu4K/ArmSmmu4K.h"
 #include "CheeseburgerSmmuMicro.h"
 
 extern "C" {
