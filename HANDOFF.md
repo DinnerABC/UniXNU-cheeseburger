@@ -1,3 +1,16 @@
+## 2026-11-03：进入系统（代号规则启用）· P21-Lark
+
+- **用户确认已进入系统**：本次运行的是当前最新 HEAD（sheng 完整同步 + SMMU4K + SMMU 故障 IRQ/停流 + panic-hold），**仅移除了 batch15（r15）引入的诊断**：`cheeseburger_gpu_smmu_dump`、`cheeseburger_gpu_engine_pool_late_test`、`submit()` 内两处调用、BootLog 的 GPLT/GSMM 行（提交 `51f76be`）。
+- 镜像事实：`out/p21/no-b15-diag/uefi/boot-p21-up1.img` SHA-256 `fa3748fb5d9ff20f829591c0556e1c52f5ca2e97e014fc4a8d08da5105dab90d`；内核 `8ec8232a539d6c9d60f1ccc465476857b9e07d4258537bd7f2ce13b9b97a13f3`；payload 展开 `cd82aef8…`；固件 `bf997599…`；gate `20261103T112731Z` PASS。11:27:56Z 单次 `fastboot boot`。
+- 注意：移除前后内核文件大小相同（均 125,992,960 B），payload 展开也相同（128,413,696 B）；变化在内部符号布局。此前证据显示被移除代码在 `GPSVC open=0` 的轮次不可达，因此“移除即恢复”目前只能记为**相关性假设**，需用本轮日志（`GPSVC open`、`frames`、4K `-9`、停机点）确认，不能直接断言根因。
+- 待回收：设备应在 400 s 计时后自动回 Recovery（misc 已写 `boot-recovery`）；回收新 boot ID 日志，核对：`GPSVC open=1`/`clients>0`/`frames>0`、`sheng ArmSmmu4K setup failed -9` 是否仍出现、日志是否越过 ~138 s 到 ~399 s。
+- **版本代号规则（自本轮起）**：每个候选必须有唯一代号，格式 `P21-<Name>`，在 HANDOFF 的代号表登记“日期 / 代号 / 镜像 SHA-256 / 内核 / 目的 / 结果”，代号不复用；候选目录仍用描述性名字，代号只用于指代版本。
+- 代号表：
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Lark** | `fa3748fb…` | `8ec8232a…` | 最新 HEAD 去掉 batch15 诊断；用户确认进入系统，日志待回收 |
+
 ## 2026-11-03：batch14→15 代码对比与 batch15 诊断移除（候选已启动）
 
 - **batch14→15 唯一代码提交 `b61ceab`（4 文件，110 行）**：
