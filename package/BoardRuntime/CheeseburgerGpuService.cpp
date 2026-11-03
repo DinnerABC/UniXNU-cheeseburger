@@ -62,6 +62,7 @@ int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_engine_copy_test(uint64_t);
 int cheeseburger_gpu_engine_late_test(void);
+int cheeseburger_gpu_low_take(uint64_t *,IOBufferMemoryDescriptor **);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 void pmap_set_cache_attributes(ppnum_t,unsigned int);
 }
@@ -413,20 +414,26 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     // A single 4 KiB page is contiguous by construction, so the low attempt
     // does not need the physically-contiguous request that failed for the
     // multi-page case in boot 0x55bce295. Larger buffers keep the old path.
+    // Take a page reserved at probe time first: pages allocated at submit
+    // time land above the range the CP can reach (GLTE rc=-4, boot 0x561d238f),
+    // while the probe's own early allocations stay below it.
     IOBufferMemoryDescriptor *buf=nullptr;
-    if(a.bytes<=4096)
+    uint64_t poolPa=0;
+    bool low=false;
+    if(a.bytes==4096&&cheeseburger_gpu_low_take(&poolPa,&buf)==0&&buf){low=true;buf->retain();}
+    if(!buf&&a.bytes<=4096){
         buf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
             kIODirectionInOut|kIOMemoryMapperNone,(vm_size_t)a.bytes,0x00000000fffff000ull);
-    bool low=bool(buf);
-    if(buf){IOByteCount s0=0;uint64_t p0=buf->getPhysicalSegment(0,&s0,kIOMemoryMapperNone);
-        if(!p0||(p0&4095)||s0<a.bytes||p0>=0x100000000ull){buf->release();buf=nullptr;low=false;}}
+        if(buf){IOByteCount s0=0;uint64_t p0=buf->getPhysicalSegment(0,&s0,kIOMemoryMapperNone);
+            if(!p0||(p0&4095)||s0<a.bytes||p0>=0x100000000ull){buf->release();buf=nullptr;}}
+    }
     if(!buf)buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
         kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,(vm_size_t)a.bytes,4096);
     if(!buf)return kIOReturnNoMemory;
     native_adreno_bo_low[low?0:1]=native_adreno_bo_low[low?0:1]+1;
     IOByteCount span=0;
-    uint64_t pa=buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
-    if(!pa||(pa&4095)||span<a.bytes||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
+    uint64_t pa=low?poolPa:buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+    if(!pa||(pa&4095)||(!low&&span<a.bytes)||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
     void *cpu=buf->getBytesNoCopy();
     if(!cpu){buf->release();return kIOReturnNoMemory;}
     // Publish initialized cache lines before the pages are GPU-visible. The
@@ -548,9 +555,6 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // Read-only check that the CP can read the page its commands will write.
     // A failed kick abandons the engine inside the helper (gEngineSubmitFailed),
     // so nothing touches the bus or rings a doorbell afterwards.
-    if(cheeseburger_gpu_engine_late_test()){
-        native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
-        return kIOReturnIOError; }
     uint32_t seq=0;
     // Record the first IB from the kernel's own view. The submit itself uses
     // the client's mapping again: the staging copy has served its purpose and

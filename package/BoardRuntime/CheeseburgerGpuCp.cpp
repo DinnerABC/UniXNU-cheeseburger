@@ -46,6 +46,9 @@ volatile uint32_t native_adreno_pa_test[8];
 volatile uint32_t native_adreno_copy_test[8];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
+// Low pool: count and first page, filled at probe time (early allocations land
+// below the address the CP can reach; runtime ones do not).
+volatile uint32_t native_adreno_low_pool[4];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -197,6 +200,11 @@ static volatile uint32_t *gRing=nullptr,*gFence=nullptr;
 static volatile uint32_t *gScratchVA=nullptr;
 static uint64_t gScratchGva=0;
 static unsigned gScratchWords=0;
+// 4 KiB pages reserved at probe time for GPU buffers. The CP reaches early
+// allocations (about 4.1-4.7 GB) but not pages allocated later (about 5+ GB).
+static IOBufferMemoryDescriptor *gLowPage[64];
+static uint64_t gLowPagePa[64];
+static unsigned gLowPageCount=0;
 static uint64_t gRingGva=0,gFenceGva=0;
 static uint32_t gRingWords=0,gFenceSeq=0;
 static IOLock *gSubmitLock=nullptr;
@@ -233,6 +241,24 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  static Buf ring,pm4,pfp,gpmu,fence;
  if(!allocBuf(ring,8192*4)||!allocBuf(pm4,fw.cpBytes(0))||!allocBuf(pfp,fw.cpBytes(1))||
     !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)){cb_cp[0]=3;return;}
+ // Reserve low 4 KiB pages for GPU buffers now, while early allocations still
+ // land below the CP's accessible range.
+ { for(unsigned i=0;i<64;++i){
+    IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+      kIODirectionInOut|kIOMemoryMapperNone,4096,0x00000000fffff000ull);
+    if(!b)b=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+      kIODirectionInOut|kIOMemoryMapperNone,4096,4096);
+    if(!b)break;
+    IOByteCount sp=0;uint64_t pa=b->getPhysicalSegment(0,&sp,kIOMemoryMapperNone);
+    if(!pa||(pa&4095)||sp<4096||pa>=0x140000000ull){b->release();break;}
+    void *v=b->getBytesNoCopy();if(v){memset(v,0,4096);flush_dcache((vm_offset_t)v,4096,FALSE);}
+    gLowPage[gLowPageCount]=b;gLowPagePa[gLowPageCount]=pa;++gLowPageCount;
+   }
+   native_adreno_low_pool[0]=gLowPageCount;
+   if(gLowPageCount){native_adreno_low_pool[1]=uint32_t(gLowPagePa[0]);
+     native_adreno_low_pool[2]=uint32_t(gLowPagePa[0]>>32);}
+   IOLog("CB GPU low pool: count=%u first=%llx\n",gLowPageCount,
+     (unsigned long long)(gLowPageCount?gLowPagePa[0]:0));}
  if(!fw.copyCP(0,pm4.va,pm4.bytes)||!fw.copyCP(1,pfp.va,pfp.bytes)||
     !fw.gpmuCommands((uint32_t*)gpmu.va,gpmu.bytes/4)){cb_cp[0]=4;return;}
  flush_dcache((vm_offset_t)pm4.va,pm4.bytes,FALSE);
@@ -629,6 +655,11 @@ extern "C" int cheeseburger_gpu_engine_late_test(void){
  // page. The buffer and its mapping stay owned for the rest of the boot.
  if(rc==0){cheeseburger_gpu_smmu_unmap(gva,1);b->release();}
  return rc;
+}
+extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor **buf){
+ if(!pa||!buf||!gLowPageCount)return -1;
+ --gLowPageCount;*pa=gLowPagePa[gLowPageCount];*buf=gLowPage[gLowPageCount];
+ return 0;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
