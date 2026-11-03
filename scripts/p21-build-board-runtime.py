@@ -28,7 +28,7 @@ def compile(src,name=None,flags=(),late=False):
   elif a in ('-MF','-MJ','-MT'):i+=1
   elif a not in ('-MD','-MMD','-MP'):cmd.append(a)
   i+=1
- cmd+=['-I',str(S),'-I',str(O/'abi'),'-I',str(T/'.cache/xnu-work/osfmk'),'-I',str(U/'kits/VerifiedRoot/include'),'-Wno-error','-mgeneral-regs-only',*flags]
+ cmd+=['-I',str(S),'-I',str(S/'adreno740'),'-I',str(S/'adreno740/ArmSmmu4K'),'-I',str(S/'adreno740/AdrenoPM4'),'-I',str(O/'abi'),'-I',str(T/'.cache/xnu-work/osfmk'),'-I',str(U/'kits/VerifiedRoot/include'),'-Wno-error','-mgeneral-regs-only',*flags]
  run(cmd,name+'-compile',rec['directory']);commands.append({'source':str(src.relative_to(R)),'source_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),'command':cmd,'cwd':rec['directory'],'object_sha256':hashlib.sha256(obj.read_bytes()).hexdigest()})
  if late:
   transformed=O/(name+'.late.o');run(['/opt/homebrew/opt/llvm/bin/llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_'+src.name,obj,transformed],name+'-late');obj=transformed
