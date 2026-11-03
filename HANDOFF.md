@@ -1,3 +1,16 @@
+## 2026-11-03：P21-Jay 结果（缓存维护无效；ATOS 改写 live CB0 成新嫌疑）· P21-Kestrel
+
+- **P21-Jay 实机（boot `0x460367ea`，日志 `out/p21/persistent-logs/20261103T151759Z/`）**：68 轮、0 写错误；显示 `frames=5`。BO 页 `pa=10ac24000/10ac23000`（ring 同区），ATOS `rc=0`；提交仍 `GSUB rc=-4 stage=3`，**IB 缓存维护（内核视图 clean+invalidate）无效**。
+- **纠正一个判读**：`rptr/wptr/irq=ffffffff` 在 `cpuFenceOnly` 路径里是**占位值**（提交失败后不读总线），不是总线挂死的证据；事实是 prefence 未被执行（`pf=0/1`），CP 未消费该批次。
+- 仍失败的环节：用户提交前有**两次 ATOS 预检**会改写 live CB0——halt micro-MMU、清 SCTLR.stall、`CB_RESUME=TERMINATE`、清 FSR；probe 的 ATOS 在 CP 启动前执行，而这里的 ATOS 在 139 s 对运行中的上下文执行，可能导致 CP 后续取指停住。另注：sagit 的 `0x53/0x43` page-table 序列此前实测会令 CP 在 prefence 前停滞（`pf=0/1`），故没有重新启用。
+- **P21-Kestrel 修复**：当 4K 激活时，提交预检只做 kit 映射的软件 lookup（LiveUpdate 已验证 leaf），**跳过 pinned ATOS 的硬件改写**，把 live CB0 原样留给即将取指的 CP。
+- 候选 `out/p21/p21-kestrel`：内核 `34368330430f4d8108d0ac23341a39528e138b39d996b771b3520dff811ae2cc`、payload 展开 `6ffaed9d…`、固件 `e02a6c3d…`、镜像 `out/p21/p21-kestrel/uefi/boot-p21-up1.img` SHA-256 `edaf2e01c841f37b1b4a979e78ab4640bbb335afba98b0401dc6094607e03c1d`，gate `20261103T153005Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；15:30:27Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`GSUB` 是否越过 stage=3、目标 BO 是否出现 `adc0de1`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Jay** | `4c594aba…` | `3e211b01…` | 门铃前 IB 缓存维护；仍 stage=3（无效） |
+  | 2026-11-03 | **P21-Kestrel** | `edaf2e01…` | `34368330…` | 4K 下跳过会改写 live CB0 的 ATOS 预检；结果待回收 |
+
 ## 2026-11-03：P21-Ibis 结果（PA 假设推翻）· P21-Jay
 
 - **P21-Ibis 实机（boot `0x4d418916`，日志 `out/p21/persistent-logs/20261103T145439Z/`）**：66 轮、0 写错误；显示 `frames=5`。
