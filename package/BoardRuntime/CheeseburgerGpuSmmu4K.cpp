@@ -259,6 +259,14 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
 
 extern "C" int cheeseburger_gpu_smmu4k_active(void){return gActive?1:0;}
 extern "C" int cheeseburger_gpu_smmu4k_faulted(void){return __atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)!=0;}
+// The TTBR0 the kit programmed, for the CP-side table update packet.
+extern "C" int cheeseburger_gpu_smmu4k_ttbr(uint64_t *ttbr){
+ if(!gActive||!ttbr||!gCtx)return -1;
+ const ArmSmmu4KProgramResult *p=gCtx->programResult();
+ if(!p||!p->readback_valid)return -2;
+ *ttbr=p->readback.ttbr0;
+ return 0;
+}
 // Software mirror of the kit's mapped ranges, for the kernel-side preflight
 // that runs before a user submission. The hardware walk (ATOS) still runs
 // against the programmed context.

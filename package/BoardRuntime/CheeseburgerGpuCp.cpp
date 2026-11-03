@@ -62,6 +62,7 @@ int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 uint64_t cheeseburger_gpu_smmu_root(void);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_smmu_invalidate(void);
+int cheeseburger_gpu_smmu4k_ttbr(uint64_t *);
 int cheeseburger_gpu_smmu_micro(void);
 int cheeseburger_gpu_smmu_resume_micro(void);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
@@ -734,7 +735,12 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  // the SMMU (top of submit) and sends no page-table packets per submission.
  unsigned inl=0;PE_parse_boot_argn("gpu-inline-ib",&inl,sizeof inl);
  const uint32_t *inlineWords=(inl&&cb_inline_ib&&cb_inline_dwords)?(const uint32_t*)cb_inline_ib:nullptr;
- int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,0,true,
+ // New mappings must reach the CP's own translation cache, not only the
+ // SMMU's: send the kit's programmed TTBR0 with sagit's CP_SMMU_TABLE_UPDATE
+ // and CP TLB invalidate packets ahead of the IB.
+ uint64_t ttbr=0;
+ if(cheeseburger_gpu_smmu4k_active()&&cheeseburger_gpu_smmu4k_ttbr(&ttbr))ttbr=0;
+ int rc=gEngine->submit(ibs,count,gFenceGva,s,gFence,rec,gRingWords,ttbr,true,
   inlineWords,inlineWords?cb_inline_dwords:0);
  if(rc==0){gFenceSeq=s;*seq=s;}
  else {
