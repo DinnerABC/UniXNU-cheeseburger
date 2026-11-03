@@ -572,6 +572,16 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // Publish all mapped objects, not just IBs: an IB can reference another
     // BO as data or as its GPU writeback destination.
     __asm__ volatile("dsb sy":::"memory");
+    // sheng's submit maintains the IB cache lines before the doorbell: an IB
+    // that is still in a CPU cache makes the CP read stale or zero commands and
+    // stop at the first packet. Clean+invalidate every submitted buffer through
+    // the kernel view of the same physical pages.
+    for(unsigned i=0;i<s.buffer_count;++i){
+        Bo *ib=find(s.buffers[i].handle);
+        void *p=ib&&ib->buf?ib->buf->getBytesNoCopy():nullptr;
+        if(p){flush_dcache((vm_offset_t)p,(unsigned)ib->bytes,FALSE);}
+    }
+    __asm__ volatile("dsb sy":::"memory");
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     // Kernel-side readback of every mapped BO: the IB's write target is one of
     // them, and the values show whether the commands ran even without a fence.
