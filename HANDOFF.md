@@ -12,6 +12,7 @@
   3. 新增 submit 全为 `cpuFenceOnly`，不重走 `kickTo` 的 `InterruptStatus` 轮询；无新 IOKit 类/元类，`OSMetaClass`/launchd 老 panic 无新增触发。
   4. BootLog 的 `GSAT` 读取弱符号前缺少 `&` 判定，已补；其余新增日志行均有弱符号守卫。
 - 回退后 batch8 只保留：probe fence、fence-only 对照（GCTL）、prefence barrier、ATOS 门禁、GIBH/GBOD/GSAT；用户提交路径与 b9f698f 一致，唯一功能变量是移除 WCOMB。
+- batch8 候选 `out/p21/gpu-dev-batch8/`：内核 `02981db7…`，固件 `8b874135…`，expanded payload `465e7c8a…`，gate `20261103T033155Z` PASS（644 B args）。镜像 `out/p21/gpu-dev-batch8/uefi/boot-p21-up1.img` SHA-256 `a7ed9c9f621d9371fb85304941ce71a07dc4969bf1688e2bbd4dab9920334687`；03:33:14Z 单次 `fastboot boot`，misc command 字段写后回读一致。运行结果待回收。
 - batch8 判定：用户提交成功（fence 出现、`GPSVC fence≥1`）→ WCOMB 就是页级失败原因；仍 `rc=-4` 且 `GBOD` 目标未变 → 转向用户映射本身（`clientMemoryForType`/`IOConnectMapMemory64`）或 XPU/页归属。若再次出现卡死/panic，先确认 `GPSVC sub` 与 `GPWR` 是否全 0，再对照本轮回退范围。
 
 
