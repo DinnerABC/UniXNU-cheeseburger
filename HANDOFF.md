@@ -1,4 +1,10 @@
-## 2026-11-03：GPU 物理地址边界（batch11 构建中）
+## 2026-11-03：低位内存分配（batch12 构建中）
+
+- **batch11 实机（boot `0x55bce295`，日志 `out/p21/persistent-logs/20261103T042904Z/`，镜像 `17babe5b…`）**：`GLOW low=0 high=2` —— 带 `kIOMemoryPhysicallyContiguous` 的 4 GiB 以下分配**失败**，两个 BO 都回退普通池（PA `0x147db9000`、`0x147d4c000`，约 5.5 GB）；`GCPY rc=-4` 仍失败；fail-closed 正常（`GPSVC sub=0`、`GPWR` 全 0、无卡死）。
+- 结论：不是“低地址没有页”，而是**低地址的*物理连续*页**在 100+ s 时不可得。
+- 本轮（batch12）：4 KiB 的 BO 天然单页连续，低地址尝试改为 `inTaskWithPhysicalMask(kernel_task, kIODirectionInOut|kIOMemoryMapperNone, 4096, 0xfffff000)`（不含 contiguous 请求）；更大 BO 仍走原路径。若 `GLOW low≥2` 且 `GCPY rc=0 dst=deadbeef` → 低地址页可得且 GPU 可访问，随后用户提交应出现 fence；若 `low=0` 仍高 → 需要在启动期预留/保留低位页池（DarwinBoot 低池），而不是按需分配。
+
+## 2026-11-03：GPU 物理地址边界（batch11）
 
 - **batch10 实机（boot `0x556d12d9`，日志 `out/p21/persistent-logs/20261103T041233Z/`，镜像 `a868069b…`，04:05:50Z 启动、04:12:26Z 自动回 Recovery）**：
   - `GCPY rc=-4 seq=3 src=4001000 dst=0/0`：CP_MEM_TO_MEM **读**用户写目标（PA `0x13f66c000` ≈ 5.364e9 B）超时；不是“写特有”。
