@@ -700,10 +700,16 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  // kick. Compare the raw PAR with the software leaf and fail closed before the
  // doorbell instead of ringing an unfetchable IB.
  int atosRc=0;uint64_t atosPar=0,atosExpect=0,atosPte=0;
+ // The pinned ATOS helper halts the micro-MMU and rewrites the live CB0
+ // (SCTLR stall bit, CB_RESUME, FSR). When the kit owns the context its own
+ // LiveUpdate already verified the leaf, so only the software lookup runs and
+ // the hardware context is left untouched for the CP that is about to fetch.
+ const bool kitPath=cheeseburger_gpu_smmu4k_active()!=0;
  for(unsigned i=0;i<count&&!atosRc;++i){
   uint64_t pte=0;
   if(cheeseburger_gpu_smmu_lookup(vas[i],&pte)){atosRc=-1;break;}
   atosPte=pte;atosExpect=pte&0x0000fffffffff000ull;
+  if(kitPath)continue;
   int arc=cheeseburger_gpu_smmu_atos(vas[i],&atosPar,nullptr);
   if(!CheeseburgerGpu::atosMatches(arc,atosPar,atosExpect))atosRc=arc?arc:-3;
  }
