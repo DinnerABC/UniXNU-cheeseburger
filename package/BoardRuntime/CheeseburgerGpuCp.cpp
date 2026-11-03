@@ -796,12 +796,16 @@ extern "C" int cheeseburger_gpu_mapping_begin(void){
   IOLockUnlock(gSubmitLock);return -1;
  }
  gTableDrain={};
- // Before the probe constructs the engine there is no CP/VBIF owner to drain:
- // the mapping is created during the SMMU setup, ahead of power-up, exactly
- // where sheng relies on the platform being quiesced. Only an existing engine
- // is asked for a verified drain.
- if(gEngine&&!CheeseburgerGpu::drainForTables(*gMmio,running,gTableDrain)){
-  gEngineSubmitFailed=true;IOLockUnlock(gSubmitLock);return -1;
+ // sheng updates the stream tables with the masters quiesced; an empty ring is
+ // exactly that state (no fetch in flight, the kit syncs TLBs per update). The
+ // CP/VBIF stop is only taken when the ring still carries work.
+ if(gEngine){
+  const uint32_t r=gMmio->read(CheeseburgerGpu::RBRead);
+  const uint32_t w=gMmio->read(CheeseburgerGpu::RBWrite);
+  const bool empty=(r==w)&&r!=0xffffffffu;
+  if(!empty&&!CheeseburgerGpu::drainForTables(*gMmio,running,gTableDrain)){
+   gEngineSubmitFailed=true;IOLockUnlock(gSubmitLock);return -1;
+  }
  }
  return 1;
 }
