@@ -1,3 +1,15 @@
+## 2026-11-04：P21-Crane 结果（fence(+4) 有效，但用户批次仍不执行）· P21-Eagle
+
+- **P21-Crane 实机（boot `0x45799f9b`，日志 `out/p21/persistent-logs/20261103T170449Z/`）**：68 轮、0 写错误；显示 `frames=5`。probe `CB GPU start: fence OK seq=1`（fence 改到 +4 后仍工作，说明机制正确）；用户提交仍 `GSUB rc=-4 stage=3`、`fr=28`（RPTR shadow）。**fence 位置修复没有单独解决问题。**
+- 结论：CP 没有执行用户批次，而 probe（count=0、写 fence 到同一 +4）可执行。差别只剩：用户批次内的命令/`0x3f` 以及**新建映射对 CP 翻译缓存是否可见**。内核侧 SMMU TLBI（pinned `tlbSync` 与 kit LiveUpdate）已做，但 CP 自身的翻译缓存需要 sagit 的 CP 侧 `0x53 CP_SMMU_TABLE_UPDATE` + `0x43 TLB invalidate`。此前该序列被认为"停滞"，但那是在 fence 检测本身错误的前提下得到的结论。
+- **P21-Eagle 修复（单变量）**：关闭 inline（恢复 670 B 参数），在用户提交的 ring 批次中发送 **kit 已编程的 TTBR0**，触发 sagit 的 CP 表更新/TLB 失效序列；TTBR 来自 `ArmSmmu4KProgramResult.readback.ttbr0`。
+- 候选 `out/p21/p21-eagle`：内核 `768981a481da2bc9b1eff0844a08994357b1f253804a3564ef6ce44565a79332`、payload 展开 `17f730bb…`、固件 `390851f5…`、镜像 `out/p21/p21-eagle/uefi/boot-p21-up1.img` SHA-256 `6effa30baf480b40bbf6f44a7b568884a2a4d31f7c2d87a698197ee88b4c99c5`，gate `20261103T171210Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；17:12:40Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`GSUB rc=0/fenced`、目标 BO 是否出现 `adc0de1`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Crane** | `2500410b…` | `8ae3f102…` | fence 移到 +4；probe 正常，用户批次仍 stage=3 |
+  | 2026-11-04 | **P21-Eagle** | `6effa30b…` | `768981a4…` | 发 CP 侧 TTBR 表/TLB 更新；结果待回收 |
+
 ## 2026-11-04：P21-Raven 结果（内联 IB 仍不动；fence 与 RPTR shadow 冲突）· P21-Crane
 
 - **P21-Raven 实机（boot `0x4545dd2f`，日志 `out/p21/persistent-logs/20261103T164835Z/`）**：68 轮、0 写错误；`GSUB rc=-4 stage=3`、`fr=28`，内联 IB 没有改变结果（诊断路径是否真正生效仍需日志标记，但结论指向更基础的问题）。
