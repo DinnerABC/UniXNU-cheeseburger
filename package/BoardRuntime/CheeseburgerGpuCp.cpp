@@ -625,8 +625,9 @@ extern "C" int cheeseburger_gpu_engine_late_test(void){
  native_adreno_late_test[6]=uint32_t(m);native_adreno_late_test[7]=s;
  IOLog("CB GPU engine: late test rc=%d pa=%llx map=%d tgt=%x/%x/%x seq=%u\n",
   rc,pa,m,t[0],t[1],t[2],s);
- if(!m)cheeseburger_gpu_smmu_unmap(gva,1);
- b->release();
+ // Never unmap or free after a failed kick: the CP may still be writing this
+ // page. The buffer and its mapping stay owned for the rest of the boot.
+ if(rc==0){cheeseburger_gpu_smmu_unmap(gva,1);b->release();}
  return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
