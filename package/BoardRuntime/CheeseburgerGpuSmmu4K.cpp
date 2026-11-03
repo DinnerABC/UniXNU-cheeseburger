@@ -207,43 +207,42 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  gIo=(ArmSmmu4KIo){.cookie=nullptr,.register_bytes=0x10000,
   .read32=ioRead32,.read64=ioRead64,.write32=ioWrite32,.write64=ioWrite64,.barrier=ioBarrier};
  const ArmSmmu4KStream routes[2]={{0,0},{2,2}};
- // The board's unused cold slots read FAULT|0xff. The kit requires exactly
- // FAULT; normalize only an invalid slot with that known fault encoding.
- // Never replace a live or unfamiliar route.
+ // This firmware reports an idle stream as FAULT with CBNDX=0xff and does not
+ // accept a FAULT rewrite, so the kit's "must already fault" preflight cannot
+ // run here. sheng's own platform plan (UniXNU-sheng/package/SmmuBypass.h)
+ // routes a stream by writing S2CR=bank, reading it back, then publishing the
+ // exact SID in SMR; the context/table work stays with the kit.
  for(const auto &route:routes){
-  unsigned smr=0x800+4*route.slot,s2cr=0xc00+4*route.slot;
-  uint32_t match=srd(smr),value=srd(s2cr);
-  // This vendor leaves an idle stream as FAULT with CBNDX=0xff. CBNDX is only
-  // writable while the stream selects a bank, so write the bank first and then
-  // return the stream to FAULT; the kit accepts exactly FAULT.
-  if(match==0&&(value&0xffff0000u)==0x20000u&&value!=0x20000u){
-   swr(s2cr,0u);
-   const uint32_t banked=srd(s2cr);
-   swr(s2cr,0x20000u);
-   value=srd(s2cr);
-   IOLog("CB GPU SMMU4K: normalize s2cr slot=%u banked=%x fault=%x\n",route.slot,banked,value);
+  const uint32_t smr=srd(0x800+4*route.slot);
+  if(smr&0x80000000u){
+   IOLog("CB GPU SMMU4K: step=slots slot=%u smr=%x busy\n",route.slot,smr);
+   cb_smmu[20]=0xe100u+route.slot;return -8;
   }
-  if(match!=0||value!=0x20000u){
-   IOLog("CB GPU SMMU4K: step=slots slot=%u smr=%x s2cr=%x\n",route.slot,match,value);
-   cb_smmu[20]=0xe100u+route.slot;return -8;}
  }
- ArmSmmu4KStreamResult preflight{};
- auto check=ArmSmmu4KCheckFaultedStreams(&gIo,routes,2,0,&preflight);
- if(check!=ArmSmmu4KSuccess){
-  IOLog("CB GPU SMMU4K: step=preflight status=%d\n",(int)check);
-  cb_smmu[20]=uint32_t(check);return -8;}
- if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)){IOLog("CB GPU SMMU4K: step=fault-after-preflight\n");return -8;}
  if(gCtx->program(&gIo)!=kIOReturnSuccess){
   IOLog("CB GPU SMMU4K: step=program status=%d\n",(int)gCtx->programStatus());
   cb_smmu[20]=uint32_t(gCtx->programStatus());return -8;}
- // DTB arm,smmu-kgsl: gfx3d_user = SID 0, gfx3d_secure = SID 2, one-to-one SMR slots.
+ // DTB arm,smmu-kgsl: gfx3d_user = SID 0, gfx3d_secure = SID 2, bank 0.
  if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)){IOLog("CB GPU SMMU4K: step=fault-after-program\n");return -8;}
- if(gCtx->attach(routes,2)!=kIOReturnSuccess){
-  IOLog("CB GPU SMMU4K: step=attach status=%d\n",(int)gCtx->attachStatus());
-  cb_smmu[20]=uint32_t(gCtx->attachStatus());return -8;}
+ for(const auto &route:routes){
+  unsigned smr=0x800+4*route.slot,s2cr=0xc00+4*route.slot;
+  swr(s2cr,0u);
+  if(srd(s2cr)!=0u){
+   IOLog("CB GPU SMMU4K: step=route-s2cr slot=%u rd=%x\n",route.slot,srd(s2cr));
+   cb_smmu[20]=0xe100u+route.slot;return -8;
+  }
+  swr(smr,0x80000000u|route.sid);
+  const uint32_t gotS2=srd(s2cr),gotSMR=srd(smr);
+  IOLog("CB GPU SMMU4K: route slot=%u sid=%u s2cr=%x smr=%x\n",route.slot,route.sid,gotS2,gotSMR);
+  if(gotS2!=0u||gotSMR!=(0x80000000u|route.sid)){
+   cb_smmu[20]=0xe100u+route.slot;return -8;
+  }
+ }
+ if(gCtx->observe()!=kIOReturnSuccess){
+  IOLog("CB GPU SMMU4K: step=observe\n");return -8;}
  if(NativeAdrenoBindSmmuVisibility(gTables,&gVis)!=kIOReturnSuccess){
   IOLog("CB GPU SMMU4K: step=visibility\n");return -8;}
- if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)){IOLog("CB GPU SMMU4K: step=fault-after-attach\n");return -8;}
+ if(__atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)){IOLog("CB GPU SMMU4K: step=fault-after-route\n");return -8;}
  gActive=true;
  cb_smmu[0]=0;
  cb_smmu[20]=0x4b340001u;  // "smmu4k path active"
