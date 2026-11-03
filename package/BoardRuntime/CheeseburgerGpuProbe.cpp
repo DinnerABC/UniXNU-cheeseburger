@@ -15,6 +15,7 @@
 #include <pexpert/pexpert.h>
 extern "C" {
 volatile uint64_t cb_gpu[80];
+extern volatile uint64_t cb_smmu[24];
 void cheeseburger_gpu_smmu_setup(void);
 void cheeseburger_gpu_cp_probe(void);
 int cheeseburger_gpu_accelerator_publish(void);
@@ -92,7 +93,7 @@ static void worker(void*,wait_result_t){
  if(smmu){W sm;if(mapw(sm,0x5040000,0x10000))for(unsigned i=0;i<sizeof smmuRegs/sizeof smmuRegs[0];++i)cb_gpu[45+i]=rd(sm,smmuRegs[i]);}
  cb_gpu[62]|=smmu?0x10u:0u;
  unsigned setup=0;PE_parse_boot_argn("cheeseburger-gpu-smmu-setup",&setup,sizeof setup);
- if(smmu&&setup)cheeseburger_gpu_smmu_setup();
+ if(smmu&&setup){cheeseburger_gpu_smmu_setup();if(cb_smmu[0]){cb_gpu[63]=4;return;}}
  unsigned cp=0;if(PE_parse_boot_argn("cheeseburger-gpu-cp",&cp,sizeof cp)&&cp&&smmu&&setup)cheeseburger_gpu_cp_probe();
  cb_gpu[63]=3;
 }

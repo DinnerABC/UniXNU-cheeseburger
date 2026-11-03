@@ -1,3 +1,10 @@
+## 2026-11-03：SMMU4K 接入修复（已编译，尚未实机）
+
+- 对照 `.work/p21-official-framework/drivers/Adreno740/NativeAdrenoSmmuContext.cpp` 与 `package/BoardRuntime/sheng/kits/ArmSmmu4K/ArmSmmu4KLive.h`：128 MiB aperture 的预算修为 32768 页，连续表池扩大到 128 页（原先 8192/32 必然拒绝；真实 kit 宿主测试确认需 66 页）。保留 upstream 的 32 位输入及本机 36 位输出，不声称等同原 36 位输入配置。
+- 按官方更新契约维护按 IOVA 排序的现有映射范围，整段 map/unmap 一次更新且 unmap 使用实际物理范围；锁住引擎提交并检查 idle。验证已知未使用的 fault 槽后调用官方 stream preflight；发生硬件写入后失败禁止回退旧路径，probe 发现 setup 失败时不启动 CP，失败状态保留供诊断。
+- 本地 XNU 源码构建 `out/p21/gpu-smmu-fix/kernel-source-build.json` PASS，编译结果 SHA-256 `8f8c43aefa0f9137e8fd7cd727d769f03819b51b813a77339635cb9189948e53`；官方 kit 布局测试 `tests/p21_smmu_layout_test.c` PASS（原预算拒绝、原表池拒绝、新配置成功 66 页）；现有 7 组宿主模型 PASS（`out/p21/gpu-cp/host-tests/20261103T090112Z/`）。这些测试不覆盖设备 MMIO、master 静止及故障中断。
+- 未完成：官方 `ArmSmmu4KLive.h` 要求安装 fault handler 并确保全部 master 静止；本机目前未找到能证明这两项均满足的实现，且 sheng 的 coherent walk 对 MSM8998 的适用性未验证。新的路径尚未硬件验证、尚未打包或启动；不要称黑屏或 GPU 已修复。先按同 SoC/vendor 源码完成故障处理、master 所有权和 coherency 接线并测试，再打包本轮内核、验证 pins 后单次实机运行。设备上次已在 Recovery，本轮未操作设备或写分区。
+
 ## 2026-11-03：batch18 第二次黑屏日志与快速源码审计
 
 - 用户报告黑屏，设备现处 Recovery；只读回收 `out/p21/persistent-logs/20261103T085351Z/`，boot `0x3f5e540c`，17 rounds、0 写错，窗口 SHA-256 `12b254576458297fa433fffc25fb5c32e70e78ab8e4fbd241e431903a1251d68`。batch18 启动记录见 `out/p21/gpu-dev-batch18/boot-once.log`，本轮为同镜像重跑；未做新启动或设备写入。

@@ -810,6 +810,29 @@ extern "C" int cheeseburger_gpu_engine_idle(void){
  if(r==0xffffffffu||w==0xffffffffu||st==0xffffffffu||st3==0xffffffffu)return -1;
  return (r==w && CheeseburgerGpu::idleStatus(st) && !(st3&(1u<<24)))?0:-2;
 }
+// Hold the submission lock throughout an SMMU update. Before the engine is
+// constructed the probe owns the (halted) GPU exclusively; afterwards the
+// observed idle state and the update must be protected by the same lock as a
+// doorbell, not merely checked before taking it.
+extern "C" int cheeseburger_gpu_mapping_begin(void){
+ if(!gSubmitLock)return gEngine?-1:0;
+ IOLockLock(gSubmitLock);
+ if(!gEngine||!gMmio||gEngineSubmitFailed||gEngine->abandoned()){
+  IOLockUnlock(gSubmitLock);return -1;
+ }
+ if(!gEngine->running()){
+  if(gEngine->haltConfirmed())return 1;
+  IOLockUnlock(gSubmitLock);return -1;
+ }
+ uint32_t r=gMmio->read(CheeseburgerGpu::RBRead),w=gMmio->read(CheeseburgerGpu::RBWrite);
+ uint32_t st=gMmio->read(CheeseburgerGpu::Status),st3=gMmio->read(CheeseburgerGpu::Status3);
+ if(r==0xffffffffu||w==0xffffffffu||st==0xffffffffu||st3==0xffffffffu||
+    r!=w||!CheeseburgerGpu::idleStatus(st)||(st3&(1u<<24))){
+  IOLockUnlock(gSubmitLock);return -1;
+ }
+ return 1;
+}
+extern "C" void cheeseburger_gpu_mapping_end(int token){if(token==1)IOLockUnlock(gSubmitLock);}
 // Address window the user client may map BOs into. 0x2020000 (beside the
 // probe's fetched pages) panicked the kernel on the first user submission, so
 // it is not used. Keep the original window until the CP-visible aperture is

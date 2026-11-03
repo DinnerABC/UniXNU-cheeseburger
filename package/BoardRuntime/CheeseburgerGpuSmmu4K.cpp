@@ -18,6 +18,8 @@ extern "C" {
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 extern volatile uint64_t cb_smmu[24];
 extern volatile uint64_t cb_cp[128];
+int cheeseburger_gpu_mapping_begin(void);
+void cheeseburger_gpu_mapping_end(int);
 }
 
 namespace {
@@ -66,9 +68,15 @@ static ArmSmmu4KIo gIo{};
 static ArmSmmu4KLiveVisibility gVis{};
 static unsigned gPoll=1024;
 static bool gActive=false;
+static bool gPoisoned=false;
+static ArmSmmu4KRange gRanges[128];
+static size_t gRangeCount=0;
 // The aperture covers the kernel window (0x2000000..0x201ffff) and the client
 // window at the ABI's va_start (0x4000000..0x4ffffff) in one lower region.
 static const uint64_t ApertureBytes=0x8000000ULL;
+static const size_t LeafBudget=ApertureBytes/4096;
+// The official 32-bit lower-region layout needs 66 pages for 128 MiB.
+static const size_t TablePages=128;
 
 struct MicroIo {
  uint32_t read(unsigned off){return srd(off);}
@@ -81,61 +89,77 @@ struct MicroIo {
 extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  if(gActive)return 0;
  if(!mapSmmu())return -1;
- // Global configuration and the vendor hazard bits stay board-owned: the kit
- // documents that global setup belongs to the platform.
+ gTables=new NativeAdrenoMemory;
+ if(!gTables)return -3;
+ // A contiguous normal-memory table pool sized for the full aperture.
+ if(gTables->allocate(TablePages*4096,36,true,1024*1024,false)!=kIOReturnSuccess)return -3;
+ gCtx=new NativeAdrenoSmmuContext;
+ if(!gCtx)return -4;
+ // Upstream prepare currently uses a 32-bit input; this aperture fits it.
+ // Output remains 36-bit as read from this device's ID2.
+ IOReturn prepared=gCtx->prepare(gTables,0,0,ApertureBytes,LeafBudget,0,0,gPoll,36);
+ if(prepared!=kIOReturnSuccess){cb_smmu[20]=uint32_t(prepared);return -4;}
+ // No fallback is permitted after the first hardware mutation: the kit may
+ // have left a partially programmed or poisoned context/stream lease.
  swr(0x0,(srd(0x0)&~(1u|(3u<<14)|(1u<<13)))|0x1c36);
- swr(0x8004,0x70000000u);                       // CB0 ACTLR: OSH/ISH/NSH
+ swr(0x8004,0x70000000u);
  { MicroIo io; const auto micro=CheeseburgerGpu::resumeMicroMmu(io,3000);
    cb_smmu[16]=micro.before;cb_smmu[17]=micro.after;
    cb_smmu[19]=uint64_t(int64_t(micro.result));
    if(micro.result==CheeseburgerGpu::MicroResult::Timeout||
-      micro.result==CheeseburgerGpu::MicroResult::Invalid)return -2; }
- gTables=new NativeAdrenoMemory;
- if(!gTables)return -3;
- // 32 contiguous 4K pages of tables, the size NativeAdrenoPrepareSmmuMemory
- // expects, in normal (cacheable) memory as the kit requires.
- if(gTables->allocate(32*4096,36,true,256*1024,false)!=kIOReturnSuccess)return -3;
- gCtx=new NativeAdrenoSmmuContext;
- if(!gCtx)return -4;
- // Lower region, 36-bit input/output, bank 0, ASID 0, SID 0/2 attached below.
- if(gCtx->prepare(gTables,0,0,ApertureBytes,8192,0,0,gPoll,36)!=kIOReturnSuccess)return -4;
+      micro.result==CheeseburgerGpu::MicroResult::Invalid)return -8; }
  gIo=(ArmSmmu4KIo){.cookie=nullptr,.register_bytes=0x10000,
   .read32=ioRead32,.read64=ioRead64,.write32=ioWrite32,.write64=ioWrite64,.barrier=ioBarrier};
- if(gCtx->program(&gIo)!=kIOReturnSuccess)return -5;
- // DTB arm,smmu-kgsl: gfx3d_user = SID 0, gfx3d_secure = SID 2, one-to-one SMR slots.
  const ArmSmmu4KStream routes[2]={{0,0},{2,2}};
- if(gCtx->attach(routes,2)!=kIOReturnSuccess)return -6;
- if(NativeAdrenoBindSmmuVisibility(gTables,&gVis)!=kIOReturnSuccess)return -7;
+ // The board's unused cold slots read FAULT|0xff. The kit requires exactly
+ // FAULT; normalize only an invalid slot with that known fault encoding.
+ // Never replace a live or unfamiliar route.
+ for(const auto &route:routes){
+  unsigned smr=0x800+4*route.slot,s2cr=0xc00+4*route.slot;
+  uint32_t match=srd(smr),value=srd(s2cr);
+  if(match==0&&value==0x200ffu){swr(s2cr,0x20000u);value=srd(s2cr);}
+  if(match!=0||value!=0x20000u){cb_smmu[20]=0xe100u+route.slot;return -8;}
+ }
+ ArmSmmu4KStreamResult preflight{};
+ auto check=ArmSmmu4KCheckFaultedStreams(&gIo,routes,2,0,&preflight);
+ if(check!=ArmSmmu4KSuccess){cb_smmu[20]=uint32_t(check);return -8;}
+ if(gCtx->program(&gIo)!=kIOReturnSuccess){cb_smmu[20]=uint32_t(gCtx->programStatus());return -8;}
+ // DTB arm,smmu-kgsl: gfx3d_user = SID 0, gfx3d_secure = SID 2, one-to-one SMR slots.
+ if(gCtx->attach(routes,2)!=kIOReturnSuccess){cb_smmu[20]=uint32_t(gCtx->attachStatus());return -8;}
+ if(NativeAdrenoBindSmmuVisibility(gTables,&gVis)!=kIOReturnSuccess)return -8;
  gActive=true;
  cb_smmu[0]=0;
  cb_smmu[20]=0x4b340001u;  // "smmu4k path active"
- IOLog("CB GPU SMMU4K: bank0 streams sid0/sid2 attached, tables=%u pages\n",32u);
+ IOLog("CB GPU SMMU4K: bank0 streams sid0/sid2 attached, tables=%u pages\n",(unsigned)TablePages);
  return 0;
 }
 
 extern "C" int cheeseburger_gpu_smmu4k_active(void){return gActive?1:0;}
 
 extern "C" int cheeseburger_gpu_smmu4k_map(uint64_t iova,uint64_t pa,unsigned pages){
- if(!gActive||!pages||(iova&4095)||(pa&4095))return -1;
- for(unsigned i=0;i<pages;++i){
-  const ArmSmmu4KRange r={iova+uint64_t(i)*4096,pa+uint64_t(i)*4096,4096,
-    ArmSmmu4KRead|ArmSmmu4KWrite,0,2};
-  ArmSmmu4KLiveRegion lower{gCtx->arenaHandle(),gCtx->stateHandle()};
-  ArmSmmu4KLiveResult res{};
-  if(ArmSmmu4KLiveUpdateContext(&gIo,0,gCtx->configHandle(),&lower,nullptr,0,
-      &gVis,&r,1/*map*/,gPoll,&res)!=ArmSmmu4KSuccess)return -2;
- }
- return 0;
+ if(!gActive||gPoisoned||!pages||(iova&4095)||(pa&4095))return -1;
+ int token=cheeseburger_gpu_mapping_begin();if(token<0)return -3;
+ if(gRangeCount>=sizeof(gRanges)/sizeof(gRanges[0])){cheeseburger_gpu_mapping_end(token);return -1;}
+ const ArmSmmu4KRange r={iova,pa,uint64_t(pages)*4096,ArmSmmu4KRead|ArmSmmu4KWrite,0,2};
+ ArmSmmu4KLiveRegion lower{gCtx->arenaHandle(),gCtx->stateHandle(),gRanges,gRangeCount};
+ ArmSmmu4KLiveResult res{};
+ const auto status=ArmSmmu4KLiveUpdateContext(&gIo,0,gCtx->configHandle(),&lower,nullptr,0,&gVis,&r,1,gPoll,&res);
+ if(status!=ArmSmmu4KSuccess){gPoisoned=gCtx->stateHandle()->poisoned;cb_smmu[20]=uint32_t(status);cheeseburger_gpu_mapping_end(token);return -2;}
+ size_t at=0;while(at<gRangeCount&&gRanges[at].iova<iova)++at;
+ for(size_t i=gRangeCount;i>at;--i)gRanges[i]=gRanges[i-1];gRanges[at]=r;++gRangeCount;
+ cheeseburger_gpu_mapping_end(token);return 0;
 }
 
 extern "C" int cheeseburger_gpu_smmu4k_unmap(uint64_t iova,unsigned pages){
- if(!gActive||!pages||(iova&4095))return -1;
- for(unsigned i=0;i<pages;++i){
-  const ArmSmmu4KRange r={iova+uint64_t(i)*4096,0,4096,ArmSmmu4KRead,0,2};
-  ArmSmmu4KLiveRegion lower{gCtx->arenaHandle(),gCtx->stateHandle()};
-  ArmSmmu4KLiveResult res{};
-  if(ArmSmmu4KLiveUpdateContext(&gIo,0,gCtx->configHandle(),&lower,nullptr,0,
-      &gVis,&r,0/*unmap*/,gPoll,&res)!=ArmSmmu4KSuccess)return -2;
- }
- return 0;
+ if(!gActive||gPoisoned||!pages||(iova&4095))return -1;
+ int token=cheeseburger_gpu_mapping_begin();if(token<0)return -3;
+ size_t at=0;while(at<gRangeCount&&(gRanges[at].iova!=iova||gRanges[at].bytes!=uint64_t(pages)*4096))++at;
+ if(at==gRangeCount){cheeseburger_gpu_mapping_end(token);return -1;}
+ const ArmSmmu4KRange r=gRanges[at];
+ ArmSmmu4KLiveRegion lower{gCtx->arenaHandle(),gCtx->stateHandle(),gRanges,gRangeCount};
+ ArmSmmu4KLiveResult res{};
+ const auto status=ArmSmmu4KLiveUpdateContext(&gIo,0,gCtx->configHandle(),&lower,nullptr,0,&gVis,&r,0,gPoll,&res);
+ if(status!=ArmSmmu4KSuccess){gPoisoned=gCtx->stateHandle()->poisoned;cb_smmu[20]=uint32_t(status);cheeseburger_gpu_mapping_end(token);return -2;}
+ for(size_t i=at+1;i<gRangeCount;++i)gRanges[i-1]=gRanges[i];--gRangeCount;
+ cheeseburger_gpu_mapping_end(token);return 0;
 }

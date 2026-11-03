@@ -337,6 +337,7 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
    if(PE_parse_boot_argn("cheeseburger-gpu-smmu4k",&k,sizeof k)&&k){
     int kr=cheeseburger_gpu_smmu4k_setup();
     if(kr==0){IOLog("CB GPU SMMU: sheng ArmSmmu4K path active\n");return;}
+    if(kr==-8){cb_smmu[0]=12;IOLog("CB GPU SMMU: 4K hardware state uncertain; GPU disabled\n");return;}
     IOLog("CB GPU SMMU: sheng ArmSmmu4K setup failed %d; using the pinned sequence\n",kr);
    } }
  reset();
