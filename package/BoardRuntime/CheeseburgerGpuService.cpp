@@ -48,6 +48,7 @@ int cheeseburger_gpu_engine_window(uint64_t *,uint64_t *);
 int cheeseburger_gpu_engine_idle(void);
 int cheeseburger_gpu_engine_failed(void);
 int cheeseburger_gpu_engine_stage(uint64_t *,volatile uint32_t **,unsigned *);
+int cheeseburger_gpu_engine_pa_test(uint64_t);
 int cheeseburger_gpu_engine_scratch(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
@@ -528,6 +529,15 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // Publish all mapped objects, not just IBs: an IB can reference another
     // BO as data or as its GPU writeback destination.
     __asm__ volatile("dsb sy":::"memory");
+    // The proven window, runtime maps and page attributes are all verified, so
+    // a write failure that follows the buffer points at its physical page.
+    // Map the write target's page into the proven window and write sentinels
+    // through a known IB before the user submission.
+    { uint64_t tpa=0;
+      for(unsigned i=0;i<MaxBo&&!tpa;++i){ Bo &b=bos_[i];
+        if(!b.handle||!b.mapped||b.handle==s.buffers[0].handle)continue;
+        tpa=b.physical; }
+      if(tpa)cheeseburger_gpu_engine_pa_test(tpa); }
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     // Kernel-side readback of every mapped BO: the IB's write target is one of
     // them, and the values show whether the commands ran even without a fence.

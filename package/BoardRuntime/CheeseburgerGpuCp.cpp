@@ -39,6 +39,8 @@ volatile uint32_t native_adreno_selftest[8];
 volatile uint32_t native_adreno_rtmap[8];
 // Same test with the buffer mapped inside the user window (0x4020000).
 volatile uint32_t native_adreno_rtmap2[8];
+// Physical-page test: map rc, PA, sequence and submit rc for a user-owned PA.
+volatile uint32_t native_adreno_pa_test[8];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -630,6 +632,33 @@ extern "C" int cheeseburger_gpu_engine_scratch(uint64_t *gva,volatile uint32_t *
 extern "C" int cheeseburger_gpu_engine_stage(uint64_t *gva,volatile uint32_t **va,unsigned *words){
  if(!gStageVA||!gStageGva||!gStageWords)return -1;
  if(gva)*gva=gStageGva;if(va)*va=gStageVA;if(words)*words=gStageWords;return 0;
+}
+// Write three sentinels into an arbitrary physical page through a fresh map in
+// the proven window. The user window and runtime maps are known good, so a
+// failure here places the problem on the page itself.
+extern "C" int cheeseburger_gpu_engine_pa_test(uint64_t pa){
+ if(!gEngine||!gStageVA||!gRing||!gFence||!gSubmitLock||!pa||(pa&4095))return -1;
+ if(gEngineSubmitFailed)return -2;
+ const uint64_t gva=0x2018000ULL;
+ int m=cheeseburger_gpu_smmu_map(gva,pa,1);
+ native_adreno_pa_test[0]=uint32_t(m);native_adreno_pa_test[1]=uint32_t(pa);
+ native_adreno_pa_test[2]=uint32_t(pa>>32);
+ if(m)return m;
+ volatile uint32_t *rib=gStageVA+0x300;   // byte 0xC00
+ rib[0]=CheeseburgerGpu::packet7(0x3d,5);rib[1]=uint32_t(gva);rib[2]=uint32_t(gva>>32);
+ rib[3]=0x5d5d0001u;rib[4]=0x5d5d0002u;rib[5]=0x5d5d0003u;
+ flush_dcache((vm_offset_t)rib,64,FALSE);
+ CheeseburgerGpu::Startup<Mmio>::Ib one{gva+0xC00,6};
+ CheeseburgerGpu::Record rec;
+ IOLockLock(gSubmitLock);
+ uint32_t s=gFenceSeq+1;if(!s)s=1;
+ int rc=gEngine->submit(&one,1,gFenceGva,s,gFence,rec,gRingWords,0,true);
+ if(rc==0)gFenceSeq=s;
+ IOLockUnlock(gSubmitLock);
+ native_adreno_pa_test[3]=uint32_t(s);
+ native_adreno_pa_test[4]=uint32_t(rc);
+ IOLog("CB GPU engine: pa test rc=%d seq=%u pa=%llx\n",rc,s,pa);
+ return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){

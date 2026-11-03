@@ -73,6 +73,7 @@ extern volatile uint64_t native_adreno_submit_atos_pte __attribute__((weak_impor
 extern volatile uint32_t native_adreno_selftest[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_rtmap[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_rtmap2[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_pa_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
@@ -643,6 +644,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      native_adreno_selftest[7],native_adreno_selftest[2],native_adreno_selftest[3],
      native_adreno_selftest[4],native_adreno_selftest[6],cb_boot_id);
    at=put(out,at,cap,sib,sizeof sib);
+  }
+  if (&native_adreno_pa_test[0] && native_adreno_pa_test[1]) {
+   /* Write test aimed at a user-owned physical page through the proven
+    * window: map rc, physical page, sequence and submit result. */
+   char pat[160];
+   snprintf(pat,sizeof pat,"GPAT map=%d pa=%llx seq=%u rc=%d bid=%llx",
+     (int)(int16_t)(uint16_t)native_adreno_pa_test[0],
+     ((uint64_t)native_adreno_pa_test[2]<<32)|native_adreno_pa_test[1],
+     native_adreno_pa_test[3],(int)(int16_t)(uint16_t)native_adreno_pa_test[4],cb_boot_id);
+   at=put(out,at,cap,pat,sizeof pat);
   }
   if (&native_adreno_rtmap[0] && native_adreno_rtmap[7]) {
    /* Buffer mapped after the CP started, written by a known IB: a failure
