@@ -409,9 +409,13 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     // MEM_WRITE, even though ATOS reports a correct translation. Allocate GPU
     // buffers from below 4 GiB, the same masked pool the SMMU tables use, and
     // fall back to the normal pool when that is exhausted.
-    IOBufferMemoryDescriptor *buf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-        kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,(vm_size_t)a.bytes,
-        0x00000000fffff000ull);
+    // A single 4 KiB page is contiguous by construction, so the low attempt
+    // does not need the physically-contiguous request that failed for the
+    // multi-page case in boot 0x55bce295. Larger buffers keep the old path.
+    IOBufferMemoryDescriptor *buf=nullptr;
+    if(a.bytes<=4096)
+        buf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+            kIODirectionInOut|kIOMemoryMapperNone,(vm_size_t)a.bytes,0x00000000fffff000ull);
     bool low=bool(buf);
     if(buf){IOByteCount s0=0;uint64_t p0=buf->getPhysicalSegment(0,&s0,kIOMemoryMapperNone);
         if(!p0||(p0&4095)||s0<a.bytes||p0>=0x100000000ull){buf->release();buf=nullptr;low=false;}}
@@ -425,9 +429,8 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     void *cpu=buf->getBytesNoCopy();
     if(!cpu){buf->release();return kIOReturnNoMemory;}
     // Publish initialized cache lines before the pages are GPU-visible. The
-    // WCOMB attribute change from b9f698f is removed: a user-owned page that is
-    // not GPU-writable (GPAT rc=-4, boot 0x561a49ee) is the last difference
-    // from a working kernel page, and the SMMU leaf attributes are identical.
+    // WCOMB attribute from b9f698f was removed in boot 0x4a508e1d and changed
+    // nothing: the failure follows the physical page, not its cache attribute.
     flush_dcache((vm_offset_t)cpu,(unsigned)a.bytes,FALSE);
     Bo &bo=bos_[index];
     bo=Bo();
