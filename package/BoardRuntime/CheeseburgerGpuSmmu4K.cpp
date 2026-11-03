@@ -266,7 +266,7 @@ extern "C" int cheeseburger_gpu_smmu4k_lookup(uint64_t iova,uint64_t *pa){
  if(!gActive||!pa||(iova&4095))return -1;
  for(size_t i=0;i<gRangeCount;++i){
   const ArmSmmu4KRange &r=gRanges[i];
-  if(iova>=r.iova&&iova<r.iova+r.bytes){*pa=r.pa+(iova-r.iova);return 0;}
+  if(iova>=r.iova&&iova<r.iova+r.bytes){*pa=r.physical+(iova-r.iova);return 0;}
  }
  return -2;
 }
