@@ -16,7 +16,7 @@
 
 extern "C" {
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
-volatile uint64_t cb_smmu[24];
+extern volatile uint64_t cb_smmu[24];
 extern volatile uint64_t cb_cp[128];
 }
 
