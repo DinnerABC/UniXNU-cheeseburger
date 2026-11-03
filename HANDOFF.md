@@ -1,4 +1,16 @@
-## 2026-11-03：SMMU 流 dump + 池页晚映射（batch15 构建中）
+## 2026-11-03：转向 sheng 官方方案迁移（进行中）
+
+- 用户指示：**完全采用 sheng（官方 Adreno740）适配方案迁移合并，不再自研，禁止重复造轮子**。所有后续 GPU 工作以 sheng 的接口/生命周期/同步为基准；A540 的寄存器、固件、命令序列仍取 sagit，不搬 A740 硬件细节。
+- 迁移分阶段（每阶段可编译；可启动的以设备回到 Recovery 为前提）：
+  1. **S1（已完成）**：把 sheng 的硬件无关层与 kit 引入仓库并编译——`package/BoardRuntime/adreno740/` 下 vendored `NativeAdrenoMemory/Vm/SmmuContext/Ring/Submit/Sha256/Timer/Cpu` 与 `ArmSmmu4K/`、`AdrenoPM4/`；`scripts/p21-build-board-runtime.py` 增加 include 与编译条目（排除 `test_*`）。行为不变，先保证 `-Werror`/链接通过。
+  2. **S2（下一步）**：用 `NativeAdrenoVm` + `NativeAdrenoMemory` + `ArmSmmu4K`（自有 bank/ASID/streams，DTB SID0=`gfx3d_user`、SID2=`gfx3d_secure`）替换自研的 `CheeseburgerGpuSmmu` 映射与 service 的 BO；每提交 TLBIALL、`publishMapped/acquireImported`、WCOMB 重设。
+  3. **S3**：用 sheng `Ring/Submit` 替换自研环/ME_INIT/提交；A540 的 `CP_ME_INIT`/GPMU 命令取 sagit。
+  4. **S4**：用 sheng `GmuPlatform/GpuContext/Board` 替换 probe/GMU/电源，A540 寄存器（RBCCU/SP `0xa887/0xa881`、micro-MMU `0x6000`、DTB `attach-impl-defs`）作为板级输入，保留 PAS/ZAP。
+  5. **S5**：采用 sheng 的 Service/Publish/UserClient/Accelerator 与 Info.plist personality，保留本机 sandbox grant 与 trust cache 集成。
+- 设备状态：batch15（镜像 `7fa6f4b5…`）05:32:57Z 启动后**未在 400 s 内回到 Recovery，USB 上完全没有设备**（05:53 仍无）。疑似 `GSMM` SMMU 寄存器读取或 `GPLT` 提交触发总线卡死/关机。**恢复电源并回到 Recovery 后，先回收 batch15 日志**（新 boot ID）再继续设备轮次。
+- 迁移完成后，S2 应作为第一优先实机验证点（它直接替换当前失败所在的映射/BO 路径）。
+
+## 2026-11-03：SMMU 流 dump + 池页晚映射（batch15）
 
 - **batch14 实机（boot `0x452f3116`，日志 `out/p21/persistent-logs/20261103T052329Z/`，镜像 `f6cda6f9…`，内核 `5d4c48b1…`）**：
   - `GLOP pool=64 first=127cee000`、`GLOW low=2 high=0`：probe 期低位页池成功，两个 BO 都用池页（`0x128051000`、`0x12803d000`，≈4.97 GB，与可用 fence 页同一区间）。
