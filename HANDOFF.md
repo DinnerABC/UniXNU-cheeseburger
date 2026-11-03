@@ -1,4 +1,14 @@
-## 2026-11-03：CP 读用户页（batch10 构建中）
+## 2026-11-03：GPU 物理地址边界（batch11 构建中）
+
+- **batch10 实机（boot `0x556d12d9`，日志 `out/p21/persistent-logs/20261103T041233Z/`，镜像 `a868069b…`，04:05:50Z 启动、04:12:26Z 自动回 Recovery）**：
+  - `GCPY rc=-4 seq=3 src=4001000 dst=0/0`：CP_MEM_TO_MEM **读**用户写目标（PA `0x13f66c000` ≈ 5.364e9 B）超时；不是“写特有”。
+  - `GBOA0/1 rc=0`，PAR 命中 leaf（PA `0x13f54b000`、`0x13f66c000`）：翻译完全正确。
+  - `GPSVC sub=0`、`GPWR` 全 0：copy 失败后服务按 fail-closed 直接返回，**没有再碰 GPU 总线**（`GPWR` 全 0 = `pre_kick` 未执行），也没有卡死/panic。
+- **物理地址边界**：所有成功的 GPU 访问（ring/pm4/pfp/gpmu/fence/stage/rt/fence 写）都 ≤ `0x127b41000`（4.957e9 B）；所有失败都在 `0x13c768000`（5.311e9 B）及以上，包括 `0x13f66c000`（5.364e9，低于 5 GiB 但高于十进制 5 GB）。**边界最可能是十进制 5 GB 的 GPU 可访问物理范围**（XPU/VBIF 类），与用户映射、PTE、TLB 无关；这也解释了为什么“用户页”看起来特殊——用户 BO 分配得晚，PA 落在边界之上。
+- 本轮（batch11）功能修复：GPU BO 改用 `inTaskWithPhysicalMask(..., 0xfffff000)` 分配到 **4 GiB 以下**（与本机 SMMU 页表相同的低池），失败回退普通池；`GLOW low/high` 记录两条路径次数。保留只读 `GCPY`，若低地址分配生效，它应先返回 `rc=0 dst=deadbeef`，随后用户提交才可能成功。
+- batch11 判定：`GLOW low≥1` 且 `GCPY rc=0` + 用户提交 fence 出现 → 边界确认且修复有效；`GLOW low=0`（低池耗尽）→ 需要另找低位内存（预留在 DarwinBoot 低池或早期预留）。
+
+## 2026-11-03：CP 读用户页（batch10）
 
 - **batch9 实机（boot `0x558056e6`，日志 `out/p21/persistent-logs/20261103T035610Z/`，镜像 `422f4c02…`，03:49:20Z 启动、03:55:58Z 自动回 Recovery）**：
   - `GCTL` OK、`GPSVC sub=1`、`GSUB rc=-4 seq=3 pf=0/1 fr=34 stg=0`、`GBOD` 目标页仍 `0xdeadbeef`。
