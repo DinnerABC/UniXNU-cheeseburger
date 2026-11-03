@@ -1,3 +1,11 @@
+## 2026-11-03：batch18 第二次黑屏日志与快速源码审计
+
+- 用户报告黑屏后手动返回 Recovery；只读回收 `out/p21/persistent-logs/20261103T085351Z/`，boot `0x3f5e540c`，17 rounds、0 写错，窗口 SHA-256 `12b254576458297fa433fffc25fb5c32e70e78ab8e4fbd241e431903a1251d68`。batch18 启动记录见 `out/p21/gpu-dev-batch18/boot-once.log`，本轮为同镜像重跑；未做新启动或设备写入。
+- 日志确认 launchd 已运行，4K SMMU `setup failed -4` 后走旧路径；GPU 内核 probe、userpath 测试 fence 成功，显示 `clients=0 frames=0`、GPU 用户服务 `open=0`。心跳最后 78 s、内核 msgbuf 到约 135.95 s，快照没有观察到 panic，日志中断不证明 SoC 停止或自动回 Recovery 失败原因。Recovery 是用户手动返回；不要推断本轮自动重启成功。
+- 确定代码错误：`CheeseburgerGpuSmmu4K.cpp` 用 128 MiB aperture 和 leaf budget 8192；官方 `ArmSmmu4KLive.c` 的 `layout` 要求 `bytes/4096 <= leaf_budget`，因此 32768 > 8192，必然预算拒绝。修正预算后还需检查 32 页容量：32-bit input 的覆盖 128 MiB 需要约 66 个表页；需按 kit 算法、36 位硬件匹配与内存来源一并适配。wrapper 把多个不同 prepare 错误折叠为 -4，不应从日志单独断定其唯一运行原因。
+- 早期构造器假设未获支持：本地 runtime-build 22 个 `a740-*` 对象均未发现 `__mod_init_func` 节；且对照 `git show 1083213:scripts/p21-build-board-runtime.py`，batch17 在大规模搬目录前已经编译同样的 9 个上层模块及两套 kit。当前本机对象不单独证明设备镜像对象身份；不应直接断言 22 个对象是 batch18 才新增或是黑屏根因。
+- 下一步：核对 batch17/18 真实构建输入与最终链接差异、核对 GPU 4K setup 失败后回退之前的寄存器副作用；修正预算及表池容量并保持失败安全，随后针对同一功能批量实现/验证，优先读实际日志与官方源码，不要把时间花在重复猜测。
+
 ## 2026-11-03：sheng GPU 代码完整同步（除 A540 驱动）
 
 - 新增 `package/BoardRuntime/sheng/`：`Adreno740/`（官方驱动全部文件，tests 不编译）、`kits/{AdrenoPM4,ArmSmmu4K,AdrenoFirmware,AirNir}/`、`frontend/AdrenoMetal/`（最新 main `243d63c`）、`tools/`（102 个 GPU/Metal 脚本，只 vendor）。旧 `package/BoardRuntime/adreno740/` 已逐文件比对一致后删除。
