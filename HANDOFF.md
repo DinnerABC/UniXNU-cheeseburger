@@ -1,3 +1,17 @@
+## 2026-11-03：P21-Finch 结果（ATOS 通过，CP 取用户 IB 挂总线）· P21-Heron
+
+- **P21-Finch 实机（boot `0x46772d33`，日志 `out/p21/persistent-logs/20261103T141233Z/`）**：68 轮、0 写错误，msgbuf 到 ~398.7 s，400 s 计时正常回 Recovery；显示 `frames=5`。
+- 用户映射/提交继续正常：`GPSVC map=2 sub=1`；**ATOS 预检通过**：`bo atos0 par=4000000127e6cb80` 与 `expect=127e6c000` 一致，`atos rc=0`。
+- 提交回到 `GSUB rc=-4 stage=3`：`rptr=ffffffff wptr=ffffffff irq=ffffffff cpirq=ffffffff fr=34`。门铃后总线不可读，说明 CP 在取用户 IB 时把 GPU/AHB 挂死。
+- 对比：probe 的 ring/PM4/PFP/GPMU 页在 `0x10ac…`（CP 取指正常），用户 BO 页在 `0x127e6c000`（早先 pool/分配器落点）。IB 头部内容有效（两个 `0x3d` CP_MEM_WRITE 到 `0x4001000/0x4001004`），`0x3f` 编码与 sheng `NativeAdrenoSubmit.cpp` 的 3-word payload 一致。
+- **P21-Heron 实验**：把用户页池改为在 **ring 分配之后**立刻用同一连续分配器预留 8 个单页（不再用带 4 GiB 掩码的失败路径 + 回退池），让用户页尽量落在与 ring 相邻的物理区；若 IB 取指恢复，则问题是用户页 PA 落在 CP 不可读区；否则排除 PA，转查 IB 取指/属性。
+- 候选 `out/p21/p21-heron`：内核 `81dcbd26c17b642da2d1f2debfb0652a11dade71b298b1e1610f772dd828bb73`、payload 展开 `b2993860…`、固件 `63b8a04e…`、镜像 `out/p21/p21-heron/uefi/boot-p21-up1.img` SHA-256 `5612905cfb1811c3591efe31a4a353bb56ceaed1f72895164126d2e8e40f5cd7`，gate `20261103T142128Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；14:21:48Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：低池首个 PA 是否落在 ring 相邻区、`GPSVC map=2 sub=1` 下 `GSUB` 是否越过 stage=3。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Finch** | `dd9a8267…` | `c3c356c5…` | ATOS 通过；CP 取用户 IB 时总线 `ffffffff`，stage=3 |
+  | 2026-11-03 | **P21-Heron** | `5612905c…` | `81dcbd26…` | 用户页改在 ring 分配窗口预留，验证 PA 假设；结果待回收 |
+
 ## 2026-11-03：P21-Kite 结果（用户映射+提交打通，ATOS 门禁用错表）· P21-Finch
 
 - **P21-Kite 实机（boot `0x4e145190`，日志 `out/p21/persistent-logs/20261103T135359Z/`）**：66 轮、0 写错误，msgbuf 到 ~395 s，400 s 计时正常回 Recovery；显示 `frames=5`。
