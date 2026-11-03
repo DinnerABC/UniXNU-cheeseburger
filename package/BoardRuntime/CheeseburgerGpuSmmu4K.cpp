@@ -259,6 +259,17 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
 
 extern "C" int cheeseburger_gpu_smmu4k_active(void){return gActive?1:0;}
 extern "C" int cheeseburger_gpu_smmu4k_faulted(void){return __atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)!=0;}
+// Software mirror of the kit's mapped ranges, for the kernel-side preflight
+// that runs before a user submission. The hardware walk (ATOS) still runs
+// against the programmed context.
+extern "C" int cheeseburger_gpu_smmu4k_lookup(uint64_t iova,uint64_t *pa){
+ if(!gActive||!pa||(iova&4095))return -1;
+ for(size_t i=0;i<gRangeCount;++i){
+  const ArmSmmu4KRange &r=gRanges[i];
+  if(iova>=r.iova&&iova<r.iova+r.bytes){*pa=r.pa+(iova-r.iova);return 0;}
+ }
+ return -2;
+}
 // Leave the kit path before any SMMU write: mask the fault IRQ installed for
 // it and clear the flag, so the pinned sequence and the submission gate are
 // not affected by a handler this path no longer owns.

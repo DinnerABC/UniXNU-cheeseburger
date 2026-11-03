@@ -18,6 +18,7 @@ extern "C" {
 int cheeseburger_gpu_smmu4k_setup(void);
 int cheeseburger_gpu_smmu4k_active(void);
 void cheeseburger_gpu_smmu4k_abort(void);
+int cheeseburger_gpu_smmu4k_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu4k_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu4k_unmap(uint64_t,unsigned);
 volatile uint64_t cb_smmu[24];
@@ -327,6 +328,16 @@ extern "C" int cheeseburger_gpu_smmu_resume_micro(void){
 }
 extern "C" int cheeseburger_gpu_smmu_lookup(uint64_t iova,uint64_t *pte){
  if(!pte||(iova&4095))return -1;
+ if(cheeseburger_gpu_smmu4k_active()){
+  // The kit owns the tables when the 4K path is up; the pinned walker would
+  // only see its own (unused) root. Report the mapped physical address so the
+  // submit preflight keeps its meaning; ATOS still verifies on hardware.
+  uint64_t pa=0;
+  int r=cheeseburger_gpu_smmu4k_lookup(iova,&pa);
+  if(r)return r;
+  *pte=pa;
+  return 0;
+ }
  KernelTables tables;
  return CheeseburgerGpu::lookupLeaf(tables,iova,*pte,gStartLevel);
 }
