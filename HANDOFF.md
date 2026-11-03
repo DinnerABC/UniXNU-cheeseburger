@@ -1,3 +1,22 @@
+## 2026-11-04：P21-Falcon 结果（CP 完全忽略新提交流）· P21-Harrier
+
+- **源码**：提交 `f7c26ba` 把用户提交迁到 sagit 风格引擎（新文件 `package/BoardRuntime/CheeseburgerGpuEngine540.h`）；`CheeseburgerGpuCp.cpp` 的 `cheeseburger_gpu_engine_submit()` 改用该引擎，并移除“只允许一次用户提交”的限制；`CheeseburgerGpuService.cpp` 提交前发布**所有**已映射 BO。宿主模型新增 `tests/gpu_engine540_model.cpp`（`HOST_MODELS_PASS`）。
+- **P21-Eagle 结果（补记，boot `0x4670c72a`，日志 `out/p21/persistent-logs/20261103T172058Z/`）**：`GSUB rc=-4 stage=3 fenced=0 fr=30`；CP 侧 `0x53/0x43` 表/TLB 更新序列**没有改变任何结果**；该轮 `GBOD n=2 0:0/0/0 1:0/0/0`（客户端 IB 页在提交时全 0），`GIBH` 未出现。
+- **P21-Falcon 实机（boot `0x4957c61d`，日志 `out/p21/persistent-logs/20261103T175911Z/`，68 轮、0 写错误、`frames=5`）**：
+  - probe 仍正常：`fence OK seq=1`、`userpath fence rc=0 seq=2 fence=2`；116 s 时 `rw=22/22`、`me=0 vbif=f0000`、`trust=0`。
+  - 首次用户提交（142.4 s）先运行**内核自有 preflight IB**（GPMU 页，CP 在 116 s 已取指过的同一页）：`GPFL rc=-4 seq=3 cp=0/0/0/0 kview=0 sent=0/0/0/0 fr=0 st=5`——**连哨兵都没写**，即整条新流一个包都没执行；`fr=0` 表示 fence 页 +0 的 RPTR shadow 也没动。
+  - `GRNG seq=3 34..47 n=13 w=70928000/70268000/70bf8003/2012200/0/22 …`：环内内容与写入指针都正确（`0x12/0x26` 屏障 → `0x3f` IB@`0x2012200` len 0x22 → 屏障 → `0x46` fence）。
+  - `GSUB rc=-4 stage=5`；`GPSVC open=1 bo=2 map=2 sub=1 fence=0 err=5 st=e00002ca`；`SIRQ count=0`（无 SMMU fault IRQ）；`GBOD n=2 0:0/0/0 1:0/0/0`；总线在本轮**没有**挂死（338 s 心跳仍能读 GPU 寄存器）。
+  - 事实对比：同一环、同一门铃写入方式，probe 的两条 fence 流能执行；唯一新增元素是 `0x3f` 取指，而该取指地址（GPMU 页）在 116 s 曾被 CP 成功取指。**没有证据表明 CP 执行了任何新包，也没有新的 SMMU fault。**
+- **P21-Harrier 修复（提交 `516c248`）**：按 sagit，把用户 IB 包进 `CP_SET_PROTECTED_MODE`（`0x5f 0` … `0x5f 1`）——本机唯一被 CP 成功执行的间接缓冲（GPMU）正是这样包裹的；提交前采样并清除 owned IRQ latch（sagit `start()`/旧提交路径行为），遇到已锁存 CP fault 拒绝踢门铃；超时后做**一次**有界寄存器采样（`RBRead/RBWrite/InterruptStatus/CPInterruptStatus`）区分“门铃没被看到”与“时间戳丢失”。
+- 候选 `out/p21/p21-harrier`：内核 `781fa87710db6e0aa51bfb8132cf007d7aacf0d9311f1a2c76ef1048a4356453`（编译产物 `744cef52…`）、payload 展开 `8f2193b2…`、固件 `100367d6…`、镜像 `out/p21/p21-harrier/uefi/boot-p21-up1.img` SHA-256 `68f88fa611dc4feacb2274489e10520e1026352905d7de4e0182dad665006b53`，gate `20261103T181306Z` PASS（670 B，三项 pin 命中）。misc（`/dev/block/sda4`）仅写首 14 字节 `boot-recovery\0`，其余 4082 字节与写前镜像一致，回读一致；18:13:30Z 单次 `fastboot boot` Sending/Booting OKAY（`out/p21/p21-harrier/boot-once.log`）。
+- **P21-Harrier 实机状态（未收尾）**：启动后到 18:28:37Z（约 15 分钟）设备**始终未回到 Recovery，也没有在任何时刻出现在 `adb devices` / `fastboot devices` / IOUSB 枚举中**；400 s 自动返回没有产生可观察的落点。这与本工程已有的“panic 屏命中则 hold（不自动复位）”一致，但**没有取到屏幕内容或持久日志**，因此失败阶段未确认。本轮没有再次重启设备。下一轮需要：在看得到屏幕时确认 panic 文本/寄存器，或在设备重新进入 Recovery 后立即只读回收窗口（若窗口写入已停止，不能据此断言内核未运行）。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Falcon** | `455975b3…` | `41a74e7f…` | sagit 引擎 + preflight IB；CP 未执行任何新包（sent=0/fr=0） |
+  | 2026-11-04 | **P21-Harrier** | `68f88fa6…` | `781fa877…` | 用户 IB 包裹 `0x5f` 保护模式 + 门铃前清 IRQ latch；启动后未回 Recovery、USB 未枚举，原因未确认 |
+
 ## 2026-11-04：P21-Crane 结果（fence(+4) 有效，但用户批次仍不执行）· P21-Eagle
 
 - **P21-Crane 实机（boot `0x45799f9b`，日志 `out/p21/persistent-logs/20261103T170449Z/`）**：68 轮、0 写错误；显示 `frames=5`。probe `CB GPU start: fence OK seq=1`（fence 改到 +4 后仍工作，说明机制正确）；用户提交仍 `GSUB rc=-4 stage=3`、`fr=28`（RPTR shadow）。**fence 位置修复没有单独解决问题。**
