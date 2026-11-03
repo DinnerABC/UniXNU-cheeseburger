@@ -408,3 +408,37 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
  IOLog("CB GPU SMMU: micro=%x/%x impl0=%x\n",uint32_t(cb_smmu[16]),uint32_t(cb_smmu[17]),uint32_t(cb_smmu[18]));
  unsigned mt=0;if(PE_parse_boot_argn("cheeseburger-gpu-map-test",&mt,sizeof mt)&&mt)mapTest(s,ctx);
 }
+
+/* Read-only snapshot of the stream routes and both context banks, as the
+ * vendor driver's attach-impl-defs and our own stream ownership would see
+ * them. No writes, no TLB operations. */
+volatile uint32_t native_adreno_smmu_dump[24];
+extern "C" int cheeseburger_gpu_smmu_dump(void){
+ W *sp=smmuMap();if(!sp)return -1;
+ W &s=*sp;
+ native_adreno_smmu_dump[0]=rd(s,0x0);            // SCR
+ for(unsigned i=0;i<6;++i){
+  native_adreno_smmu_dump[1+i*2]=rd(s,0x800+4*i);
+  native_adreno_smmu_dump[2+i*2]=rd(s,0xc00+4*i);
+ }
+ native_adreno_smmu_dump[13]=rd(s,0x8000);        // CB0 SCTLR
+ native_adreno_smmu_dump[14]=rd(s,0x8020);        // CB0 TTBR0 low
+ native_adreno_smmu_dump[15]=rd(s,0x8024);        // CB0 TTBR0 high
+ native_adreno_smmu_dump[16]=rd(s,0x8030);        // CB0 TCR
+ native_adreno_smmu_dump[17]=rd(s,0x8058);        // CB0 FSR
+ native_adreno_smmu_dump[18]=rd(s,0x8068);        // CB0 FSYNR0
+ native_adreno_smmu_dump[19]=rd(s,0xc000);        // CB1 SCTLR
+ native_adreno_smmu_dump[20]=rd(s,0xc020);        // CB1 TTBR0 low
+ native_adreno_smmu_dump[21]=rd(s,0xc024);        // CB1 TTBR0 high
+ native_adreno_smmu_dump[22]=rd(s,0x48);          // global FSR
+ native_adreno_smmu_dump[23]=0x5a5a0001u;
+ IOLog("CB GPU SMMU dump: scr=%x s0=%x/%x s1=%x/%x s2=%x/%x cb0=%x/%llx/%x cb1=%x/%llx gfsr=%x\n",
+  native_adreno_smmu_dump[0],native_adreno_smmu_dump[1],native_adreno_smmu_dump[2],
+  native_adreno_smmu_dump[3],native_adreno_smmu_dump[4],native_adreno_smmu_dump[5],
+  native_adreno_smmu_dump[6],native_adreno_smmu_dump[13],
+  (unsigned long long)(uint64_t(native_adreno_smmu_dump[14])|(uint64_t(native_adreno_smmu_dump[15])<<32)),
+  native_adreno_smmu_dump[16],native_adreno_smmu_dump[19],
+  (unsigned long long)(uint64_t(native_adreno_smmu_dump[20])|(uint64_t(native_adreno_smmu_dump[21])<<32)),
+  native_adreno_smmu_dump[22]);
+ return 0;
+}

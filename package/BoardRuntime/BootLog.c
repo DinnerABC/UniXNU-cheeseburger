@@ -80,6 +80,8 @@ extern volatile uint32_t native_adreno_bo_atos[18] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_low_pool[4] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_pool_late[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_smmu_dump[24] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_bo_low[2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_stage_gva __attribute__((weak_import));
@@ -650,7 +652,32 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    }
    /* Hardware translation of every mapped BO, including the write target that
     * is never part of the submission. */
-   if (&native_adreno_low_pool[0] && native_adreno_low_pool[0]) {
+   if (&native_adreno_pool_late[0] && native_adreno_pool_late[1]) {
+   char plt[192];
+   snprintf(plt,sizeof plt,"GPLT rc=%d pa=%llx map=%u tgt=%x/%x/%x seq=%u bid=%llx",
+     (int)(int16_t)(uint16_t)native_adreno_pool_late[0],
+     ((uint64_t)native_adreno_pool_late[2]<<32)|native_adreno_pool_late[1],
+     native_adreno_pool_late[6],native_adreno_pool_late[3],native_adreno_pool_late[4],
+     native_adreno_pool_late[5],native_adreno_pool_late[7],cb_boot_id);
+   at=put(out,at,cap,plt,sizeof plt);
+  }
+  if (&native_adreno_smmu_dump[0] && native_adreno_smmu_dump[23]==0x5a5a0001u) {
+   char sm1[192],sm2[192];
+   snprintf(sm1,sizeof sm1,"GSMM scr=%x s0=%x/%x s1=%x/%x s2=%x/%x s3=%x/%x bid=%llx",
+     native_adreno_smmu_dump[0],native_adreno_smmu_dump[1],native_adreno_smmu_dump[2],
+     native_adreno_smmu_dump[3],native_adreno_smmu_dump[4],native_adreno_smmu_dump[5],
+     native_adreno_smmu_dump[6],native_adreno_smmu_dump[7],native_adreno_smmu_dump[8],cb_boot_id);
+   at=put(out,at,cap,sm1,sizeof sm1);
+   snprintf(sm2,sizeof sm2,"GSMC cb0=%x ttbr=%llx tcr=%x fsr=%x fsynr=%x cb1=%x ttbr1=%llx gfsr=%x bid=%llx",
+     native_adreno_smmu_dump[13],
+     ((uint64_t)native_adreno_smmu_dump[15]<<32)|native_adreno_smmu_dump[14],
+     native_adreno_smmu_dump[16],native_adreno_smmu_dump[17],native_adreno_smmu_dump[18],
+     native_adreno_smmu_dump[19],
+     ((uint64_t)native_adreno_smmu_dump[21]<<32)|native_adreno_smmu_dump[20],
+     native_adreno_smmu_dump[22],cb_boot_id);
+   at=put(out,at,cap,sm2,sizeof sm2);
+  }
+  if (&native_adreno_low_pool[0] && native_adreno_low_pool[0]) {
    char lp[128];
    snprintf(lp,sizeof lp,"GLOP pool=%u first=%llx low=%llu high=%llu bid=%llx",
      native_adreno_low_pool[0],((uint64_t)native_adreno_low_pool[2]<<32)|native_adreno_low_pool[1],

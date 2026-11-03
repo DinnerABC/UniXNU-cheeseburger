@@ -46,9 +46,10 @@ volatile uint32_t native_adreno_pa_test[8];
 volatile uint32_t native_adreno_copy_test[8];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
-// Low pool: count and first page, filled at probe time (early allocations land
-// below the address the CP can reach; runtime ones do not).
+// Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
+// Pool page mapped and written at submit time: rc, PA, target words, map, seq.
+volatile uint32_t native_adreno_pool_late[8];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -660,6 +661,45 @@ extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor *
  if(!pa||!buf||!gLowPageCount)return -1;
  --gLowPageCount;*pa=gLowPagePa[gLowPageCount];*buf=gLowPage[gLowPageCount];
  return 0;
+}
+// Pool page + late mapping + no user mapping: the last control. The page was
+// reserved at probe time and the SMMU leaf is created at submit time, so this
+// separates "runtime-created mappings" from "the user mapping" and from the
+// physical address.
+extern "C" int cheeseburger_gpu_engine_pool_late_test(void){
+ if(!gEngine||!gScratchVA||!gRing||!gFence||!gSubmitLock)return -1;
+ if(gEngineSubmitFailed)return -2;
+ uint64_t pa=0;IOBufferMemoryDescriptor *pb=nullptr;
+ if(cheeseburger_gpu_low_take(&pa,&pb)!=0||!pb)return -3;
+ void *va=pb->getBytesNoCopy();
+ if(!va)return -3;
+ const uint64_t gva=0x201a000ULL;
+ int m=cheeseburger_gpu_smmu_map(gva,pa,1);
+ volatile uint32_t *t=(volatile uint32_t*)va;
+ t[0]=0;t[1]=0;t[2]=0;
+ flush_dcache((vm_offset_t)va,64,FALSE);
+ volatile uint32_t *ib=gScratchVA+0x80;
+ ib[0]=CheeseburgerGpu::packet7(0x3d,5);ib[1]=uint32_t(gva);ib[2]=uint32_t(gva>>32);
+ ib[3]=0x5f5f0001u;ib[4]=0x5f5f0002u;ib[5]=0x5f5f0003u;
+ flush_dcache((vm_offset_t)ib,64,FALSE);
+ CheeseburgerGpu::Startup<Mmio>::Ib one{gScratchGva+0x200,6};
+ CheeseburgerGpu::Record rec;
+ IOLockLock(gSubmitLock);
+ uint32_t s=gFenceSeq+1;if(!s)s=1;
+ int rc=m?m:gEngine->submit(&one,1,gFenceGva,s,gFence,rec,gRingWords,0,true);
+ if(rc==0)gFenceSeq=s;else gEngineSubmitFailed=true;
+ IOLockUnlock(gSubmitLock);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)va,64,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ native_adreno_pool_late[0]=uint32_t(rc);native_adreno_pool_late[1]=uint32_t(pa);
+ native_adreno_pool_late[2]=uint32_t(pa>>32);native_adreno_pool_late[3]=t[0];
+ native_adreno_pool_late[4]=t[1];native_adreno_pool_late[5]=t[2];
+ native_adreno_pool_late[6]=uint32_t(m);native_adreno_pool_late[7]=s;
+ IOLog("CB GPU engine: pool late rc=%d pa=%llx map=%d tgt=%x/%x/%x seq=%u\n",
+  rc,pa,m,t[0],t[1],t[2],s);
+ if(rc==0)cheeseburger_gpu_smmu_unmap(gva,1);
+ return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
