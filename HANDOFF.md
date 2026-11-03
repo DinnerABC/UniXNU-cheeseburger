@@ -1,3 +1,17 @@
+## 2026-11-03：P21-Nightingale 结果（4K 首次激活；engine 前映射被排空拦截）· P21-Osprey
+
+- **P21-Nightingale 实机（boot `0x4f5fdd5a`，日志 `out/p21/persistent-logs/20261103T132004Z/`）**：66 轮、0 写错误，msgbuf 到 ~396.6 s，400 s 计时正常回 Recovery；显示 `frames=8`。
+- **4K 首次真正接管**：`route slot=0 sid=0 s2cr=0 smr=80000000`、`secure sid=2 smr=0 not writable; left to firmware`、`bank0 sid0 routed (sid2 secure-owned)`、`CB GPU SMMU: sheng ArmSmmu4K path active`（75.37 s），`SIRQ ready=1`。
+- 但 probe 随即失败：`CB GPU CP map begin: iova=2000000 ... seq=0` → `CB GPU CP map: ... r=-3`（85.4 s）。原因在新 `cheeseburger_gpu_mapping_begin()`：即使 `gEngine` 尚未构造也执行 `drainForTables`，失败即置 `gEngineSubmitFailed` 并返回 -1；随后 `GCTL rc=-16657 stage=0 fence=dead`、`GPSVC open=0`。
+- **对照**：sheng 在 SMMU 编程时不排空，只要求平台保证 master 静止；本机映射发生在 engine 构造与上电之前，没有 CP/VBIF 属主可排空。
+- **P21-Osprey 修复（提交 `2abd266`）**：`mapping_begin` 仅在 `gEngine` 已存在时执行 `drainForTables`；engine 未构造阶段直接返回 token，映射照常建立（与 sheng 的时序一致）。
+- 候选 `out/p21/p21-osprey`：内核 `06911dcd908421b596d70e2d543463dc0967034fdf4c952b0d9a5f5eb4f1b005`、payload 展开 `9edc3c17…`、固件 `a0a3dd2c…`、镜像 `out/p21/p21-osprey/uefi/boot-p21-up1.img` SHA-256 `90f28c3de14ce5a2c5fcb0f5b833868c634039499dfba1c528b851e2a622fada`，gate `20261103T132830Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；13:28:55Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：ring/PM4/fence 的 `CB GPU SMMU map ok=1`、`GCTL rc=0`、`GPSVC open=1`，以及 `GSUB` 是否越过 stage=3。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Nightingale** | `65e65476…` | `af6aca86…` | 4K 激活（sid0 路由、sid2 交给固件）；engine 前映射被排空拦截，probe 失败 |
+  | 2026-11-03 | **P21-Osprey** | `90f28c3d…` | `06911dcd…` | engine 未构造时不做排空，让 4K 下的映射与 probe 继续；结果待回收 |
+
 ## 2026-11-03：P21-Martlet 结果（SID0 路由成功，SID2 被安全世界锁定）· P21-Nightingale
 
 - **P21-Martlet 实机（boot `0x44ab7124`，日志 `out/p21/persistent-logs/20261103T130402Z/`）**：68 轮、0 写错误，msgbuf 到 ~398 s，400 s 计时正常回 Recovery；显示 `frames=5`；4K 仍 `-8`（GPU 禁用）。
