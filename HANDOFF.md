@@ -1,3 +1,16 @@
+## 2026-11-03：batch14→15 代码对比与 batch15 诊断移除（候选已启动）
+
+- **batch14→15 唯一代码提交 `b61ceab`（4 文件，110 行）**：
+  - `CheeseburgerGpuSmmu.cpp`：新增只读 `cheeseburger_gpu_smmu_dump()` 与 `native_adreno_smmu_dump[24]`（SCR/前 6 组 SMR/S2CR/CB0/CB1/全局 FSR）。
+  - `CheeseburgerGpuCp.cpp`：新增 `native_adreno_pool_late[8]` 与 `cheeseburger_gpu_engine_pool_late_test()`——从低位池取一页、在提交时建 `0x201a000` 映射、发一个 `0x3d` CP_MEM_WRITE、成功才 unmap；失败会把引擎置为 failed。
+  - `CheeseburgerGpuService.cpp`：在**每次用户 submit** 开头调用上述两项；pool_late 失败时直接返回 `kIOReturnIOError`。
+  - `BootLog.c`：新增 GPLT/GSMM/GSMC 诊断行（仅当上述全局被填过才输出）。
+- **当前 HEAD 曾完整保留这四处**（本轮移除前 grep 可证）。两次构建的其它输入无代码差异：batch14/15 内核符号对比只有这 6 个新符号（及 `kalloc_type_view` 编号变化），没有任何函数大小变化；固件 overlay 差异只有 pins 与生成的 `rootfs.c`；payload 的 ADT/seed/trustcache 完全相同。
+- **可达性结论：这些代码不是失败轮次停机的执行原因**。batch15/17/18/panic-hold 的日志均为 `GPSVC ready=1 open=0 sub=0`，且从无 `CB GPU service: client open`（该行在 `AGXDeviceUserClient::start` 里，open 成功即打印），所以 dump/pool_late 从未执行。反证：batch14 控制在 **138.56 s** 打印 `client open` 后继续到 399 s；失败轮次恰在 **135.9–138.35 s** 停止且没有该行——停机紧邻“GPU 用户服务启动”这一时刻。
+- **本轮处理**：提交 `51f76be` 移除上述诊断（dump/pool_late/两处 submit 调用/BootLog GPLT+GSMM 块），保留 GSMMU 等既有诊断。
+- **候选 `out/p21/no-b15-diag`**（复用既有固件 overlay，prelink 输入用 unstripped）：内核 `8ec8232a539d6c9d60f1ccc465476857b9e07d4258537bd7f2ce13b9b97a13f3`，payload 展开 `cd82aef8…`，固件 `bf997599…`（三项 pin 命中），镜像 `out/p21/no-b15-diag/uefi/boot-p21-up1.img` SHA-256 `fa3748fb5d9ff20f829591c0556e1c52f5ca2e97e014fc4a8d08da5105dab90d`，gate `20261103T112731Z` PASS（670 B）。misc 首块仅 command=`boot-recovery` 并回读一致；2026-11-03T11:27:56Z 单次 `fastboot boot` Sending/Booting OKAY，结果待回收。
+- **下一步**：若仍停在 ~136–138 s（预期，因代码不可达）→ 下一变量关闭 `cheeseburger-gpu-start`（跳过 GPU probe）对照，判断停机是否与 probe/引擎状态有关；同时排查 `adrenoprobed` 启动路径（launchd job/AMFI/trustcache 校验）在 138 s 附近是否阻塞。若移除后恢复正常 → 说明是布局/链接副作用而非运行路径，需要保留移除并重做 A/B。
+
 ## 2026-11-03：batch14 控制启动结果（回归在镜像侧，非 Data/环境）
 
 - 日志 `out/p21/persistent-logs/20261103T111306Z/`，boot `0x45ca2f65`，68 轮、0 写错误，msgbuf 到 **399.16 s**，心跳 338 s。
