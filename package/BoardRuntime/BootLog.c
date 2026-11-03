@@ -430,8 +430,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    for(unsigned k=0;k<17;++k){if(n<0||(size_t)n>sizeof gpu-12)n=(int)sizeof gpu-12;n+=snprintf(gpu+n,sizeof gpu-n," %08llx",cb_gpu[28+k]&0xffffffffull);}
    at=put(out,at,cap,gpu,sizeof gpu);}
   if (&native_smmu_irq[0]) {
-   char irq[160];snprintf(irq,sizeof irq,"SIRQ count=%llu attach=%x rb=%x route=%llx bid=%llx",
-    native_smmu_irq[0],(unsigned)native_smmu_irq[1],(unsigned)native_smmu_irq[2],native_smmu_irq[3],cb_boot_id);
+   char irq[160];snprintf(irq,sizeof irq,"SIRQ count=%llu attach=%x rb=%x route=%llx id=%llu ready=%llu bid=%llx",
+    native_smmu_irq[0],(unsigned)native_smmu_irq[1],(unsigned)native_smmu_irq[2],native_smmu_irq[3],native_smmu_irq[4],native_smmu_irq[5],cb_boot_id);
    at=put(out,at,cap,irq,sizeof irq);
   }
   {int n=snprintf(gpu,sizeof gpu,"GSMMU");

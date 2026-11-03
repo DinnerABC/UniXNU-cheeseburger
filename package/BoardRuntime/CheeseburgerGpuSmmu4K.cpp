@@ -13,6 +13,7 @@
 #include "sheng/Adreno740/NativeAdrenoSmmuMemory.h"
 #include "sheng/kits/ArmSmmu4K/ArmSmmu4K.h"
 #include "CheeseburgerSmmuMicro.h"
+#include "CheeseburgerGpuQuiesce.h"
 
 extern "C" {
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
@@ -28,6 +29,7 @@ namespace {
 struct W { IOMemoryMap *map=nullptr; volatile uint32_t *v=nullptr; };
 static W gW;
 static W gGic;
+static W gGpu;
 static volatile uint32_t gFaulted=0;
 static bool gIrqInstalled=false;
 // Device Android DTB: arm,smmu-kgsl interrupt 0 is GIC SPI 0x149,
@@ -49,6 +51,7 @@ static bool installFaultIrq(){
  gGic.v=gGic.map?(volatile uint32_t*)gGic.map->getVirtualAddress():nullptr;
  if(!gGic.v)return false;
  uint32_t rb=0;uint64_t router=0;
+ native_smmu_irq[4]=ContextIntid;
  IOReturn rc=armcpu_spi_attach(ContextIntid,false,contextFault,nullptr,&rb,&router);
  native_smmu_irq[1]=uint32_t(rc);native_smmu_irq[2]=rb;native_smmu_irq[3]=router;
  if(rc!=kIOReturnSuccess)return false;
@@ -56,7 +59,7 @@ static bool installFaultIrq(){
   gGic.v[(0x180+(ContextIntid/32)*4)/4]=1u<<(ContextIntid%32);
   __asm__ volatile("dsb sy":::"memory");return false;
  }
- gIrqInstalled=true;return true;
+ gIrqInstalled=true;native_smmu_irq[5]=1;return true;
 }
 static bool mapSmmu(){
  if(gW.v)return true;
@@ -117,6 +120,21 @@ struct MicroIo {
  void delay(unsigned us){IODelay(us);}
  void mark(const char *){}
 };
+struct GpuIo {
+ uint32_t read(uint32_t off){uint32_t v=gGpu.v[off/4];__asm__ volatile("dmb sy":::"memory");return v;}
+ void write(uint32_t off,uint32_t v){__asm__ volatile("dsb sy":::"memory");gGpu.v[off/4]=v;__asm__ volatile("dsb sy":::"memory");}
+ void delay(unsigned us){IODelay(us);}
+ void publish(){__asm__ volatile("dsb oshst":::"memory");}
+};
+static bool drainColdGpu(){
+ IODeviceMemory *mem=IODeviceMemory::withRange(0x5000000,0x40000);
+ gGpu.map=mem?mem->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+ OSSafeReleaseNULL(mem);
+ gGpu.v=gGpu.map?(volatile uint32_t*)gGpu.map->getVirtualAddress():nullptr;
+ if(!gGpu.v)return false;
+ GpuIo io;CheeseburgerGpu::DrainState state{};
+ return CheeseburgerGpu::drainForTables(io,false,state);
+}
 }
 
 extern "C" int cheeseburger_gpu_smmu4k_setup(void){
@@ -134,6 +152,14 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  // Output remains 36-bit as read from this device's ID2.
  IOReturn prepared=gCtx->prepare(gTables,0,0,ApertureBytes,LeafBudget,0,0,gPoll,36);
  if(prepared!=kIOReturnSuccess){cb_smmu[20]=uint32_t(prepared);return -4;}
+ // sheng assumes its SMMU is dma-coherent; the cheeseburger vendor DTB does
+ // not advertise that property. Use the sagit non-cacheable walk and retain
+ // the kit's explicit table-page publication before each update.
+ gCtx->configHandle()->coherent_walk=0;
+ // Context programming also changes translations. Prove the cold CP and
+ // GPU VBIF are drained before the first SMMU hardware write; leave them
+ // halted until the existing start sequence owns and resumes them.
+ if(!drainColdGpu())return -8;
  // No fallback is permitted after the first hardware mutation: the kit may
  // have left a partially programmed or poisoned context/stream lease.
  swr(0x0,(srd(0x0)&~(1u|(3u<<14)|(1u<<13)))|0x1c36);
