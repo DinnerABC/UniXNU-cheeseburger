@@ -1,3 +1,13 @@
+## 2026-11-03：用户 BO 写目标的硬件翻译（batch9 构建中）
+
+- **batch8 实机（boot `0x4a508e1d`，日志 `out/p21/persistent-logs/20261103T034012Z/`，镜像 `a7ed9c9f…`，03:33:14Z 启动、03:40:04Z 自动回 Recovery）**：
+  - **稳定性验证**：`GPSVC sub=1`（用户提交真正执行）、`GPWR` 正常（`post=140000/140000 micro=178/0`）、`frames=5`、自动回 Recovery 正常。**pa_test 导致的卡死/panic 不再出现**，回退有效。
+  - `GSUB rc=-4 stage=3 seq=3 fenced=0 pf=0/1 fr=34 stg=0`：用户 IB（0x4000000）仍然超时，`fr=0x34` 等于最终 WPTR。
+  - `GSAT atos=0 par=4000000142d90b80 expect=142d90000 pte=60000142d90e43`：用户 IB IOVA 的硬件走表正确（PA `0x142d90000`）。
+  - `GIBH` 仍是合法 PM4；`GBOD` 目标页仍 `0xdeadbeef`。**移除 WCOMB 没有改变结果**，页级写失败不是 WCOMB 引起的。
+- 下一步（batch9，只读诊断，按审计建议）：服务在提交前对**每个已映射 BO**（包括从未提交过、只在 IB 里作为写目标的 `0x4001000`）做 `lookup + ATOS`，记录 iova/PA/leaf PTE/raw PAR/rc（`GBOA0/1`）。ATOS 不改页表、不敲门铃。
+- batch9 判定：若目标 `0x4001000` 的 ATOS 与 leaf 匹配 → 翻译正确，问题在“该物理页的 GPU 写”本身（XPU/页归属），下一步换分配来源或查询 XPU；若目标 ATOS 失败/不匹配 → 目标映射缺失，直接修映射。
+
 ## 2026-11-03：回退风险改动 + 单一功能变量（batch8）
 
 - **batch7 实机（镜像 `56263820…`，两次启动）**：

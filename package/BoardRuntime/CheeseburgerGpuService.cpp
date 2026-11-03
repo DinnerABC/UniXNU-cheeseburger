@@ -37,6 +37,11 @@ volatile uint32_t native_adreno_ib_head[8];
 // Up to four (slot, v0, v1, v2) rows read back from the mapped BOs after the
 // submission: the user IB's memory writes land here even without a fence.
 volatile uint32_t native_adreno_bo_dump[16];
+// Hardware translation of every mapped BO: iova, physical page, leaf PTE, raw
+// PAR and ATOS result. The write target is never in the submit list, so its
+// leaf is the one a MEM_WRITE inside the IB depends on and the one never
+// checked by the submission's own ATOS gate.
+volatile uint32_t native_adreno_bo_atos[16];
 extern volatile uint32_t native_adreno_submit_staged;
 extern volatile uint64_t native_adreno_submit_stage_gva;
 extern "C" void proc_selfname(char *, int);
@@ -50,6 +55,8 @@ int cheeseburger_gpu_engine_failed(void);
 int cheeseburger_gpu_engine_scratch(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
+int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
+int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 void pmap_set_cache_attributes(ppnum_t,unsigned int);
 }
@@ -500,6 +507,23 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
             return kIOReturnBadArgument;
         vas[i]=b.iova;dwords[i]=uint32_t(b.bytes/4);
     }
+    // Read-only hardware walk of every mapped BO (ATOS halts/resumes the
+    // micro-MMU but rings no doorbell). This covers the write target, which is
+    // not part of the submission and was never translated on hardware before.
+    { unsigned n=0;
+      for(unsigned i=0;i<MaxBo&&n<2;++i){ Bo &b=bos_[i];
+        if(!b.handle||!b.mapped)continue;
+        uint64_t pte=0,par=0;int lk=cheeseburger_gpu_smmu_lookup(b.iova,&pte);
+        int rc=lk?lk:cheeseburger_gpu_smmu_atos(b.iova,&par,nullptr);
+        volatile uint32_t *r=&native_adreno_bo_atos[n*8];
+        r[0]=uint32_t(b.iova);r[1]=uint32_t(b.physical);r[2]=uint32_t(b.physical>>32);
+        r[3]=uint32_t(pte);r[4]=uint32_t(pte>>32);r[5]=uint32_t(par);r[6]=uint32_t(par>>32);
+        r[7]=uint32_t(uint16_t(uint32_t(rc)));
+        IOLog("CB GPU engine: bo atos%d iova=%llx pa=%llx pte=%llx rc=%d par=%llx\n",
+         n,(unsigned long long)b.iova,(unsigned long long)b.physical,
+         (unsigned long long)pte,rc,(unsigned long long)par);
+        ++n; }
+      native_adreno_bo_atos[15]=n; }
     uint32_t seq=0;
     // Record the first IB from the kernel's own view. The submit itself uses
     // the client's mapping again: the staging copy has served its purpose and

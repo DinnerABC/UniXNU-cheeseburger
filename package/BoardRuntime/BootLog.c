@@ -76,6 +76,7 @@ extern volatile uint32_t native_adreno_rtmap2[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pa_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_bo_atos[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_stage_gva __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pwr[14] __attribute__((weak_import));
@@ -621,6 +622,19 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_ib_head[3],native_adreno_ib_head[4],native_adreno_ib_head[5],
       native_adreno_ib_head[6],native_adreno_ib_head[7],cb_boot_id);
     at=put(out,at,cap,ibh,sizeof ibh);
+   }
+   /* Hardware translation of every mapped BO, including the write target that
+    * is never part of the submission. */
+   if (&native_adreno_bo_atos[0] && native_adreno_bo_atos[15]) {
+    unsigned rows=native_adreno_bo_atos[15]<2?native_adreno_bo_atos[15]:2;
+    for (unsigned i=0;i<rows;++i) {
+     const volatile uint32_t *r=&native_adreno_bo_atos[i*8];
+     char boa[192];
+     snprintf(boa,sizeof boa,"GBOA%u iova=%x pa=%llx pte=%llx rc=%d par=%llx bid=%llx",
+       i,r[0],((uint64_t)r[2]<<32)|r[1],((uint64_t)r[4]<<32)|r[3],
+       (int)(int16_t)(uint16_t)r[7],((uint64_t)r[6]<<32)|r[5],cb_boot_id);
+     at=put(out,at,cap,boa,sizeof boa);
+    }
    }
    /* BO content read back by the kernel after the submission: slot and the
     * first three words, so a memory write that landed without a fence shows. */
