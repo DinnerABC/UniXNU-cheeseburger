@@ -60,6 +60,7 @@ int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
+int cheeseburger_gpu_smmu4k_active(void);
 int cheeseburger_gpu_engine_copy_test(uint64_t);
 int cheeseburger_gpu_engine_late_test(void);
 int cheeseburger_gpu_low_take(uint64_t *,IOBufferMemoryDescriptor **);
@@ -545,7 +546,10 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
       for(unsigned i=0;i<MaxBo&&n<2;++i){ Bo &b=bos_[i];
         if(!b.handle||!b.mapped)continue;
         uint64_t pte=0,par=0;int lk=cheeseburger_gpu_smmu_lookup(b.iova,&pte);
-        int rc=lk?lk:cheeseburger_gpu_smmu_atos(b.iova,&par,nullptr);
+        // When the kit owns CB0 its LiveUpdate already verified this leaf; the
+        // pinned ATOS would halt the micro-MMU and rewrite the live context
+        // right before the CP fetches. Report the mapped physical address.
+        int rc=lk?lk:(cheeseburger_gpu_smmu4k_active()?(par=pte,0):cheeseburger_gpu_smmu_atos(b.iova,&par,nullptr));
         volatile uint32_t *r=&native_adreno_bo_atos[n*8];
         r[0]=uint32_t(b.iova);r[1]=uint32_t(b.physical);r[2]=uint32_t(b.physical>>32);
         r[3]=uint32_t(pte);r[4]=uint32_t(pte>>32);r[5]=uint32_t(par);r[6]=uint32_t(par>>32);
