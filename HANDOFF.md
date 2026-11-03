@@ -1,3 +1,17 @@
+## 2026-11-03：P21-Martlet 结果（SID0 路由成功，SID2 被安全世界锁定）· P21-Nightingale
+
+- **P21-Martlet 实机（boot `0x44ab7124`，日志 `out/p21/persistent-logs/20261103T130402Z/`）**：68 轮、0 写错误，msgbuf 到 ~398 s，400 s 计时正常回 Recovery；显示 `frames=5`；4K 仍 `-8`（GPU 禁用）。
+- `route slot=0 sid=0 s2cr=0 smr=80000000`：**SID0 路由成功**（sheng bypass 序列在用户流上有效）。
+- `route slot=2 sid=2 s2cr=0 smr=0`：SID2（`gfx3d_secure`）的 SMR 写入被忽略、回读 0 → 该 secure 流由安全世界（TZ）持有，NS 不可写；随后 `-8`。
+- **sheng 对照**：上游没有 secure 流的接管案例（`SmmuBypass.h` 只覆盖普通 bypass 流）。本机 DTB `gfx3d_secure`=SID2，属于受保护内容通道；普通渲染只用 SID0。
+- **P21-Nightingale 修复**：路由循环中 SID0 必须成功；SID2 若 SMR 不可写则记录 `secure sid=2 smr=… not writable; left to firmware` 并继续，不把整个 4K 路径判失败。随后仍执行 `program → observe → visibility` 与 fault 检查。
+- 候选 `out/p21/p21-nightingale`：内核 `af6aca8629708af8fe2e44353a5dbc24c91bab2a879499fc8929d8f44289a696`、payload 展开 `8fea3351…`、固件 `d4463114…`、镜像 `out/p21/p21-nightingale/uefi/boot-p21-up1.img` SHA-256 `65e65476e96ac38cb3c29962de3fb18e436df4f70723471f08eaf5dca191203b`，gate `20261103T131227Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；13:12:53Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`bank0 sid0 routed (sid2 secure-owned)`、`cb_smmu[20]=0x4b340001`，以及用户提交 `GSUB` 是否从 `stage=3` 前进。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Martlet** | `d2f3c460…` | `ae8ddaf1…` | SID0 路由成功；SID2 secure SMR 不可写 → `-8` |
+  | 2026-11-03 | **P21-Nightingale** | `65e65476…` | `af6aca86…` | SID2 交给安全世界，仅路由 SID0；结果待回收 |
+
 ## 2026-11-03：P21-Robin 结果（FAULT 不可回写；找到 sheng bypass 案例）· P21-Martlet
 
 - **P21-Robin 实机（boot `0x44a78308`，日志 `out/p21/persistent-logs/20261103T124601Z/`）**：68 轮、0 写错误，msgbuf 到 398.7 s，400 s 计时正常回 Recovery；显示 `frames=8`；4K 仍 `-8`（GPU 禁用），`GPSVC open=0`。
