@@ -23,6 +23,8 @@ int cheeseburger_gpu_mapping_begin(void);
 int cheeseburger_gpu_mapping_end(int,int);
 IOReturn armcpu_spi_attach(uint32_t,bool,void(*)(void*),void*,uint32_t*,uint64_t*) __attribute__((weak_import));
 volatile uint64_t native_smmu_irq[6];
+// Cold-start drain samples: RBRead/RBWrite/MEControl/VBIFHalt/InterruptMask.
+volatile uint64_t native_smmu_cold[8];
 }
 
 namespace {
@@ -140,7 +142,14 @@ static bool drainColdGpu(){
  OSSafeReleaseNULL(mem);
  gGpu.v=gGpu.map?(volatile uint32_t*)gGpu.map->getVirtualAddress():nullptr;
  if(!gGpu.v)return false;
- GpuIo io;CheeseburgerGpu::DrainState state{};
+ GpuIo io;
+ native_smmu_cold[0]=io.read(CheeseburgerGpu::RBRead);
+ native_smmu_cold[1]=io.read(CheeseburgerGpu::RBWrite);
+ native_smmu_cold[2]=io.read(CheeseburgerGpu::MEControl);
+ native_smmu_cold[3]=io.read(CheeseburgerGpu::VBIFHalt);
+ native_smmu_cold[4]=io.read(CheeseburgerGpu::InterruptMask);
+ native_smmu_cold[5]=0x636f6c64u;  // "cold"
+ CheeseburgerGpu::DrainState state{};
  return CheeseburgerGpu::drainForTables(io,false,state);
 }
 }
@@ -166,8 +175,21 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
  gCtx->configHandle()->coherent_walk=0;
  // Context programming also changes translations. Prove the cold CP and
  // GPU VBIF are drained before the first SMMU hardware write; leave them
- // halted until the existing start sequence owns and resumes them.
- if(!drainColdGpu())return -8;
+ // halted until the existing start sequence owns and resumes them. Nothing in
+ // the SMMU has been written at this point, so an unverified cold drain leaves
+ // this path instead of disabling the GPU: before the probe powers it up the
+ // reads are typically all ones, which is not evidence of a hung bus.
+ if(!drainColdGpu()){
+  const bool unpowered=(native_smmu_cold[0]&native_smmu_cold[1]&native_smmu_cold[2]&
+   native_smmu_cold[3]&native_smmu_cold[4])==0xffffffffu;
+  IOLog("CB GPU SMMU4K: cold drain unverified r/w/me/vbif/im=%x/%x/%x/%x/%x unpowered=%d\n",
+   (unsigned)native_smmu_cold[0],(unsigned)native_smmu_cold[1],(unsigned)native_smmu_cold[2],
+   (unsigned)native_smmu_cold[3],(unsigned)native_smmu_cold[4],unpowered?1:0);
+  // Before the probe powers the GPU the whole register file reads all ones:
+  // there is no master to drain yet, and the pinned path also programs this
+  // SMMU before power-up. Any other unverified state leaves the kit path.
+  if(!unpowered)return -10;
+ }
  // No fallback is permitted after the first hardware mutation: the kit may
  // have left a partially programmed or poisoned context/stream lease.
  swr(0x0,(srd(0x0)&~(1u|(3u<<14)|(1u<<13)))|0x1c36);
@@ -208,6 +230,17 @@ extern "C" int cheeseburger_gpu_smmu4k_setup(void){
 
 extern "C" int cheeseburger_gpu_smmu4k_active(void){return gActive?1:0;}
 extern "C" int cheeseburger_gpu_smmu4k_faulted(void){return __atomic_load_n(&gFaulted,__ATOMIC_ACQUIRE)!=0;}
+// Leave the kit path before any SMMU write: mask the fault IRQ installed for
+// it and clear the flag, so the pinned sequence and the submission gate are
+// not affected by a handler this path no longer owns.
+extern "C" void cheeseburger_gpu_smmu4k_abort(void){
+ if(gIrqInstalled&&gGic.v){
+  gGic.v[(0x180+(ContextIntid/32)*4)/4]=1u<<(ContextIntid%32);
+  __asm__ volatile("dsb sy":::"memory");
+ }
+ gIrqInstalled=false;gPoisoned=false;
+ __atomic_store_n(&gFaulted,0,__ATOMIC_RELEASE);
+}
 
 extern "C" int cheeseburger_gpu_smmu4k_map(uint64_t iova,uint64_t pa,unsigned pages){
  if(!gActive||gPoisoned||cheeseburger_gpu_smmu4k_faulted()||!pages||(iova&4095)||(pa&4095))return -1;

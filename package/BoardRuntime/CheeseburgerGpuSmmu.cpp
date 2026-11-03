@@ -17,6 +17,7 @@
 extern "C" {
 int cheeseburger_gpu_smmu4k_setup(void);
 int cheeseburger_gpu_smmu4k_active(void);
+void cheeseburger_gpu_smmu4k_abort(void);
 int cheeseburger_gpu_smmu4k_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu4k_unmap(uint64_t,unsigned);
 volatile uint64_t cb_smmu[24];
@@ -338,6 +339,9 @@ extern "C" void cheeseburger_gpu_smmu_setup(void){
     int kr=cheeseburger_gpu_smmu4k_setup();
     if(kr==0){IOLog("CB GPU SMMU: sheng ArmSmmu4K path active\n");return;}
     if(kr==-8){cb_smmu[0]=12;IOLog("CB GPU SMMU: 4K hardware state uncertain; GPU disabled\n");return;}
+    // Failures before the first SMMU write leave the kit path; drop the IRQ it
+    // installed so the pinned sequence is not gated by a foreign fault flag.
+    cheeseburger_gpu_smmu4k_abort();
     IOLog("CB GPU SMMU: sheng ArmSmmu4K setup failed %d; using the pinned sequence\n",kr);
    } }
  reset();
