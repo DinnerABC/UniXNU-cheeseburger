@@ -1,3 +1,11 @@
+## 2026-11-03：同步来源更正（用户指出）
+
+- **官方仓库在 `/Volumes/NAS-MacData/Project/IOS/upstream/`**：`UniXNU`（框架/移植指南/通用接口）与 `UniXNU-sheng`（设备适配：GPU 服务、BO 内存、缓存一致性、提交生命周期；sheng 用 A740，硬件寄存器/固件不可套用）。
+- 已执行：`UniXNU-sheng` fast-forward 到 `7cff07e`（docs: record the latency report script）；`UniXNU` 本地 HEAD `b6ae99c`，`git pull --ff-only` 失败（与 origin 分叉），需 `git pull --rebase` 或对齐后再取。
+- **同步边界（用户要求）**：只同步 GPU **上层**（GPU service、BO 内存管理、缓存一致性、提交生命周期、前端/Metal 接口与渲染链接），**不要改动驱动部分**（A740 硬件初始化/Pwrup/CpInit/GmuConfig/Irq/SM8550 平台、以及本机 Cheeseburger 板级驱动与 A540 寄存器/固件）。
+- GPU 上层源码的实际来源：`UniXNU/Adreno740` 与 `UniXNU/AdrenoMetal`（框架文档中的固定链接，本地副本在 `.work/p21-official-framework/drivers/Adreno740`、`drivers/AdrenoMetal`、`kits/*`）。**下一步**：把这两个仓库拉到 `upstream/`（或 fetch 框架对应源），与 `package/BoardRuntime/adreno740/` 做 diff，仅同步上层文件；此前停掉的两个执行代理未留下改动，工作树干净（仅 launchd cache 三个未跟踪文件）。
+- 之前基于 `.work/p21-official-framework` 的 vendored 内容（S1/S2）保留：它们与固定版本一致；同步最新后再更新文档与构建清单。
+
 ## 2026-11-03：batch17 实机（S2 首次验证，setup -4）
 
 - boot `0x3fa116fe`，日志 `out/p21/persistent-logs/20261103T064452Z/`，镜像 `fee46f3a…`、内核 `69d26bb5…`、gate `20261103T063439Z` PASS（args 670 B）、misc 回读一致。
