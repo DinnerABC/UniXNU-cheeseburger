@@ -69,7 +69,9 @@ extern volatile uint32_t native_adreno_submit_fence_raw __attribute__((weak_impo
 extern volatile uint32_t native_adreno_submit_atos_rc __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_atos_par __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_atos_expect __attribute__((weak_import));
+extern volatile uint64_t native_adreno_submit_atos_pte __attribute__((weak_import));
 extern volatile uint32_t native_adreno_selftest[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_rtmap[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
@@ -604,10 +606,10 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    /* Hardware walk of the user IB before its doorbell: -3 is a translated
     * page that does not match the software leaf, other codes are ATOS faults. */
    if (native_adreno_submit_atos_rc || native_adreno_submit_atos_expect) {
-    char sat[120];
-    snprintf(sat,sizeof sat,"GSAT atos=%d par=%llx expect=%llx bid=%llx",
+    char sat[176];
+    snprintf(sat,sizeof sat,"GSAT atos=%d par=%llx expect=%llx pte=%llx bid=%llx",
       (int)native_adreno_submit_atos_rc,native_adreno_submit_atos_par,
-      native_adreno_submit_atos_expect,cb_boot_id);
+      native_adreno_submit_atos_expect,native_adreno_submit_atos_pte,cb_boot_id);
     at=put(out,at,cap,sat,sizeof sat);
    }
    if (&native_adreno_ib_head[0] && native_adreno_ib_head[0]) {
@@ -640,6 +642,17 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      native_adreno_selftest[7],native_adreno_selftest[2],native_adreno_selftest[3],
      native_adreno_selftest[4],native_adreno_selftest[6],cb_boot_id);
    at=put(out,at,cap,sib,sizeof sib);
+  }
+  if (&native_adreno_rtmap[0] && native_adreno_rtmap[7]) {
+   /* Buffer mapped after the CP started, written by a known IB: a failure
+    * here means runtime mappings never reached the CP's DMA. */
+   char rtm[192];
+   snprintf(rtm,sizeof rtm,"GRTM rc=%d map=%d pte=%llx tgt=%x/%x/%x iova=%x bid=%llx",
+     (int)(int16_t)(uint16_t)native_adreno_rtmap[0],(int)(int16_t)(uint16_t)native_adreno_rtmap[1],
+     ((uint64_t)native_adreno_rtmap[6]<<32)|native_adreno_rtmap[5],
+     native_adreno_rtmap[2],native_adreno_rtmap[3],native_adreno_rtmap[4],
+     native_adreno_rtmap[7],cb_boot_id);
+   at=put(out,at,cap,rtm,sizeof rtm);
   }
   if (&native_adreno_pwr[0]) {
    /* Pre-kick core power and CP liveness, sampled while the bus was healthy. */

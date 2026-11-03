@@ -35,6 +35,8 @@ volatile uint64_t native_adreno_probe_exec;
 // Kernel IB self-test in a page the CP already fetched: rc, stage and the three
 // sentinel words the IB was told to write, plus the fence page word.
 volatile uint32_t native_adreno_selftest[8];
+// Runtime-map test: rc, map rc, three target words, the leaf PTE and the IOVA.
+volatile uint32_t native_adreno_rtmap[8];
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -224,9 +226,10 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  if(!CB_GPU_FW||!fw.open(gpu_firmware_blob,gpu_firmware_size)){cb_cp[0]=1;return;}
  cb_cp[2]=fw.cpBytes(0);cb_cp[3]=fw.cpBytes(1);cb_cp[4]=fw.gpmuWords();
  if(!fw.cpBytes(0)||!fw.cpBytes(1)||!fw.gpmuWords()){cb_cp[0]=2;return;}
- static Buf ring,pm4,pfp,gpmu,fence,stage;
+ static Buf ring,pm4,pfp,gpmu,fence,stage,rt;
  if(!allocBuf(ring,8192*4)||!allocBuf(pm4,fw.cpBytes(0))||!allocBuf(pfp,fw.cpBytes(1))||
-    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)||!allocBuf(stage,16384)){cb_cp[0]=3;return;}
+    !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)||!allocBuf(stage,16384)||
+    !allocBuf(rt,4096)){cb_cp[0]=3;return;}
  if(!fw.copyCP(0,pm4.va,pm4.bytes)||!fw.copyCP(1,pfp.va,pfp.bytes)||
     !fw.gpmuCommands((uint32_t*)gpmu.va,gpmu.bytes/4)){cb_cp[0]=4;return;}
  flush_dcache((vm_offset_t)pm4.va,pm4.bytes,FALSE);
@@ -456,6 +459,39 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     }
     gFenceSeq=3;
    }
+   // Runtime-map test: a buffer mapped after the CP started, written by a
+   // known IB from the proven page. Boot-mapped targets work (above); if this
+   // faults, runtime mappings never became visible to the CP's DMA and the
+   // user window is not special.
+   {
+    const uint64_t rtGva=0x2017000ULL;
+    volatile uint32_t *fp=(volatile uint32_t*)fence.va;
+    volatile uint32_t *rib=(volatile uint32_t*)stage.va+0x200;   // byte 0x800
+    volatile uint32_t *rtt=(volatile uint32_t*)rt.va;
+    int rmap=cheeseburger_gpu_smmu_map(rtGva,rt.pa,1);
+    uint64_t rtPte=0;cheeseburger_gpu_smmu_lookup(rtGva,&rtPte);
+    rib[0]=CheeseburgerGpu::packet7(0x3d,5);rib[1]=uint32_t(rtGva);rib[2]=uint32_t(rtGva>>32);
+    rib[3]=0x5b5b0001u;rib[4]=0x5b5b0002u;rib[5]=0x5b5b0003u;
+    rtt[0]=0;rtt[1]=0;rtt[2]=0;
+    flush_dcache((vm_offset_t)rib,64,FALSE);
+    flush_dcache((vm_offset_t)rtt,64,FALSE);
+    CheeseburgerGpu::Startup<Mmio>::Ib rone{stage.gva+0x800,6};
+    CheeseburgerGpu::Record rrec;
+    int rrc=rmap?rmap:engine.submit(&rone,1,fence.gva,4,fp,rrec,ring.bytes/4,0,true);
+    __asm__ volatile("dsb sy":::"memory");
+    flush_dcache((vm_offset_t)rtt,64,FALSE);
+    __asm__ volatile("dsb sy":::"memory");
+    native_adreno_rtmap[0]=uint32_t(rrc);native_adreno_rtmap[1]=uint32_t(rmap);
+    native_adreno_rtmap[2]=rtt[0];native_adreno_rtmap[3]=rtt[1];native_adreno_rtmap[4]=rtt[2];
+    native_adreno_rtmap[5]=uint32_t(rtPte);native_adreno_rtmap[6]=uint32_t(rtPte>>32);
+    native_adreno_rtmap[7]=uint32_t(rtGva);
+    IOLog("CB GPU start: runtime map rc=%d map=%d pte=%llx tgt=%x/%x/%x\n",
+     rrc,rmap,rtPte,rtt[0],rtt[1],rtt[2]);
+    if(rrc||rtt[0]!=0x5b5b0001u){
+     cb_cp[38]=16;cb_cp[39]=uint64_t(int32_t(rrc));IOSleep(8000);return;
+    }
+    gFenceSeq=4;
+   }
    // The engine and its pages now belong to the persistent GPU service. The
    // probe worker keeps them for the boot lifetime (statics) and never frees
    // them; submission from userland is serialized by gSubmitLock.
@@ -548,6 +584,9 @@ volatile uint32_t native_adreno_submit_prefence=0, native_adreno_submit_prefence
 // on the translation instead of being inferred from a silent timeout.
 volatile uint32_t native_adreno_submit_atos_rc=0;
 volatile uint64_t native_adreno_submit_atos_par=0, native_adreno_submit_atos_expect=0;
+// Raw leaf PTE of the submitted IB, for an attribute comparison with a page
+// that is known good.
+volatile uint64_t native_adreno_submit_atos_pte=0;
 // 1 when buffer 0 was replaced by its copy in the pre-start mapped window, so
 // a failure cannot be blamed on the runtime user IOVA.
 volatile uint32_t native_adreno_submit_staged=0;
@@ -616,17 +655,18 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  // CPU-visible record, and this board must not read GPU MMIO after a failed
  // kick. Compare the raw PAR with the software leaf and fail closed before the
  // doorbell instead of ringing an unfetchable IB.
- int atosRc=0;uint64_t atosPar=0,atosExpect=0;
+ int atosRc=0;uint64_t atosPar=0,atosExpect=0,atosPte=0;
  for(unsigned i=0;i<count&&!atosRc;++i){
   uint64_t pte=0;
   if(cheeseburger_gpu_smmu_lookup(vas[i],&pte)){atosRc=-1;break;}
-  atosExpect=pte&0x0000fffffffff000ull;
+  atosPte=pte;atosExpect=pte&0x0000fffffffff000ull;
   int arc=cheeseburger_gpu_smmu_atos(vas[i],&atosPar,nullptr);
   if(!CheeseburgerGpu::atosMatches(arc,atosPar,atosExpect))atosRc=arc?arc:-3;
  }
  native_adreno_submit_atos_rc=uint32_t(atosRc);
  native_adreno_submit_atos_par=atosPar;native_adreno_submit_atos_expect=atosExpect;
- if(count)IOLog("CB GPU engine: atos rc=%d par=%llx expect=%llx\n",atosRc,atosPar,atosExpect);
+ native_adreno_submit_atos_pte=atosPte;
+ if(count)IOLog("CB GPU engine: atos rc=%d par=%llx expect=%llx pte=%llx\n",atosRc,atosPar,atosExpect,atosPte);
  if(atosRc){
   native_adreno_submit_rc=atosRc;native_adreno_submit_stage=0x81;native_adreno_submit_seq=s;
   IOLockUnlock(gSubmitLock);return atosRc;
