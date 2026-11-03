@@ -1,3 +1,15 @@
+## 2026-11-03：SMMU fault IRQ `-9` 修复 · P21-Swift
+
+- **上游检索**：`upstream/UniXNU-sheng` 与 `Adreno740` 没有 SMMU fault IRQ 实现；`ArmSmmu4KLive.h` 只要求平台自行"安装 fault handling 并确保所有 master 静止"。可对照的本机案例是触摸的 SPI attach（`CheeseburgerTouch.cpp:359`），它只检查 attach 返回码，不检查 Group 位。
+- **根因（日志实证）**：P21-Lark 的 `SIRQ count=0 attach=0 rb=a002 route=0 id=361 ready=0` —— `armcpu_spi_attach` 返回成功（rc=0）、enabled 位=1、priority=0xa0，但 **Group 位=0**；旧代码要求 `(rb&7)==3`，于是 `installFaultIrq()` 判失败并返回 `-9`。`rb=a002` 是 GIC 单安全态（GICD_CTLR.DS=1）下 IGROUPR 为 RAZ/WI 的读数，并非中断不可用（secure-only 中断的 ISENABLER 写入也会被忽略）。
+- **修复**：只要求 enabled 位（`rb&2`），并记录 `attach rc/rb/GICD_CTLR/ds/id`。提交 `35414cc`。
+- **版本代号**：**P21-Swift**。镜像 `out/p21/p21-swift/uefi/boot-p21-up1.img` SHA-256 `fd8a987971575e0ade78844e6ec480630fb29e4c9c87ea40e675c53a9fc833bf`；内核 `b96bb4aef05fa9f924b03fa2556b9560abb0a5f9b4af782ddf5d25b70ec2d226`；payload 展开 `b8a4d6c2…`；固件 `7a0d590f…`；gate `20261103T114608Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；11:46:27Z 单次 `fastboot boot` Sending/Booting OKAY。
+- **验证点**：`SIRQ ready=1`、`CB GPU SMMU IRQ: attach rc=0 rb=… ctlr=… ds=1`；随后 `drainColdGpu()` 若在冷启动返回失败会走 `-8`（注意 `-8` 在分发中被视为硬件状态不确定、**不回退**，GPU 会被禁用）；若通过应出现 `CB GPU SMMU4K: bank0 streams sid0/sid2 attached` 与 `cb_smmu[20]=0x4b340001`，再观察用户提交 `GSUB`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Swift** | `fd8a9879…` | `b96bb4ae…` | 修复 SMMU fault IRQ 的 `-9`（DS=1 回读），让 4K 路径真正接管；结果待回收 |
+
 ## 2026-11-03：进入系统（代号规则启用）· P21-Lark
 
 - **用户确认已进入系统**：本次运行的是当前最新 HEAD（sheng 完整同步 + SMMU4K + SMMU 故障 IRQ/停流 + panic-hold），**仅移除了 batch15（r15）引入的诊断**：`cheeseburger_gpu_smmu_dump`、`cheeseburger_gpu_engine_pool_late_test`、`submit()` 内两处调用、BootLog 的 GPLT/GSMM 行（提交 `51f76be`）。
