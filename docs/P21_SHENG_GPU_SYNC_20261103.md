@@ -51,7 +51,7 @@ package/BoardRuntime/sheng/
 └── tools/                     # GPU/Metal 构建、审计、探针脚本（只 vendor）
 ```
 
-`package/BoardRuntime/sheng/` 共 367 个文件（不含生成物）：Adreno740 92、kits 81、AdrenoMetal 122、tools 102。旧 `package/BoardRuntime/adreno740/` 已删除。
+`package/BoardRuntime/sheng/` 共 397 个文件（不含生成物）：Adreno740 92、kits 81、AdrenoMetal 122、tools 102。旧 `package/BoardRuntime/adreno740/` 已删除。
 
 ## 4. 构建集成改动
 
@@ -527,7 +527,7 @@ Adreno740 源文件内部的 include 是扁平名称（`ArmSmmu4KStreams.h`、`A
 
 ## 8. 审计清单
 
-1. **旧文件一致性**：删除 `package/BoardRuntime/adreno740/` 前，逐文件与 `sheng/Adreno740` 及 `sheng/kits/{ArmSmmu4K,AdrenoPM4}` 比较；57 个旧文件全部字节一致；kit 目录只有 `LICENSE`、`README.md`、`AGENTS.md` 三种文档是新增文件。
+1. **旧文件一致性**：删除 `package/BoardRuntime/adreno740/` 前，逐文件与 `sheng/Adreno740` 及 `sheng/kits/{ArmSmmu4K,AdrenoPM4}` 比较；55 个旧文件全部字节一致；kit 目录只有 `LICENSE`、`README.md`、`AGENTS.md` 三种文档是新增文件。
 2. **旧路径清零**：`package/BoardRuntime` 下已无 `adreno740` 引用；`scripts/` 下无 `adreno740` 引用。`sheng/tools/` 内的 `build/adreno740` 字样是上游脚本自己的输出目录名，不是本仓库 include 路径，脚本未执行。
 3. **A540 文件差异**：`git diff --stat` 显示板级源码只有 `CheeseburgerGpuSmmu4K.cpp` 的 4 行 include 变化（4 insertions / 4 deletions）；其他 `Cheeseburger*`、`BootLog.c` 等无改动。
 4. **编译覆盖**：`runtime-build/commands.json` 中来自 `package/BoardRuntime/sheng/` 的源文件恰好 22 个，与第 4.1 节清单一致；22 个编译日志无 `error:`，共 92 条 warning（provider 记录中的 C99 designator、字段顺序、类型转换等上游风格告警，`-Wno-error` 下不阻断）。
