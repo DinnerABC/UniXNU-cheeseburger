@@ -1,3 +1,16 @@
+## 2026-11-03：P21-Kite 结果（用户映射+提交打通，ATOS 门禁用错表）· P21-Finch
+
+- **P21-Kite 实机（boot `0x4e145190`，日志 `out/p21/persistent-logs/20261103T135359Z/`）**：66 轮、0 写错误，msgbuf 到 ~395 s，400 s 计时正常回 Recovery；显示 `frames=5`。
+- **用户态映射与提交首次打通**：`GPSVC open=2 bo=2 map=2 pages=2 unmap=2 sub=1 calls=14`（`GPSVC map=2`、`sub=1`）。
+- 提交仍失败：`GSUB rc=-1 stage=129`（0x81）。日志 `bo atos0/1 ... pte=0 rc=-1 par=0`、`atos rc=-1`：提交前的预检 `cheeseburger_gpu_smmu_lookup()` 仍走 **pinned 软件表**，4K 激活时该表为空，直接判失败，ATOS 未执行。
+- **P21-Finch 修复**：新增 `cheeseburger_gpu_smmu4k_lookup()`（按 kit 的 `gRanges` 软件镜像查 IOVA→PA）；`cheeseburger_gpu_smmu_lookup()` 在 4K 激活时转调它（PTE 位置放 PA 供诊断），随后 ATOS 仍做硬件校验。同时修正 `ArmSmmu4KRange` 字段名（`physical` 而非 `pa`）。
+- 候选 `out/p21/p21-finch`：内核 `c3c356c5c9fdd132d5bdbd3d451b51ddd678d045202e956e0315ee017b67adb9`、payload 展开 `292ed0f5…`、固件 `8a6ec4b5…`、镜像 `out/p21/p21-finch/uefi/boot-p21-up1.img` SHA-256 `dd9a8267657dc4832dc9da59e0f3e92f44c27fadb4cf5608c2097a6caa278f18`，gate `20261103T140402Z` PASS（670 B）。misc 首块仅 `boot-recovery`、回读一致；14:04:22Z 单次 `fastboot boot` Sending/Booting OKAY。验证点：`GPSVC sub=1` 下 `GSUB` 是否越过 stage=129（是否出现 fence 或新 stage）。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-03 | **P21-Kite** | `99da8f55…` | `4aa05439…` | 空环 quiesced；用户 map=2/sub=1 打通，ATOS 预检用错表 → stage=129 |
+  | 2026-11-03 | **P21-Finch** | `dd9a8267…` | `c3c356c5…` | 4K 下 lookup 走 kit 映射；让提交预检通过并观察 fence；结果待回收 |
+
 ## 2026-11-03：P21-Osprey 结果（4K 下 probe 全通，BO 映射被运行时排空拦截）· P21-Kite
 
 - **P21-Osprey 实机（boot `0x488980ca`，日志 `out/p21/persistent-logs/20261103T133820Z/`）**：67 轮、0 写错误，msgbuf 到 ~395 s，400 s 计时正常回 Recovery；显示 `frames=5`。
