@@ -1,3 +1,21 @@
+## 2026-11-04：P21-Snipe 结果（用户态提交首次走通：空 IB 完成 + fence/wait/释放全链路成功）· 新基线 = P21-Snipe
+
+- **改动（提交 `d1f0e3f` 前为 `7e6299b`）**：客户端第一个 buffer 不含任何非零 dword 时，整笔提交在 CPU 上完成（写 fence 字、推进序号、返回可等待的 fence），**不踢 ring**——P21-Rook 证明本 CP 会把全 0 的 IB 取到环尾却永远不写 fence，之后所有提交都会被 fail-closed 拒绝。
+- **P21-Snipe 实机（boot `0x477677a7`，日志 `out/p21/persistent-logs/20261104T100541Z/`，400 s 自动回 Recovery，`frames=5`）**：
+  - `keepalive0 rc=0`、`keepalive1 rc=0`（发布后 CP 存活）；门禁 `A rc=0 / B rc=0 / C rc=0`（ring 内联写、`0x3f` 取指、CP 读客户端页全部成立）。
+  - `empty IB seq=8 words=12; completed without a kick`；`GSUB rc=0 stage=0x21 fenced=1 seq=8`。
+  - 用户态全链路：`GPSVC open=2 close=2 bo=2 **map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0** calls=16`——**提交返回成功、fence 被等待成功、两个 BO 正常解除映射并释放**（历史上第一次没有 `err=5`）。
+  - 本轮 `sub=1`：客户端只提交了一笔空 IB，随后关闭；`backboardd` 以观察者身份打开（type=1, gate=0）。
+- **结论（实机证据）**：GPU 内核提交后端与用户态 ABI 的提交/fence/等待/BO 生命周期在真机上已经完整走通一次。剩余问题在**上层命令内容**：客户端递交的 IB 是 12 dword 全 0，说明它把命令写在别处（或尚未准备命令队列），而不是我们分配的 BO。
+- **下一步**：
+  1. 对照 sheng `NativeAdrenoClient`/`NativeAdrenoVm` 与 Apple IOGPU 的 buffer 协商，确认 `NativeAdrenoAbiSubmitBuffer` 的 `handle/iova/bytes` 是否被上层填对，以及命令是否在 IOGPU 的命令队列/共享内存里（`clientMemoryForType` 目前只返回 BO 描述符）。
+  2. 让客户端在空提交之后继续工作：观察 `GPSVC calls` 是否出现第二笔带内容的提交；若一直为空，需要在加速器的 `query`/`deviceInfo` 上补齐上游字段（GMEM、UBWC、通道数等），让 Apple 侧 GPU 栈进入真正的渲染初始化。
+  3. 真正的像素验证仍待 GPU 渲染路径；`frames=5` 仍是 CPU 显示，不能当作 GPU 合成成功。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Snipe** | `055597c4…` | `4682af91…` | 空 IB 在 CPU 完成；用户态 `sub=1 fence=1 wait=1 err=0`、BO map/unmap/free 全部成功；可启动、自动返回 |
+
 ## 2026-11-04：P21-Rook 结果（找到并修掉停 CP 的根因；内核 IB 全链路通过，客户端 IB 内容为全 0）· 新基线 = P21-Rook
 
 - **上电时序根因（提交 `f4bb1c7` 之前为 `9ea90a5`+`d52ea88` 诊断）**：探针在 ZAP 之后调用 `powerCore()`，此时 RBCCU/SP 状态位读回为 0（`after-zap rbccu=778801/1 sp=778001/1`），于是它向 `0xa887/0xa881` 写入 **0x778000 上电命令**——而这发生在 CP 已经启动、正在取指的时候。P21-Quail 的握手 keep-alive 把这一点钉死：`keepalive0 rc=0`（114.627 s），紧接着该写入，`keepalive1 rc=-4`（117.158 s），随后 `Unclassified kernel abort (fault_code=0x10)`。
