@@ -1,3 +1,18 @@
+## 2026-11-04：P21-Tanager 结果（GPU 首次把像素写进固件扫描线，CPU 从 DRAM 回读到正确颜色）
+
+- **改动（提交 `9c1e0f4` 之后）**：重做扫描线填充，按 sheng `GpuScanoutPresenter` 的结构——扫描线只映射一次，且**在提交锁之外**：`cheeseburger_gpu_engine_submit()` 入口先调 `fillPrepare()`（`PE_current_console()` 取扫描线 → 4 条横条所在页映射到 GPU IOVA `0x2040000+i*0x10000`），再取 `gSubmitLock` 做门禁与 ring 提交。P21-Skua 的自锁（在持锁路径里调 `cheeseburger_gpu_smmu_map`）不再存在。
+- **P21-Tanager 实机（boot `0x48fd0738`，日志 `out/p21/persistent-logs/20261104T124153Z/`，400 s 自动回 Recovery）**：
+  - `keepalive0/1 rc=0`；门禁 `A/B/C rc=0`（`kview=703d8003`）。
+  - **`CB GPU fill rc=0 bars=4 color=ff00ff00 px=ff00ff00/ff00ff00/ff00ff00/ff00ff00`** —— 4 条 448 像素宽、1 行高的绿条由 CP `CP_MEM_WRITE` 写进固件扫描缓冲，fence 通过后 CPU 用非缓存映射从 DRAM 逐个条带回读，**四个采样点都等于写入的颜色**。
+  - 用户态链路不受影响：`GPSVC sub=1 fence=1 wait=1 err=0`、`GBOD 1:adc0de1/feed0002/600d0003`、客户端 `v4`。
+  - `DISPLAY frames=5`：填充发生在 144.9 s，此前的 5 帧 CPU 呈现已完成，之后没有再刷新，因此条带不会被 CPU 覆盖。
+- **仍待确认（只能由屏幕确认）**：面板上是否真的显示出这 4 条绿条。回读只证明“GPU 写进了固件扫描缓冲”，不证明扫描控制器正在扫描这块内存；若屏幕无变化，下一步查显示控制器实际扫描地址（MDP/GOP 基址）是否与 `PE_current_console()` 一致。
+- **下一步**：屏幕确认后，把条带换成真正的 2D 填充/图案并记录哈希；随后按计划接 IOSurface 与 Metal 前端；sheng 的每次提交 TLBIALL 仍待单独恢复复测。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Tanager** | `ec700f4c…` | `8eddfbf1…` | 锁外映射 + 4 条扫描线填充；**GPU 写入、CPU 回读颜色一致（ff00ff00×4）** |
+
 ## 2026-11-04：P21-Vesper / P21-Skua 结果（GPU 填充扫描线；自锁死导致 panic，已回退）· 基线回到 P21-Linnet
 
 - **目标**：合并 sheng `GpuScanoutPresenter` 的思路——让 GPU 把像素写进固件正在扫描的帧缓冲，做出第一帧“GPU 产出、屏幕可见”的画面。实现为 `cheeseburger-gpu-fill=<argb>`：门禁通过后一次性把 8 条横条用 `CP_MEM_WRITE` 写进扫描缓冲、fence、再从 DRAM 回读每个条带的一个像素。
