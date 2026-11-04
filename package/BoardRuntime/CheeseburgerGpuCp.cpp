@@ -51,7 +51,7 @@ volatile uint32_t native_adreno_copy_test[8];
 // Staged gate results: A/B/C rc and engine stage, each stage's three
 // sentinels, stage C's four CP-read words and the kernel's view of the first
 // client IB word.
-volatile uint32_t native_adreno_gate[18];
+volatile uint32_t native_adreno_gate[22];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
 // Low pool: count and first page, filled at probe time.
@@ -73,6 +73,12 @@ int cheeseburger_gpu_smmu_resume_micro(void);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
+namespace CheeseburgerGpu { struct SubmitRecord; }
+static int keepAliveInline(uint32_t,CheeseburgerGpu::SubmitRecord &);
+// Set once a submission, drain or table update cannot be proven safe. Defined
+// here because the probe's handoff keep-alive can fail before the engine's
+// submission entry points are reached.
+static bool gEngineSubmitFailed=false;
 namespace {
 struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
 static bool mapw(W &w,uint64_t pa,unsigned size){
@@ -186,16 +192,22 @@ struct Mmio {
 // RBBM register block stays readable but the micro engine cannot run, which is
 // exactly a halted CP whose ring cursor never moves. The writes are skipped
 // when the domain already reports on.
-static void powerCore(W &gp, volatile uint64_t *out){
+//
+// The power-up command may only be issued while the CP is stopped. After ZAP
+// the status bit reads clear again (P21-Quail: rbccu=778801/1 at 114.629 s),
+// and re-issuing 0x778000 with the CP running stopped it one millisecond later
+// (keepalive0 passed, keepalive1 timed out, then an unclassified kernel abort).
+// Every call after the CP is started is therefore read-only.
+static void powerCore(W &gp, volatile uint64_t *out,bool allowWrite){
  uint32_t rb=rd(gp,0xa88d*4),sp=rd(gp,0xa88b*4);
  out[0]=rd(gp,0xa887*4);out[1]=rb;out[2]=rd(gp,0xa881*4);out[3]=sp;
- if(!(rb&(1u<<20))){
+ if(allowWrite&&!(rb&(1u<<20))){
   if(&cheeseburger_bootlog_step)cheeseburger_bootlog_step("power");
   __asm__ volatile("dsb sy":::"memory");gp.v[0xa887]=0x778000;__asm__ volatile("dsb sy":::"memory");
   IODelay(3);
   for(unsigned i=0;i<100&&!(rd(gp,0xa88d*4)&(1u<<20));++i)IODelay(1);
  }
- if(!(sp&(1u<<20))){
+ if(allowWrite&&!(sp&(1u<<20))){
   __asm__ volatile("dsb sy":::"memory");gp.v[0xa881]=0x778000;__asm__ volatile("dsb sy":::"memory");
   for(unsigned i=0;i<100&&!(rd(gp,0xa88b*4)&(1u<<20));++i)IODelay(1);
  }
@@ -376,7 +388,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   }
   // Android a5xx_pm_resume cores first; without them the CP cannot execute
   // even though every RBBM read succeeds. Log before the first write.
-  powerCore(gp,&cb_cp[83]);
+  powerCore(gp,&cb_cp[83],true);   // before reset: the only call allowed to write
   IOLog("CB GPU power: before rbccu=%x/%x sp=%x/%x after=%x/%x\n",
    uint32_t(cb_cp[83]),uint32_t(cb_cp[84]),uint32_t(cb_cp[85]),uint32_t(cb_cp[86]),
    uint32_t(cb_cp[87]),uint32_t(cb_cp[88]));
@@ -487,15 +499,36 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     IOLog("CB GPU engine: adopt failed; user submits stay refused\n");
     cb_cp[97]=1;
    }
+   // Ring keep-alive at handoff: the gate's first stage (a CP_MEM_WRITE
+   // submitted in the ring) re-run where the probe's own fences just finished.
+   // Running it again after the service publishes attributes a ring that stops
+   // accepting work to the probe, the publish path or the client's map instead
+   // of assuming the last one.
+   if(gEngine540&&gEngine540->ready()){
+    CheeseburgerGpu::SubmitRecord ka;
+    const int k0=keepAliveInline(gFenceSeq+1,ka);
+    native_adreno_gate[18]=uint32_t(k0);native_adreno_gate[19]=ka.stage;
+    IOLog("CB GPU engine: keepalive0 rc=%d stage=%u fr=%x\n",k0,ka.stage,ka.fence);
+    if(k0==0)gFenceSeq=gFenceSeq+1;else gEngineSubmitFailed=true;
+   }
    unsigned svc=0;
    if(PE_parse_boot_argn("cheeseburger-gpu-service",&svc,sizeof svc)&&svc==1){
     int prc=cheeseburger_gpu_service_publish();
     cb_cp[96]=uint64_t(int32_t(prc));
     IOLog("CB GPU service: publish rc=%d\n",prc);
    }
-   {uint64_t after[6];powerCore(gp,after);cb_cp[87]=after[4];cb_cp[88]=after[5];
+   {uint64_t after[6];powerCore(gp,after,false);cb_cp[87]=after[4];cb_cp[88]=after[5];
     IOLog("CB GPU power: after-zap rbccu=%x/%x sp=%x/%x\n",
      uint32_t(after[0]),uint32_t(after[1]),uint32_t(after[2]),uint32_t(after[3]));}
+   // Second keep-alive: after the accelerator is published and Apple's client
+   // stack has had its chance to touch the device, before any BO exists.
+   if(gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
+    CheeseburgerGpu::SubmitRecord kb;
+    const int k1=keepAliveInline(gFenceSeq+1,kb);
+    native_adreno_gate[20]=uint32_t(k1);native_adreno_gate[21]=kb.stage;
+    IOLog("CB GPU engine: keepalive1 rc=%d stage=%u fr=%x\n",k1,kb.stage,kb.fence);
+    if(k1==0)gFenceSeq=gFenceSeq+1;else gEngineSubmitFailed=true;
+   }
    cb_cp[48]=m.read(CheeseburgerGpu::TrustControl);
    cb_cp[60]=m.read(CheeseburgerGpu::MEControl);cb_cp[61]=m.read(CheeseburgerGpu::VBIFHalted);
    cb_cp[105]=m.read(CheeseburgerGpu::RBWrite);
@@ -555,7 +588,6 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
 // way a user request reaches the CP. Each submit waits for its own fence, so
 // the ring is idle when it wraps and a later BO cannot be freed under an
 // in-flight fetch.
-static bool gEngineSubmitFailed=false;
 // Internal result of the last failed user submission. The persistent log and
 // the heartbeat carry these so a wedged msgbuf does not erase them.
 volatile int32_t native_adreno_submit_rc=-1;
@@ -588,7 +620,7 @@ volatile uint32_t native_adreno_pwr[14];
 extern "C" int cheeseburger_gpu_pre_kick(void){
  if(!gMmio||!gMmio->v)return -1;
  W gp;gp.v=gMmio->v;
- uint64_t out[6]={0};powerCore(gp,out);
+ uint64_t out[6]={0};powerCore(gp,out,false);
  native_adreno_pwr[0]=uint32_t(out[0]);native_adreno_pwr[1]=uint32_t(out[1]);
  native_adreno_pwr[2]=uint32_t(out[2]);native_adreno_pwr[3]=uint32_t(out[3]);
  native_adreno_pwr[4]=uint32_t(out[4]);native_adreno_pwr[5]=uint32_t(out[5]);
@@ -600,9 +632,12 @@ extern "C" int cheeseburger_gpu_pre_kick(void){
  native_adreno_pwr[11]=gMmio->read(CheeseburgerGpu::GPMUError);
  native_adreno_pwr[12]=gMmio->read(CheeseburgerGpu::CPInterruptStatus);
  native_adreno_pwr[13]=gMmio->read(CheeseburgerGpu::InterruptStatus);
- // Do not ring a CP with a collapsed core or a halted/unreadable micro-MMU.
- if(out[4]==0xffffffffu||out[5]==0xffffffffu||
-    !(out[4]&(1u<<20))||!(out[5]&(1u<<20)))return -2;
+ // The domain-up request bits may only be written while the CP is stopped, so
+ // a clear status bit here is recorded, not repaired. Refuse only on an
+ // unreadable bus, a latched CP fault or a micro-MMU that cannot resume; the
+ // submission's own fence is the authority on whether the CP ran.
+ if(out[4]==0xffffffffu||out[5]==0xffffffffu||native_adreno_pwr[12]==0xffffffffu)return -2;
+ if(native_adreno_pwr[12]&0x3f)return -4;
  if((int32_t)native_adreno_pwr[9]<0)return -3;
  return 0;
 }
@@ -704,6 +739,25 @@ extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor *
 // until all three pass. After a failure only the fence page and the CPU-owned
 // scratch page are read: no GPU register is sampled (boot 0x47806558 hung
 // there).
+// The gate's first stage used as a handoff keep-alive: one CP_MEM_WRITE
+// submitted in the ring, no indirect buffer, its own fence and its own target
+// so a later run cannot be read as an earlier one's result.
+static int keepAliveInline(uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec){
+ if(!gScratchVA||!gScratchGva||!gEngine540)return -1;
+ volatile uint32_t *t=gScratchVA+0x1f0;      // byte 0x7c0
+ const uint32_t sent[2]={0xc0de0001u,0xc0de0002u};
+ uint32_t words[16];
+ CheeseburgerGpu::Encoder540 e(words,16);
+ if(!e.memWrite(gScratchGva+0x7c0,sent,2))return -1;
+ t[0]=0;t[1]=0;
+ flush_dcache((vm_offset_t)t,8,FALSE);
+ int rc=gEngine540->submit(nullptr,0,sequence,1000000,rec,0,nullptr,words,e.size());
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)t,8,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ if(rc)return rc;
+ return (t[0]==sent[0]&&t[1]==sent[1])?0:-2;
+}
 static int gateSubmit(uint32_t sequence,bool useIb,uint32_t ibDwords,
  const uint32_t *inlineWords,uint32_t inlineCount,CheeseburgerGpu::SubmitRecord &rec){
  CheeseburgerGpu::Ib540 one={gScratchGva+0x200,ibDwords};
