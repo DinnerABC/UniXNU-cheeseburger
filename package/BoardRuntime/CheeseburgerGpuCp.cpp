@@ -810,10 +810,9 @@ static int preflightUserPage(uint64_t userIova,uint32_t sequence,CheeseburgerGpu
  // C: the CP reads the client's page. A translated page reads back the same
  // words the kernel maps; any other value is the page or its translation.
  { CheeseburgerGpu::Encoder540 e((uint32_t*)ib,64);
-   bool ok=true;
-   for(unsigned i=0;i<4&&ok;++i)
-    ok=e.memToMem(gScratchGva+0x780+4ull*i,userIova+4ull*i);
-   if(!ok)return -1;
+   // The A540 copy path: CP_MEM_TO_MEM copies sixteen dwords of the client's
+   // page into the kernel's scratch page, one GPU copy per dword.
+   if(!e.copy(gScratchGva+0x780,userIova,16))return -1;
    flush_dcache((vm_offset_t)ib,256,FALSE);
    rcc=gateSubmit(sequence,true,e.size(),nullptr,0,rec);
    __asm__ volatile("dsb sy":::"memory");

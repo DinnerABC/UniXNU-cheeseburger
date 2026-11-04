@@ -181,6 +181,12 @@ int main() {
         Encoder540 m2(w, 64);
         check(m2.memWrite(0x3000, sent, 2), "memwrite");
         check(w[0] == packet7(0x3d, 4) && w[1] == 0x3000 && w[3] == 0x11, "memwrite words");
+        Encoder540 cp(w, 64);
+        check(cp.copy(0x4000, 0x8000, 2), "copy encode");
+        check(w[0] == packet7(0x73, 5) && w[1] == (1u << 30) && w[4] == 0x8000, "copy first word");
+        check(w[6] == packet7(0x73, 5) && w[10] == 0x8004, "copy second word");
+        Encoder540 cpx(w, 64);
+        check(!cpx.copy(0x4000, 0x8000, 513), "copy bounded");
         Encoder540 e3(w, 64);
         check(e3.fence(FenceBase, 9), "fence encode");
         check(w[1] == (4u | (1u << 31)) && w[2] == uint32_t(FenceBase + 4) && w[4] == 9, "fence words");

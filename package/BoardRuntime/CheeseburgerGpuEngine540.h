@@ -81,6 +81,15 @@ public:
             uint32_t(source), uint32_t(source >> 32)};
         return packet(0x73, d, 5);
     }
+    // A5xx bulk copy: one CP_MEM_TO_MEM per dword (the engine has no memcpy
+    // packet), so a caller copies what fits in one IB. This is the A540 copy
+    // path — data movement by the GPU, not a register or memory-fill write.
+    bool copy(uint64_t destination, uint64_t source, uint32_t dwords) {
+        if (!dwords || dwords > 512) return false;
+        for (uint32_t i = 0; i < dwords; ++i)
+            if (!memToMem(destination + 4ull * i, source + 4ull * i)) return false;
+        return true;
+    }
     // CACHE_FLUSH_TS with IRQ. The timestamp lives at fence+4; +0 is the CP's
     // RPTR shadow (sheng NativeAdrenoRing::emitFence).
     bool fence(uint64_t fenceVA, uint32_t sequence) {
