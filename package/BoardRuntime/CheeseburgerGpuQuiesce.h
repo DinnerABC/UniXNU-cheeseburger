@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // A540 CP/VBIF drain sequence follows sagit AdrenoSubmit::idlePowerTransition.
+// This SoC's VBIF_HALT (0x3080) and VBIF_HALTED (0x3081) carry a per-client
+// status in bits 19:16 and the request/ack in bits 3:0: an idle, unrequested
+// VBIF reads 0xf0000, not 0 (P21-Nighthawk refused the client's map because a
+// whole-register test can never pass here). Only bits 3:0 are the request.
 #pragma once
 #include "CheeseburgerGpuStart.h"
 namespace CheeseburgerGpu {
 struct DrainState { uint32_t mask=0, cursor=0; bool resume=false; };
+static inline bool vbifHaltRequested(uint32_t v) { return (v & 0xfu) != 0; }
 template<class IO> bool drainForTables(IO &io, bool running, DrainState &s) {
  const uint32_t r=io.read(RBRead),w=io.read(RBWrite),me=io.read(MEControl);
  const uint32_t vb=io.read(VBIFHalt),mask=io.read(InterruptMask);
  if(r==UINT32_MAX||w==UINT32_MAX||me==UINT32_MAX||vb==UINT32_MAX||mask==UINT32_MAX||r!=w)return false;
- if(running ? (me!=0||vb!=0) : ((me&Halt)!=Halt))return false;
+ if(running ? (me!=0||vbifHaltRequested(vb)) : ((me&Halt)!=Halt))return false;
  s.mask=mask;s.cursor=w;s.resume=running;
  io.write(InterruptMask,0);io.write(MEControl,Halt);io.write(VBIFHalt,15);
  bool ack=false;
@@ -27,7 +32,7 @@ template<class IO> bool drainForTables(IO &io, bool running, DrainState &s) {
 template<class IO> bool resumeAfterTables(IO &io,const DrainState &s) {
  if(!s.resume)return true;
  io.publish();io.write(VBIFHalt,0);io.write(MEControl,0);
- if(io.read(MEControl)!=0||io.read(VBIFHalt)!=0||io.read(RBRead)!=s.cursor||io.read(RBWrite)!=s.cursor)return false;
+ if(io.read(MEControl)!=0||vbifHaltRequested(io.read(VBIFHalt))||io.read(RBRead)!=s.cursor||io.read(RBWrite)!=s.cursor)return false;
  io.write(InterruptMask,s.mask);return true;
 }
 }

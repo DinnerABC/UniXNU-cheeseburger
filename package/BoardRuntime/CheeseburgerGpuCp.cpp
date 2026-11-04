@@ -920,7 +920,7 @@ extern "C" int cheeseburger_gpu_mapping_begin(void){
  if(gEngine){
   const uint32_t r=gMmio->read(CheeseburgerGpu::RBRead),w=gMmio->read(CheeseburgerGpu::RBWrite);
   const uint32_t me=gMmio->read(CheeseburgerGpu::MEControl),vb=gMmio->read(CheeseburgerGpu::VBIFHalt);
-  const bool quiescible=(r==w)&&r!=0xffffffffu&&me==0&&vb==0;
+  const bool quiescible=(r==w)&&r!=0xffffffffu&&me==0&&!CheeseburgerGpu::vbifHaltRequested(vb);
   native_adreno_gate[17]=uint32_t(quiescible)|(running?2u:0u)|((r==w)?4u:0u);
   if(!quiescible){
    // Not provably idle: a table update now could race the CP's fetcher.
