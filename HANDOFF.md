@@ -1,3 +1,26 @@
+## 2026-11-04：P21-Linnet 结果（用户态 GPU 提交全链路成功：CP 执行客户端 IB 并写回目标 BO）· 新基线 = P21-Linnet
+
+- **改动链**：
+  - `7e6299b`（P21-Rook）：上电命令只允许在 CP 停止时写入 —— ZAP 之后重复写 `0x778000` 会在 1 ms 内停住 CP（Quail keep-alive 实测）。
+  - `4fe4e71`（P21-Snipe）：空 IB 在 CPU 上完成，不踢 ring。
+  - `b0e4a3f`（P21-Talon）：BO 增加自己的内核视图 `bo.cpu`（低池 BO 只是 32 KiB 块中的一页，`getBytesNoCopy()` 指向块首）。
+  - `2b6b0d1`（P21-Vireo）：视图回退不再拒绝分配，并记录被拒的分配参数。
+  - **`0dc7a0e`（P21-Linnet）**：池内页偏移按**块长度**判定（0x7000 偏移合法，之前被 8 KiB 上限误判）。
+- **P21-Linnet 实机（boot `0x477aef4e`，日志 `out/p21/persistent-logs/20261104T110602Z/`，400 s 自动回 Recovery）**：
+  - `keepalive0 rc=0`、`keepalive1 rc=0`；门禁 `A rc=0`、`B rc=0`、`C rc=0`（`cp=703d8003/4001000 kview=703d8003` —— CP 与内核看到同一页）。
+  - 用户态：`GPSVC open=2 close=2 bo=2 map=2 unmap=2 free=2 **sub=1 fence=1 wait=1 err=0** calls=16`。
+  - **GPU 实际写回**：`GBOD n=2 0:703d8003/4001000/0 1:**adc0de1/feed0002/600d0003**` —— 客户端 IB（3 条 `0x3d CP_MEM_WRITE`）被 A540 执行，目标 BO 里正是它要求写的三个值。
+  - 客户端自检：`GPSTXT P21 plugin done s12 e0 **v4** ta572c130`（4/4 校验通过、无错误）。
+- **结论（实机证据，逐项）**：GPU 内核启动与服务发布 ✔；用户态 `IOServiceOpen` ✔；两个 BO 分配与映射 ✔；客户端命令经 A540 CP 执行 ✔；fence 完成并被等待 ✔；CPU 从目标 BO 读回预期值 ✔；BO 解除映射与释放 ✔。仍属 CPU 软件显示（`frames=5`），**GPU 渲染/Metal/IOSurface 尚未开始**。
+- **下一步**：
+  1. 在同一后端上做最小像素填充：用 `0x3d/0x46` 之外的 A5xx 绘制包（或先做 `CP_MEM_TO_MEM` + 校验）验证 RB/MRT 通路，再交给 IOSurface。
+  2. 让 Metal 前端产出真实命令流：现在验证链路用的是 `adrenoprobed` 的内核可证明 IB；下一步需要 `NativeAdrenoMetal` 插件提交带渲染命令的 BO，并用同一 GBOD/GPSTXT 机制校验。
+  3. 恢复 sheng `NativeAdrenoVm::invalidateTlb` 的每次提交 TLBIALL（现在提交链路可用，可单独加回并复测）。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Linnet** | `d4960599…` | `1282e4a4…` | 池内页视图按块长度判定；**用户态提交全链路成功**：CP 写入 `adc0de1/feed0002/600d0003`，客户端 4/4 校验通过 |
+
 ## 2026-11-04：P21-Snipe 结果（用户态提交首次走通：空 IB 完成 + fence/wait/释放全链路成功）· 新基线 = P21-Snipe
 
 - **改动（提交 `d1f0e3f` 前为 `7e6299b`）**：客户端第一个 buffer 不含任何非零 dword 时，整笔提交在 CPU 上完成（写 fence 字、推进序号、返回可等待的 fence），**不踢 ring**——P21-Rook 证明本 CP 会把全 0 的 IB 取到环尾却永远不写 fence，之后所有提交都会被 fail-closed 拒绝。
