@@ -890,6 +890,31 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   }
   s=gFenceSeq+1;
  }
+ // An empty command buffer cannot execute anything, and this CP does not run a
+ // stream whose first IB is all zero: P21-Rook fetched a 12-dword zero IB to the
+ // end of the ring and never wrote the fence. A submission with no words is
+ // completed on the CPU instead of being kicked, which is what an empty buffer
+ // means; the client still gets a fence it can wait on, and the ring stays
+ // usable for the next, real submission.
+ { const volatile uint32_t *w=cb_inline_ib;
+   const unsigned n=cb_inline_dwords;
+   if(w&&n){
+    const unsigned lim=n<64?n:64;
+    bool any=false;
+    for(unsigned i=0;i<lim&&!any;++i)if(w[i])any=true;
+    if(!any){
+     gFence[1]=s;
+     __asm__ volatile("dsb sy":::"memory");
+     flush_dcache((vm_offset_t)gFence,8,FALSE);
+     __asm__ volatile("dsb sy":::"memory");
+     gFenceSeq=s;*seq=s;
+     native_adreno_submit_rc=0;native_adreno_submit_stage=0x21;native_adreno_submit_seq=s;
+     native_adreno_submit_fenced=1;
+     static unsigned logged;
+     if(logged++<4)IOLog("CB GPU engine: empty IB seq=%u words=%u; completed without a kick\n",s,n);
+     IOLockUnlock(gSubmitLock);return 0;
+    }
+   } }
  CheeseburgerGpu::SubmitRecord rec;
  // The probe's streams fetch from 0x2000000 without any CP table packet, so
  // the table CB0 already holds is the one the CP walks. sagit's per-job
