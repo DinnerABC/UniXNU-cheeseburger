@@ -2,7 +2,7 @@
 
 Device repository for the OnePlus 5 (cheeseburger, Qualcomm MSM8998 / Snapdragon 835), built on [UniXNU](https://github.com/UniXNU/UniXNU). The `main` branch targets iPadOS 17.7.11 (21H461) and XNU 10063.141.1. The experimental iOS 16.7.16 port is retained on `ios-16.7.16`.
 
-The device owner has confirmed the original iPadOS interface on hardware, and touch input now works on the panel: the Synaptics S3320 is driven over BLSP1 QUP5 with the I2C v2.2.1 programming, F01/F12 are discovered, 80-byte multi-touch packets are decoded and published through the HID keyboard+digitizer device. A later run recorded eight CPUs online, 2 GiB managed memory and display transfers. The phone-style UI and GPU acceleration remain in development; the first frame is intermittent (a known pre-first-frame stall that varies between boots of the same image).
+The device owner has confirmed the original iPadOS interface on hardware, and touch input now works on the panel: the Synaptics S3320 is driven over BLSP1 QUP5 with the I2C v2.2.1 programming, F01/F12 are discovered, 80-byte multi-touch packets are decoded and published through the HID keyboard+digitizer device. A later run recorded eight CPUs online, 2 GiB managed memory and display transfers. The Adreno 540 kernel submission path is now device-verified end to end: a user client allocates and maps two buffers, the CP executes its command stream, the GPU writes the requested values into the client's target buffer and the client waits on a completed fence and reads them back (see [A540 user-submission path](docs/P21_GPU_SUBMISSION_20261104.md)). GPU rendering, IOSurface and Metal are not implemented yet, the display is still a CPU framebuffer presenter and the first frame remains intermittent (a known pre-first-frame stall that varies between boots of the same image).
 
 - [UniXNU documentation](https://unixnu.com)
 - [Porting guide](https://unixnu.com/porting/)
@@ -11,6 +11,7 @@ The device owner has confirmed the original iPadOS interface on hardware, and to
 - [Development handoff](HANDOFF.md)
 - [Next-agent handoff](docs/DEEPSEEK_HANDOFF.md)
 - [Baked boot arguments](docs/P21_BAKED_BOOT_ARGS.md)
+- [A540 user-submission path](docs/P21_GPU_SUBMISSION_20261104.md) — what is verified on hardware and what is not
 
 ## Responsibilities
 
@@ -50,7 +51,7 @@ belongs to the reusable framework:
 | Phone-style UI | Not working | Phone identity with an iPadOS root reached a system screen but still showed a tablet layout |
 | Touch | Working | Synaptics S3320 over BLSP1 QUP5 (`qcom,i2c-qup-v2.2.1`): v2 byte tags, repeated-start register reads, F01/F12 discovery, 10-finger 80-byte F12 packets read through the IN block handshake, HID digitizer on the combined keyboard+digitizer device, 25 ms polling (attention IRQ not enabled). Confirmed by the device owner |
 | Buttons | Partial | Power and volume adapter, with a volume-key Home chord; full physical interaction is not qualified |
-| GPU / Metal | Not working | A540 powered through the firmware clock protocol and its registers read (`RBBM_ID=0x00010042`, CP halted, no GPMU firmware); no acceleration or Metal yet |
+| GPU / Metal | Partial | A540 CP started through reset/`CP_ME_INIT`/GPMU/PAS-ZAP, SMMU 4K context with `gfx3d_user` SID 0 routed, and the full user-submission path verified on hardware: BO allocate/map, client IB executed by the CP, GPU write into the client's target BO, fence completion and wait, CPU readback of the expected values, clean unmap/free (P21-Linnet, boot `0x477aef4e`). No rendering, shaders, IOSurface or Metal yet; the display remains CPU-composed |
 | KeyStore | Partial | Development compatibility; no SEP-backed security claim |
 | Logs | Working | Bounded persistent log window, 2 s host monitor and Recovery retrieval; there is no live channel yet (USB CDC-ACM is only a read-only stage-0 probe) |
 | Wi-Fi / Bluetooth / cellular / audio / camera / sensors | Not tested | No hardware support claim |
@@ -60,16 +61,19 @@ Fastboot acceptance, kernel execution, user-space startup and usable hardware ar
 
 ## Build
 
-Entry point for the current candidate: `scripts/p21-compile-fb-qup3.py`. It runs
-the official framework (`feeds.resolve` → `patches.prepare` → `kernel.build`)
-against the candidate tree and writes the kernel, then the remaining steps run in
-order: `prelink.py` → panic-screen patch → `build-payload.py` → `prepare-uefi.py`
-and `p2-linux-build.sh` in the build VM → firmware export → `pack.py` →
+Entry point for the current candidate: `P21_CANDIDATE=<candidate>
+scripts/p21-compile-atos-gate.py`. It runs the official framework
+(`feeds.resolve` → `patches.prepare` → `kernel.build`) against the candidate tree
+and writes the kernel, then the remaining steps run in order: the candidate's
+`scripts/prelink.py` → panic-screen patch → `check-kernel.py` →
+`build-payload.py` → `prepare-uefi.py` and `scripts/p2-linux-build.sh` in the
+build VM → firmware export → `scan-pins.py` → `pack.py` →
 `scripts/unattended/preboot-gate-p21.py` → one `fastboot boot`.
 
-The 1.3 GB build tree lives on local disk (`/Users/dinnerabc/unixnu-p21/...`);
-candidate artifacts stay under `out/p21/fb-qup3/`. A full round is about four
-minutes. Use the [official UniXNU build environment](https://unixnu.com/building),
+The XNU build tree lives on local disk (`/Users/dinnerabc/unixnu-p21/...`);
+candidate artifacts stay under `out/p21/p21-<name>/` with the round's kernel,
+payload, firmware and gate records. A full round is about twenty minutes
+including the firmware build. Use the [official UniXNU build environment](https://unixnu.com/building),
 the board configuration in `board.toml`, and the pinned source inputs.
 
 The general image pipeline remains guarded by `example = true`; a clean one-command build has not been qualified. The preserved UP1 reconstruction, input inventory, phone-identity experiment and window adaptation are under [`rebuild/ipados-up1/`](rebuild/ipados-up1/). Existing local firmware builds also depend on retained Linux VM overlay layers. See the [handoff](docs/DEEPSEEK_HANDOFF.md) and [official adaptation notes](docs/P21_OFFICIAL_ADAPTATION.md) for the current inputs and build boundaries.
