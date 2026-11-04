@@ -74,8 +74,6 @@ volatile uint32_t native_adreno_compute[12];
 // CS variant matrix: late dword0 for variants 0..7, their rc at 8..15, and the
 // immediate (pre-delay) dword0 at 16..23.
 volatile uint32_t native_adreno_cprobe[24];
-// Core-domain resume receipt: rc, RBCCU/SP status before, status after.
-volatile uint32_t native_adreno_resume[4];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
@@ -655,60 +653,6 @@ volatile uint64_t native_adreno_submit_stage_gva=0;
 // still succeeds but the CP cannot execute. Sample before a user doorbell so a
 // stopped engine is distinguishable from a ring that was never consumed.
 volatile uint32_t native_adreno_pwr[14];
-// a5xx_pm_resume in a verified quiescent window, mirroring sagit's
-// Engine::idlePowerTransition: the RBCCU and SP core domains fall back off
-// after ZAP (status bit 20 clear), and a CS cannot run while they are down.
-// Writing 0x778000 with the CP running stopped it before (P21-Quail), so the
-// CP is halted, the domains are brought up, and the same empty ring resumes.
-static int gpuResumeCoreDomains(W &gp){
- if(!gMmio||!gMmio->v||!gFence||!gRing||!gEngine540)return -1;
- uint32_t rbs=rd(gp,0xa88d*4),sps=rd(gp,0xa88b*4);
- native_adreno_resume[1]=rbs;native_adreno_resume[2]=sps;
- if(rbs==0xffffffffu||sps==0xffffffffu)return -1;
- if((rbs&(1u<<20))&&(sps&(1u<<20))){native_adreno_resume[0]=0;native_adreno_resume[3]=0;return 0;}
- // Only with a completed, empty ring and a quiet engine, as sagit requires.
- if(gFence[1]!=gFenceSeq)return -2;
- const uint32_t r=rd(gp,CheeseburgerGpu::RBRead),w=rd(gp,CheeseburgerGpu::RBWrite);
- const uint32_t st=rd(gp,CheeseburgerGpu::Status),st3=rd(gp,CheeseburgerGpu::Status3);
- // The idle status keeps the CP_BUSY/HYST aggregate bits the engine's own
- // idle gate allows (0x80000101/0x800001c1); a strict "only bit0" test would
- // reject the normal post-fence state and never reach the domain write.
- if(r==0xffffffffu||w==0xffffffffu){IOLog("CB GPU core: ring unreadable r=%x w=%x\n",r,w);return -3;}
- if(r!=w){IOLog("CB GPU core: ring not empty r=%x w=%x\n",r,w);return -31;}
- if(!CheeseburgerGpu::idleStatus(st)){IOLog("CB GPU core: status busy st=%x st3=%x\n",st,st3);return -32;}
- if(st3&(1u<<24)){IOLog("CB GPU core: status3 busy st3=%x\n",st3);return -33;}
- if(rd(gp,CheeseburgerGpu::TrustControl)!=0)return -4;
- if((rd(gp,CheeseburgerGpu::InterruptStatus)&CheeseburgerGpu::ErrorIRQs)||
-    (rd(gp,CheeseburgerGpu::CPInterruptStatus)&0x3f))return -5;
- gp.v[CheeseburgerGpu::InterruptMask/4]=0;
- gp.v[CheeseburgerGpu::MEControl/4]=CheeseburgerGpu::Halt;
- gp.v[CheeseburgerGpu::VBIFHalt/4]=15;
- __asm__ volatile("dsb sy":::"memory");
- bool halted=false;
- for(unsigned us=0;us<100000;us+=10){
-  if(((rd(gp,CheeseburgerGpu::MEControl)&CheeseburgerGpu::Halt)==CheeseburgerGpu::Halt)&&
-     ((rd(gp,CheeseburgerGpu::VBIFHalted)&15)==15)){halted=true;break;}
-  IODelay(10);
- }
- if(!halted)return -6;
- __asm__ volatile("dsb sy":::"memory");gp.v[0xa887]=0x778000;__asm__ volatile("dsb sy":::"memory");
- for(unsigned i=0;i<100&&!(rd(gp,0xa88d*4)&(1u<<20));++i)IODelay(1);
- gp.v[0xa881]=0x778000;__asm__ volatile("dsb sy":::"memory");
- for(unsigned i=0;i<100&&!(rd(gp,0xa88b*4)&(1u<<20));++i)IODelay(1);
- if(!(rd(gp,0xa88d*4)&(1u<<20))||!(rd(gp,0xa88b*4)&(1u<<20)))return -7;
- __asm__ volatile("dsb sy":::"memory");
- gp.v[CheeseburgerGpu::VBIFHalt/4]=0;gp.v[CheeseburgerGpu::MEControl/4]=0;
- __asm__ volatile("dsb sy":::"memory");
- for(unsigned us=0;us<10000;us+=10){
-  if(!rd(gp,CheeseburgerGpu::MEControl)&&!rd(gp,CheeseburgerGpu::VBIFHalt))break;
-  IODelay(10);
- }
- if(rd(gp,CheeseburgerGpu::MEControl)||rd(gp,CheeseburgerGpu::VBIFHalt))return -8;
- if(rd(gp,CheeseburgerGpu::RBRead)!=w||rd(gp,CheeseburgerGpu::RBWrite)!=w)return -9;
- native_adreno_resume[3]=(rd(gp,0xa88d*4)&(1u<<20))|((rd(gp,0xa88b*4)&(1u<<20))<<1);
- native_adreno_resume[0]=1;
- return 1;
-}
 extern "C" int cheeseburger_gpu_pre_kick(void){
  if(!gMmio||!gMmio->v)return -1;
  W gp;gp.v=gMmio->v;
@@ -1376,23 +1320,9 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  // Re-assert the core power domains and sample the engine before the doorbell.
  // A collapsed domain or a halted CP explains a ring the CP never reads; the
  // reads happen while the bus is still healthy (no failed kick yet).
- // P21-Plover: halting the live CP and rewriting the RBCCU/SP power domains
- // wedged the system (no ADB/Fastboot after the boot). Keep the sequence for
- // an explicit experiment only; every normal boot keeps the verified read-only
- // pre-kick path.
- { static int resumeWanted=-1;
-   if(resumeWanted<0){unsigned v=0;resumeWanted=(PE_parse_boot_argn(
-     "cheeseburger-gpu-core-resume",&v,sizeof v)&&v)?1:0;}
-   if(!resumeWanted)goto core_resume_done;
-   W gp; gp.v=gMmio?gMmio->v:nullptr;
-   const int rz=gp.v?gpuResumeCoreDomains(gp):-1; if(rz<0){
-    IOLog("CB GPU core: resume rc=%d rb=%x sp=%x\n",rz,native_adreno_resume[1],native_adreno_resume[2]);
-    gEngineSubmitFailed=true;if(gEngine540)gEngine540->quarantine();
-    native_adreno_submit_rc=rz;native_adreno_submit_stage=0x84;
-    IOLockUnlock(gSubmitLock);return rz;
-   } if(rz>0)IOLog("CB GPU core: resumed rb=%x/%x sp=%x/%x\n",
-    native_adreno_resume[1],rd(gp,0xa88d*4),native_adreno_resume[2],rd(gp,0xa88b*4)); }
-core_resume_done:
+ // P21-Sandpiper rollback: the halt/domain-resume experiment (P21-Plover)
+ // wedged the system before it could log, so the pre-kick path stays the
+ // verified read-only one. Core domains are not rewritten on a live CP.
  int pwr=cheeseburger_gpu_pre_kick();
  IOLog("CB GPU engine: pre pwr=%d rb=%x/%x sp=%x/%x>%x/%x me/vbif=%x st=%x micro=%x/%d\n",pwr,
   native_adreno_pwr[0],native_adreno_pwr[1],native_adreno_pwr[2],native_adreno_pwr[3],

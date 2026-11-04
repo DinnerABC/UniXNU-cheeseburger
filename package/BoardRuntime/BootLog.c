@@ -94,8 +94,6 @@ extern volatile uint32_t native_adreno_compute[12] __attribute__((weak_import));
 /* Compute isolation matrix: const/shift probes into our own 4 KiB SSBO and
  * the same two shaders over the scanout band. */
 extern volatile uint32_t native_adreno_cprobe[24] __attribute__((weak_import));
-/* Core-domain resume: rc, RBCCU/SP status before, bit20 state after. */
-extern volatile uint32_t native_adreno_resume[4] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -713,13 +711,6 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       (int)(int16_t)(uint16_t)native_adreno_cprobe[12],(int)(int16_t)(uint16_t)native_adreno_cprobe[13],
       (int)(int16_t)(uint16_t)native_adreno_cprobe[14],cb_boot_id);
     at=put(out,at,cap,cpr,sizeof cpr);
-   }
-   if (&native_adreno_resume[0] && (native_adreno_resume[0] || native_adreno_resume[1])) {
-    char rsm[120];
-    snprintf(rsm,sizeof rsm,"RSM rc=%d rb=%x sp=%x after=%x bid=%llx",
-      (int)(int16_t)(uint16_t)native_adreno_resume[0],native_adreno_resume[1],
-      native_adreno_resume[2],native_adreno_resume[3],cb_boot_id);
-    at=put(out,at,cap,rsm,sizeof rsm);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was

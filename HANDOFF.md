@@ -1,3 +1,27 @@
+## 2026-11-04：Plover 日志回收 + P21-Sandpiper 回退控制（移除实时 CP 停机/上电路径，恢复可开机基线）
+
+### 一、Plover 日志（已回收）
+- boot `0x40a73020`，日志 `out/p21/persistent-logs/20261104T221102Z/`；msgbuf 停在 100.5 s（`reset rc=0` 之后），没有 `CB GPU core` 行，11 个心跳轮次；也就是说挂点在 `gpuResumeCoreDomains` 的停机/读回路径上，且发生在它第一条日志之前。**今后不要在运行中的 CP 上执行 halt + 电源域写入后再读 GPU 寄存器**；这类读在 AXI 停住时会直接卡死内核。
+
+### 二、回退（源码）
+- 删除 `gpuResumeCoreDomains()`、`native_adreno_resume` 与 pre-kick 的调用/`cheeseburger-gpu-core-resume` 开关；**保留**已实机可启动的 CS 变体矩阵与 compute 下发（它们只 fence、不写，不影响开机）。
+- 回退后不触碰 ZAP 后的电源域；pre-kick 恢复为只读采样，P21-Bittern 的 2D 清屏、用户提交链保持原样。
+
+### 三、控制启动（P21-Sandpiper）
+- 镜像 `99e1db64…`、内核 `2c0992ec…`、固件 `a3c5af5e…`、payload `5ef8b732…`、gate `20261104T221759Z` PASS、misc 回读 `8698abf4…`；`22:18:17Z` 单次 `fastboot boot`，400 s 自动回 Recovery（日志 `20261104T222557Z`，boot `0x40a1c23d`）。
+- `CB GPU clear: rc=0 seq=8 words=491 ... match=4/4`；`CMPT rc=0 seq=16 ... match=0/4`（compute 仍不写，符合预期）；`GPSVC ... sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`；无挂死。
+- 结论：回退基线可开机、2D 与用户链正常；compute 的“无写入”问题仍在，但当前候选不再包含会挂住设备的代码。
+
+### 四、下一步
+1. 不再在实时 CP 上做 halt + 域写入 + 寄存器读回；如要重试电源域，必须改成 posted writes、停机后不读 GPU 寄存器、只用下一次 fence 判活，并单独候选、默认关闭。
+2. 先继续安全的 2D 路线：验证 sagit `snapshot2D` 的 GPU→GPU 拷贝（自有 64B 对齐目标），再考虑 IOSurface 导入。
+3. 若要继续 compute：先确认 SP 域是否真的为 CS 所必需（例如在启动阶段保留域上电的对照实验），再决定是否重试 resume；不要用 P21-Plover 的方式。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Plover** | `1d6e6958…` | `3208aede…` | 停机/上电 resume 挂死；日志停在 100.5 s，无 core 行 |
+  | 2026-11-04 | **P21-Sandpiper** | `99e1db64…` | `2c0992ec…` | 回退后的控制启动：2D match=4/4、用户链 err=0、自动回 Recovery |
+
 ## 2026-11-04：P21-Lapwing / P21-Petrel / P21-Plover（CS 变体矩阵全部为 0；发现 ZAP 后 SP/RBCCU 域回落；核心域 resume 尝试把 Plover 挂住）
 
 ### 一、根因线索（已确认）
