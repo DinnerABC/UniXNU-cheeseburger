@@ -1,3 +1,19 @@
+## 2026-11-04：P21-Merlin 结果（映射后 CP 连 ring 内联写都不执行）· P21-Nighthawk
+
+- **源码**：`7eccff1` 把 `516c248`（黑屏轮）整体回退，工作树与 P21-Falcon（`f7c26ba`）逐字节一致；`a14fc50` 用**三段门禁**替换单一 preflight IB（A：ring 内联 `0x3d` CP_MEM_WRITE；B：同样写入改从内核 IB 取指；C：CP 侧 `CP_MEM_TO_MEM` 读客户端页），每段自带 fence，任一段失败即拒绝客户端 IB；失败后只读自己的 scratch 页，**不再采样任何 GPU 寄存器**。
+- **P21-Merlin 实机（boot `0x4928782a`，日志 `out/p21/persistent-logs/20261104T081117Z/`，68 轮、0 写错误、显示 `frames=5`，400 s 自动回 Recovery）**：
+  - probe 与前几轮一致：116.066 s `fence OK seq=1`、116.068 s `userpath fence rc=0 seq=2`。
+  - **门禁 A 失败**：`GATE a=-4/5 0/0/0 b=0/0 0/0/0 c=0/0 cp=0/0 kv=0`，`gate A rc=-4 stage=5 sent=0/0/0 fr=0`——CP 连**直接写在 ring 里**的 `0x3d` 都没执行；`GRNG seq=3 34..49 n=15 w=70928000/70268000/703d8005/2012700/0/a5a50001 a5a50002/a5a50003/70928000/70268000` 说明环内内容正确。
+  - 内核未卡死：`GSUB rc=-2 stage=5`、`GPSVC sub=1 err=5 st=e00002ca`（提交返回错误），日志到 338 s 仍在写，系统正常回 Recovery。
+  - 两次成功提交（116 s）与首次失败提交（146.4 s）之间，GPU 侧唯一动作是**客户端 BO 的 SMMU 映射**（LiveUpdate + 上下文观察 + TLBI）。338 s 快照里 CB0 `fsr=400`（存在一个故障状态），`ttbr=a802000`、`sctlr=1167`、`smr=80000000`；`SIRQ count=0`（fault 中断没有上报）。
+- **P21-Nighthawk 修复（提交 `2839d8a`）**：按 kit 的 live-update 契约与 sagit `idlePowerTransition`，引擎存在后**每次改表都先停 CP + 排空 VBIF，改完再恢复**（原来只在环非空时停流）；环不可证明空闲时拒绝改表，停流未确认完成则 fail-closed。停流结果写入 `GATE … dr=%x`。
+- 候选 `out/p21/p21-nighthawk`：内核/镜像/固件哈希见下方表格补齐。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Merlin** | `3aee74ac…` | `205e4e70…` | 三段门禁；A 段（ring 内联写）即超时 → 映射后 CP 不再消费；可启动、自动返回 |
+  | 2026-11-04 | **P21-Nighthawk** | 待补 | 待补 | 改表前后停 CP + VBIF 排空；结果待回收 |
+
 ## 2026-11-04：P21-Falcon 结果（CP 完全忽略新提交流）· P21-Harrier
 
 - **源码**：提交 `f7c26ba` 把用户提交迁到 sagit 风格引擎（新文件 `package/BoardRuntime/CheeseburgerGpuEngine540.h`）；`CheeseburgerGpuCp.cpp` 的 `cheeseburger_gpu_engine_submit()` 改用该引擎，并移除“只允许一次用户提交”的限制；`CheeseburgerGpuService.cpp` 提交前发布**所有**已映射 BO。宿主模型新增 `tests/gpu_engine540_model.cpp`（`HOST_MODELS_PASS`）。
@@ -10,12 +26,15 @@
   - 事实对比：同一环、同一门铃写入方式，probe 的两条 fence 流能执行；唯一新增元素是 `0x3f` 取指，而该取指地址（GPMU 页）在 116 s 曾被 CP 成功取指。**没有证据表明 CP 执行了任何新包，也没有新的 SMMU fault。**
 - **P21-Harrier 修复（提交 `516c248`）**：按 sagit，把用户 IB 包进 `CP_SET_PROTECTED_MODE`（`0x5f 0` … `0x5f 1`）——本机唯一被 CP 成功执行的间接缓冲（GPMU）正是这样包裹的；提交前采样并清除 owned IRQ latch（sagit `start()`/旧提交路径行为），遇到已锁存 CP fault 拒绝踢门铃；超时后做**一次**有界寄存器采样（`RBRead/RBWrite/InterruptStatus/CPInterruptStatus`）区分“门铃没被看到”与“时间戳丢失”。
 - 候选 `out/p21/p21-harrier`：内核 `781fa87710db6e0aa51bfb8132cf007d7aacf0d9311f1a2c76ef1048a4356453`（编译产物 `744cef52…`）、payload 展开 `8f2193b2…`、固件 `100367d6…`、镜像 `out/p21/p21-harrier/uefi/boot-p21-up1.img` SHA-256 `68f88fa611dc4feacb2274489e10520e1026352905d7de4e0182dad665006b53`，gate `20261103T181306Z` PASS（670 B，三项 pin 命中）。misc（`/dev/block/sda4`）仅写首 14 字节 `boot-recovery\0`，其余 4082 字节与写前镜像一致，回读一致；18:13:30Z 单次 `fastboot boot` Sending/Booting OKAY（`out/p21/p21-harrier/boot-once.log`）。
-- **P21-Harrier 实机状态（未收尾）**：启动后到 18:28:37Z（约 15 分钟）设备**始终未回到 Recovery，也没有在任何时刻出现在 `adb devices` / `fastboot devices` / IOUSB 枚举中**；400 s 自动返回没有产生可观察的落点。这与本工程已有的“panic 屏命中则 hold（不自动复位）”一致，但**没有取到屏幕内容或持久日志**，因此失败阶段未确认。本轮没有再次重启设备。下一轮需要：在看得到屏幕时确认 panic 文本/寄存器，或在设备重新进入 Recovery 后立即只读回收窗口（若窗口写入已停止，不能据此断言内核未运行）。
+- **P21-Harrier 实机（boot `0x47806558`，日志 `out/p21/persistent-logs/20261104T074813Z/`）**：18:13:30Z 启动，设备在自动返回时限内没有回到 Recovery；用户手动恢复后回收。
+  - msgbuf 停在 142.842 s，**最后一条 GPU 记录是 141.862 s 的 `CB GPU engine: pre pwr=0 …`（提交入口）**，之后没有 `GPFL`、没有 `GSUB`；`GPSVC ready=1 open=1 bo=2 map=2 **sub=0** err=0`，即提交调用**没有返回**；`GRNG seq=3 34..51 n=17` 记录下了带 `0x5f` 的完整流（`70928000/70268000/70df0001/0/70bf8003/2012200 …`）。
+  - 该轮唯一新增且在超时后执行的动作是**一次 `RBRead/RBWrite/InterruptStatus/CPInterruptStatus` 采样**；日志正好停在 1 s fence 超时之后、该采样所在位置，随后再无内核输出，与“GPU 总线上的读把调用方卡死”一致。**没有拿到 panic 文本**。
+  - 处理：提交 `7eccff1` 整体回退到 P21-Falcon（`516c248` 的全部改动，`git diff f7c26ba` 为空），恢复为可启动的版本；失败后不再读任何 GPU 寄存器。
 
   | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
   |---|---|---|---|---|
   | 2026-11-04 | **P21-Falcon** | `455975b3…` | `41a74e7f…` | sagit 引擎 + preflight IB；CP 未执行任何新包（sent=0/fr=0） |
-  | 2026-11-04 | **P21-Harrier** | `68f88fa6…` | `781fa877…` | 用户 IB 包裹 `0x5f` 保护模式 + 门铃前清 IRQ latch；启动后未回 Recovery、USB 未枚举，原因未确认 |
+  | 2026-11-04 | **P21-Harrier** | `68f88fa6…` | `781fa877…` | 用户 IB 包裹 `0x5f` + 超时后寄存器采样；内核在提交内卡死（日志止于 142.8 s，sub=0），已整体回退 |
 
 ## 2026-11-04：P21-Crane 结果（fence(+4) 有效，但用户批次仍不执行）· P21-Eagle
 
