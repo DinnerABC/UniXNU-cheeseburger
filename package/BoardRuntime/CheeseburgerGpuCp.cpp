@@ -48,10 +48,10 @@ volatile uint32_t native_adreno_rtmap2[8];
 volatile uint32_t native_adreno_pa_test[8];
 // CP_MEM_TO_MEM read of a user address: rc, sequence, copied words and source.
 volatile uint32_t native_adreno_copy_test[8];
-// Trusted preflight before the first user IB: rc, sequence, the four dwords the
-// CP read from the user IB page, the three sentinels it wrote, the kernel's own
-// view of that page and the engine stage.
-volatile uint32_t native_adreno_preflight[13];
+// Staged gate results: A/B/C rc and engine stage, each stage's three
+// sentinels, stage C's four CP-read words and the kernel's view of the first
+// client IB word.
+volatile uint32_t native_adreno_gate[18];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
 // Low pool: count and first page, filled at probe time.
@@ -691,48 +691,88 @@ extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor *
  --gLowPageCount;*pa=gLowPagePa[gLowPageCount];*buf=gLowPage[gLowPageCount];
  return 0;
 }
-// Trusted preflight before the first client IB. It runs a kernel-owned IB from
-// the GPMU page the CP has already fetched: four CP_MEM_TO_MEM loads of the
-// client's IB page into a scratch page, then sentinels written beside it. The
-// stream is refused unless the CP both reads the client page and writes the
-// sentinels, so a failure names the page (translation) instead of blaming the
-// client's commands. Nothing here writes user memory.
+// Staged gate before the first client IB, in the order sheng's probe proves
+// the path (GpuPowerProbe step 7: the first real command is a CP_MEM_WRITE in
+// the ring, then an indirect buffer, then a CP-side read):
+//   A  ring-inline CP_MEM_WRITE of three sentinels into the GPMU page
+//   B  the same write from inside a kernel-owned indirect buffer
+//   C  four CP_MEM_TO_MEM loads of the client's first IB page
+// Every stage carries its own fence and is refused unless the CP both wrote
+// its sentinels and advanced the timestamp. Stage A failing means the ring or
+// doorbell stopped after the mapping; B means indirect-buffer fetch; C means
+// the client page. Nothing here writes user memory, and no client IB is rung
+// until all three pass. After a failure only the fence page and the CPU-owned
+// scratch page are read: no GPU register is sampled (boot 0x47806558 hung
+// there).
+static int gateSubmit(uint32_t sequence,bool useIb,uint32_t ibDwords,
+ const uint32_t *inlineWords,uint32_t inlineCount,CheeseburgerGpu::SubmitRecord &rec){
+ CheeseburgerGpu::Ib540 one={gScratchGva+0x200,ibDwords};
+ if(useIb)return gEngine540->submit(&one,1,sequence,1000000,rec);
+ return gEngine540->submit(nullptr,0,sequence,1000000,rec,0,nullptr,inlineWords,inlineCount);
+}
 static int preflightUserPage(uint64_t userIova,uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec){
  if(!gScratchVA||!gScratchGva||!gEngine540||!userIova)return -1;
- volatile uint32_t *ib=gScratchVA+0x80;      // byte 0x200
- volatile uint32_t *dst=gScratchVA+0x100;    // byte 0x400, four copied dwords
- volatile uint32_t *tgt=gScratchVA+0x190;    // byte 0x640, four sentinels
- CheeseburgerGpu::Encoder540 e((uint32_t*)ib,64);
- // Sentinels before the loads: if the CP stalls inside CP_MEM_TO_MEM the board
- // still shows that the ring ran and the client page is what blocked it.
- const uint32_t sent[3]={0xf00d0001u,0xf00d0002u,0xf00d0003u};
- const uint32_t after[1]={0xf00d0004u};
- bool ok=e.memWrite(gScratchGva+0x640,sent,3);
- for(unsigned i=0;i<4&&ok;++i)
-  ok=e.memToMem(gScratchGva+0x400+4ull*i,userIova+4ull*i);
- if(ok)ok=e.memWrite(gScratchGva+0x64c,after,1);
- if(!ok)return -1;
- for(unsigned i=0;i<4;++i)dst[i]=0;
- for(unsigned i=0;i<4;++i)tgt[i]=0;
- flush_dcache((vm_offset_t)dst,32,FALSE);
- flush_dcache((vm_offset_t)tgt,32,FALSE);
- flush_dcache((vm_offset_t)ib,256,FALSE);
- CheeseburgerGpu::Ib540 one={gScratchGva+0x200,e.size()};
- int rc=gEngine540->submit(&one,1,sequence,1000000,rec);
- __asm__ volatile("dsb sy":::"memory");
- flush_dcache((vm_offset_t)dst,32,FALSE);
- flush_dcache((vm_offset_t)tgt,32,FALSE);
- __asm__ volatile("dsb sy":::"memory");
- native_adreno_preflight[0]=uint32_t(rc);native_adreno_preflight[1]=sequence;
- for(unsigned i=0;i<4;++i)native_adreno_preflight[2+i]=dst[i];
- for(unsigned i=0;i<4;++i)native_adreno_preflight[6+i]=tgt[i];
- native_adreno_preflight[10]=cb_inline_ib?((volatile uint32_t*)cb_inline_ib)[0]:0xdeadbeefu;
- native_adreno_preflight[11]=rec.stage;
- native_adreno_preflight[12]=rec.fence;
- IOLog("CB GPU engine: preflight rc=%d seq=%u cp=%x/%x/%x/%x kview=%x sent=%x/%x/%x then=%x fr=%x\n",
-  rc,sequence,dst[0],dst[1],dst[2],dst[3],native_adreno_preflight[10],
-  tgt[0],tgt[1],tgt[2],tgt[3],rec.fence);
- return rc;
+ volatile uint32_t *ib=gScratchVA+0x80;      // byte 0x200, the gate's IB
+ volatile uint32_t *sa=gScratchVA+0x1c0;     // byte 0x700, stage A target
+ volatile uint32_t *sb=gScratchVA+0x1d0;     // byte 0x740, stage B target
+ volatile uint32_t *sc=gScratchVA+0x1e0;     // byte 0x780, stage C target
+ const uint32_t sentA[3]={0xa5a50001u,0xa5a50002u,0xa5a50003u};
+ const uint32_t sentB[3]={0xb6b60001u,0xb6b60002u,0xb6b60003u};
+ uint32_t inlineWords[16];
+ int rca=-1,rcb=-1,rcc=-1;
+ for(unsigned i=0;i<3;++i)sa[i]=0;
+ for(unsigned i=0;i<3;++i)sb[i]=0;
+ for(unsigned i=0;i<4;++i)sc[i]=0;
+ flush_dcache((vm_offset_t)sa,64,FALSE);
+ flush_dcache((vm_offset_t)sb,64,FALSE);
+ flush_dcache((vm_offset_t)sc,64,FALSE);
+ // A: the ring itself, no indirect buffer.
+ { CheeseburgerGpu::Encoder540 e(inlineWords,16);
+   if(!e.memWrite(gScratchGva+0x700,sentA,3))return -1;
+   rca=gateSubmit(sequence,false,0,inlineWords,e.size(),rec);
+   __asm__ volatile("dsb sy":::"memory");
+   flush_dcache((vm_offset_t)sa,16,FALSE);
+   __asm__ volatile("dsb sy":::"memory");
+   native_adreno_gate[0]=uint32_t(rca);native_adreno_gate[1]=rec.stage;
+   for(unsigned i=0;i<3;++i)native_adreno_gate[2+i]=sa[i];
+   IOLog("CB GPU engine: gate A rc=%d stage=%u sent=%x/%x/%x fr=%x\n",
+    rca,rec.stage,sa[0],sa[1],sa[2],rec.fence);
+   if(rca||sa[0]!=sentA[0]||sa[1]!=sentA[1]||sa[2]!=sentA[2])return -2; }
+ gFenceSeq=sequence++;
+ // B: the same command fetched through CP_INDIRECT_BUFFER.
+ { CheeseburgerGpu::Encoder540 e((uint32_t*)ib,64);
+   if(!e.memWrite(gScratchGva+0x740,sentB,3))return -1;
+   flush_dcache((vm_offset_t)ib,256,FALSE);
+   rcb=gateSubmit(sequence,true,e.size(),nullptr,0,rec);
+   __asm__ volatile("dsb sy":::"memory");
+   flush_dcache((vm_offset_t)sb,16,FALSE);
+   __asm__ volatile("dsb sy":::"memory");
+   native_adreno_gate[5]=uint32_t(rcb);native_adreno_gate[6]=rec.stage;
+   for(unsigned i=0;i<3;++i)native_adreno_gate[7+i]=sb[i];
+   IOLog("CB GPU engine: gate B rc=%d stage=%u sent=%x/%x/%x fr=%x\n",
+    rcb,rec.stage,sb[0],sb[1],sb[2],rec.fence);
+   if(rcb||sb[0]!=sentB[0]||sb[1]!=sentB[1]||sb[2]!=sentB[2])return -3; }
+ gFenceSeq=sequence++;
+ // C: the CP reads the client's page. A translated page reads back the same
+ // words the kernel maps; any other value is the page or its translation.
+ { CheeseburgerGpu::Encoder540 e((uint32_t*)ib,64);
+   bool ok=true;
+   for(unsigned i=0;i<4&&ok;++i)
+    ok=e.memToMem(gScratchGva+0x780+4ull*i,userIova+4ull*i);
+   if(!ok)return -1;
+   flush_dcache((vm_offset_t)ib,256,FALSE);
+   rcc=gateSubmit(sequence,true,e.size(),nullptr,0,rec);
+   __asm__ volatile("dsb sy":::"memory");
+   flush_dcache((vm_offset_t)sc,32,FALSE);
+   __asm__ volatile("dsb sy":::"memory");
+   native_adreno_gate[10]=uint32_t(rcc);native_adreno_gate[11]=rec.stage;
+   for(unsigned i=0;i<4;++i)native_adreno_gate[12+i]=sc[i];
+   native_adreno_gate[16]=cb_inline_ib?((volatile uint32_t*)cb_inline_ib)[0]:0xdeadbeefu;
+   IOLog("CB GPU engine: gate C rc=%d stage=%u cp=%x/%x kview=%x fr=%x\n",
+    rcc,rec.stage,sc[0],sc[1],native_adreno_gate[16],rec.fence);
+   if(rcc)return -4; }
+ gFenceSeq=sequence;
+ return 0;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
@@ -791,9 +831,10 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
    gEngineSubmitFailed=true;gEngine540->quarantine();
    native_adreno_submit_rc=prc;native_adreno_submit_stage=pre.stage?pre.stage:0x90;
    native_adreno_submit_seq=s;native_adreno_submit_fence_raw=pre.fence;
+   native_adreno_submit_prefence=pre.rptr;
    IOLockUnlock(gSubmitLock);return prc;
   }
-  gFenceSeq=s;++s;
+  s=gFenceSeq+1;
  }
  CheeseburgerGpu::SubmitRecord rec;
  // The probe's streams fetch from 0x2000000 without any CP table packet, so

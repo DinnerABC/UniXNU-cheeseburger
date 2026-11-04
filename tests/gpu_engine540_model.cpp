@@ -124,6 +124,21 @@ int main() {
         check(m.ring[0] == packet7(0x12, 0), "stream restarts at zero");
         check(e.lastCompleted() == 1, "wrapped fence");
     }
+    // 3b. Ring-inline commands run before the IBs (sheng's first real command).
+    {
+        Mock m;
+        Engine540<Mock> e(m);
+        check(e.adopt(m.ring.data(), RingWords, RingBase, m.fence, FenceBase, 0), "adopt inline");
+        uint32_t inlineWords[8];
+        Encoder540 enc(inlineWords, 8);
+        const uint32_t sent[2] = {0xa5a50001u, 0xa5a50002u};
+        check(enc.memWrite(0x700, sent, 2), "inline encode");
+        SubmitRecord r;
+        check(e.submit(nullptr, 0, 1, 1000, r, 0, nullptr, inlineWords, enc.size()) == 0, "inline submit");
+        check(r.words == 2 + enc.size() + 2 + 5, "inline words");
+        check(m.ring[2] == packet7(0x3d, 4), "inline packet placed after the barrier");
+        check(m.ring[3] == 0x700 && m.ring[5] == 0xa5a50001u, "inline write payload");
+    }
     // 4. A write cursor outside the ring is not adopted.
     {
         Mock m;

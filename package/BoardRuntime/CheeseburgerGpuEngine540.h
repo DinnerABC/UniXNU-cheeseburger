@@ -47,6 +47,12 @@ class Encoder540 {
 public:
     Encoder540(uint32_t *out, uint32_t capacity) : w(out), cap(capacity) {}
     uint32_t size() const { return n; }
+    // One already-encoded ring word.
+    bool raw(uint32_t word) {
+        if (n + 1 > cap) return false;
+        w[n++] = word;
+        return true;
+    }
     bool packet(uint32_t op, const uint32_t *data, uint32_t count) {
         if (count > 0x3fff || n + 1 + count > cap) return false;
         w[n++] = packet7(op, count);
@@ -109,7 +115,7 @@ template <class R> class Engine540 {
     uint32_t read = 0, write = 0, issued = 0, completed = 0;
     bool online = false, broken = false;
     static constexpr uint32_t MaxIbs = 16;
-    static constexpr uint32_t StageDwords = 4 * MaxIbs + 64;
+    static constexpr uint32_t StageDwords = 4 * (MaxIbs + 2) + 96;
 
     uint32_t mask() const { return ringDwords - 1; }
     uint32_t used() const { return (write - read) & mask(); }
@@ -151,17 +157,19 @@ public:
         return true;
     }
 
-    // One submission: optional trusted prelude IB, the caller's IBs, a
-    // barrier and the completion timestamp. Returns 0 only after the CP wrote
-    // this sequence into fence+4.
+    // One submission: optional ring-inline commands, optional trusted prelude
+    // IB, the caller's IBs, a barrier and the completion timestamp. Returns 0
+    // only after the CP wrote this sequence into fence+4.
     int submit(const Ib540 *ibs, uint32_t count, uint32_t sequence,
                uint64_t timeoutUs, SubmitRecord &rec,
-               uint64_t ttbr = 0, const Ib540 *prelude = nullptr) {
+               uint64_t ttbr = 0, const Ib540 *prelude = nullptr,
+               const uint32_t *inlineWords = nullptr, uint32_t inlineCount = 0) {
         rec = SubmitRecord();
         rec.seq = sequence;
         if (!ready()) { rec.stage = 1; return -1; }
         if (!sequence || sequence <= issued || count > MaxIbs || (count && !ibs) ||
-            (prelude && (!prelude->va || (prelude->va & 3) || !prelude->dwords || prelude->dwords > 0x3fff))) {
+            (prelude && (!prelude->va || (prelude->va & 3) || !prelude->dwords || prelude->dwords > 0x3fff)) ||
+            (inlineWords && (!inlineCount || inlineCount > StageDwords / 2)) || (!inlineWords && inlineCount)) {
             rec.stage = 1; return -1;
         }
         for (uint32_t i = 0; i < count; ++i)
@@ -178,6 +186,11 @@ public:
         Encoder540 e(staged, StageDwords);
         bool ok = e.barrier();
         if (ok && ttbr) ok = e.pageTable(ttbr);
+        if (ok && inlineWords) {
+            // Ring-inline commands (sheng GpuPowerProbe step 7: the first real
+            // command is a CP_MEM_WRITE submitted in the ring, no IB).
+            for (uint32_t i = 0; ok && i < inlineCount; ++i) ok = e.raw(inlineWords[i]);
+        }
         if (ok && prelude) ok = e.indirect(prelude->va, prelude->dwords);
         for (uint32_t i = 0; ok && i < count; ++i) ok = e.indirect(ibs[i].va, ibs[i].dwords);
         if (ok) ok = e.barrier();

@@ -78,8 +78,8 @@ extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_atos[18] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
-/* Trusted preflight before the first client IB and the last ring streams. */
-extern volatile uint32_t native_adreno_preflight[13] __attribute__((weak_import));
+/* Staged submission gate before the first client IB, and the last streams. */
+extern volatile uint32_t native_adreno_gate[18] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -620,19 +620,19 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
      &native_adreno_submit_staged?native_adreno_submit_staged:0xdeadbeefu,
      cb_boot_id);
    at=put(out,at,cap,sub,sizeof sub);
-   /* Trusted preflight: rc/seq, the dwords the CP read from the client's IB
-    * page, the sentinels it wrote beside them, and the kernel's own view of
-    * that page's first word. cp != kview means the CP sees different bytes. */
-   if (&native_adreno_preflight[0] && native_adreno_preflight[1]) {
-    char pfl[200];
-    snprintf(pfl,sizeof pfl,"GPFL rc=%d seq=%u cp=%x/%x/%x/%x kview=%x sent=%x/%x/%x/%x fr=%x st=%u bid=%llx",
-      (int)(int16_t)(uint16_t)native_adreno_preflight[0],native_adreno_preflight[1],
-      native_adreno_preflight[2],native_adreno_preflight[3],
-      native_adreno_preflight[4],native_adreno_preflight[5],native_adreno_preflight[10],
-      native_adreno_preflight[6],native_adreno_preflight[7],native_adreno_preflight[8],
-      native_adreno_preflight[9],native_adreno_preflight[12],
-      native_adreno_preflight[11],cb_boot_id);
-    at=put(out,at,cap,pfl,sizeof pfl);
+   /* Staged gate: A ring-inline write, B the same write through an indirect
+    * buffer, C a CP-side read of the client's page. Each shows its rc/stage
+    * and sentinels; cp vs kv are the CP's and the kernel's first client word. */
+   if (&native_adreno_gate[0] && (native_adreno_gate[0]|native_adreno_gate[5]|native_adreno_gate[10])) {
+    char gate[220];
+    snprintf(gate,sizeof gate,"GATE a=%d/%u %x/%x/%x b=%d/%u %x/%x/%x c=%d/%u cp=%x/%x kv=%x bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_gate[0],native_adreno_gate[1],
+      native_adreno_gate[2],native_adreno_gate[3],native_adreno_gate[4],
+      (int)(int16_t)(uint16_t)native_adreno_gate[5],native_adreno_gate[6],
+      native_adreno_gate[7],native_adreno_gate[8],native_adreno_gate[9],
+      (int)(int16_t)(uint16_t)native_adreno_gate[10],native_adreno_gate[11],
+      native_adreno_gate[12],native_adreno_gate[13],native_adreno_gate[16],cb_boot_id);
+    at=put(out,at,cap,gate,sizeof gate);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was
