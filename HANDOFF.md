@@ -1,3 +1,21 @@
+## 2026-11-04：P21-Pintail 结果（扫描线填充改为可校验的 2D 渐变图案）
+
+- **改动**：条带内容从单色改为 2D 图案——红色沿 x 渐变、绿色沿行渐变、蓝固定；回读时用同一公式重算每个采样点，结果是 `match=n/n` 而不是“颜色相同”。
+- **P21-Pintail 实机（日志 `out/p21/persistent-logs/20261104T133421Z/`，400 s 自动回 Recovery）**：门禁 `A/B/C rc=0`；`CB GPU fill rc=0 bars=4 rows=24 ibs=24 pattern=gradient px=ff003440/ff7f3440 **match=8/8**`；`DISPLAY frames=5`（仍全部早于 148 s 的填充）。
+- **sheng 的适配路线（本轮核对，作为后续主线）**：
+  1. 内核层：`NativeAdreno*`（Gmu/GmuPlatform/Firmware/CpInit/Ring/Submit/Vm/Memory/SmmuService）在 A740 上把 CP/SQE、ring、BO 生命周期和 SMMU 4K 上下文封装成自有 ABI。
+  2. 前端层：`NativeAdrenoMetalPlugin.mm` 被 Apple 的 Metal 发现流程（IOAcceleratorES → MetalPluginName → bundle → `initWithAcceleratorPort:`）加载；“published” 模式下只对名单内进程（backboardd 等）返回原生 `MTLDevice`，其余进程返回 nil 保持软件渲染。
+  3. 翻译层：`NativeBridgeMetalFrontend.mm` = **Metal → metal2vulkan → Vulkan loader → Turnip**（Metal 在 Vulkan 之上）。Turnip 是已构建输入（`build/mesa-tu-ios/.../libvulkan_freedreno.dylib`），源自独立的 mesa 工作树，未随仓库分发。
+  4. 显示交接：`GpuScanoutClient`/`GpuScanoutPresenter` 把合成好的 IOSurface 页与固件扫描缓冲都以 no-copy 方式导入，由 GPU 做一次 blit 写进扫描线并完成 swap。
+- **对 A540 的结论**：内核提交链路我们已经等价具备（自有 ABI + ArmSmmu4K + ring/IB/fence），短路点只在**前端**：需要一个把 Turnip 的 **a5xx** 后端接到我们 ABI 的适配层（Turnip 默认走 kgsl ioctl，我们的驱动没有 kgsl 兼容层）。这是一项独立的大工程，应作为下一阶段主线，而不是继续在填充上打转。
+- **下一步**：
+  1. 完成填充的**限时重复重绘**（例如 40 s 内每 2 s 一次），让 GPU 像素在 CPU 刷新后仍保留（用户已确认条带可见，但只在没有新帧时保留）。
+  2. 立项 Turnip a5xx 适配：先做接口核对（Turnip 的 fd 后端对 kgsl ioctl 的最小集合 vs 我们的 ABI），再决定“在驱动里加 kgsl 兼容层”还是“给 Turnip 加自有后端”，并写进 porting.toml 的 GPU next_action。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Pintail** | `cfee1045…` | `a6767ae5…` | 扫描线 2D 渐变 + 逐点校验；`match=8/8`，可启动、自动返回 |
+
 ## 2026-11-04：P21-Oriole 结果（GPU 产出的像素第一次显示在面板上：4 条 24 行绿条，用户确认可见）
 
 - **改动**：把扫描线填充从 1 行加粗到 **4 条 × 24 行 × 448 像素**，每 4 行一个 IB（共 24 个 IB，每个自带 fence），既保持单个 IB 落在 GPMU 页内，也让条带在 1080×1920 面板上可见。映射仍在提交锁之外（`fillPrepare()`），提交在锁内。
