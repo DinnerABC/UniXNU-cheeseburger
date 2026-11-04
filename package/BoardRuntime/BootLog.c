@@ -88,6 +88,12 @@ extern volatile uint32_t native_adreno_clear[24] __attribute__((weak_import));
 /* GPU frame on the panel: render rc, physical address, stride, four band
  * pixels, and the display driver's flip result/pipe/control. */
 extern volatile uint32_t native_adreno_flip[10] __attribute__((weak_import));
+/* IR3 compute band: rc/seq/words, four samples, match, band PA/bytes and the
+ * local/group geometry. */
+extern volatile uint32_t native_adreno_compute[12] __attribute__((weak_import));
+/* Compute isolation matrix: const/shift probes into our own 4 KiB SSBO and
+ * the same two shaders over the scanout band. */
+extern volatile uint32_t native_adreno_cprobe[20] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -673,6 +679,35 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       (int)(int16_t)(uint16_t)native_adreno_flip[7],native_adreno_flip[8],native_adreno_flip[9],
       cb_boot_id);
     at=put(out,at,cap,flip,sizeof flip);
+   }
+   /* Compute shader band on the firmware scanout: the SSBO store is byte
+    * addressed, so it writes the real 4320-byte pitch that the 2D/3D engines
+    * cannot encode. Samples are id<<8 at four positions of the band. */
+   if (&native_adreno_compute[0] && (native_adreno_compute[0] || native_adreno_compute[2])) {
+    char cmpt[200];
+    snprintf(cmpt,sizeof cmpt,"CMPT rc=%d seq=%u w=%u px=%x/%x/%x/%x match=%u/4 band=%x bytes=%u l=%u g=%u bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_compute[0],native_adreno_compute[1],native_adreno_compute[2],
+      native_adreno_compute[3],native_adreno_compute[4],native_adreno_compute[5],native_adreno_compute[6],
+      native_adreno_compute[7],native_adreno_compute[8],native_adreno_compute[9],
+      native_adreno_compute[10],native_adreno_compute[11],cb_boot_id);
+    at=put(out,at,cap,cmpt,sizeof cmpt);
+   }
+   /* Compute isolation: c/s are the constant and id<<8 probes into our own
+    * SSBO; bc/bs are the same shaders writing the scanout band. A zero probe
+    * means the dispatch or SSBO binding did not write, independent of GOP. */
+   if (&native_adreno_cprobe[0] && (native_adreno_cprobe[0]|native_adreno_cprobe[4]|
+       native_adreno_cprobe[8]|native_adreno_cprobe[13])) {
+    char cpr[220];
+    snprintf(cpr,sizeof cpr,"CPRB c=%d/%x/%x/%x s=%d/%x/%x/%x bc=%d/%x/%x/%x/%x bs=%d/%u/%u/%u bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[0],native_adreno_cprobe[1],
+      native_adreno_cprobe[2],native_adreno_cprobe[3],
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[4],native_adreno_cprobe[5],
+      native_adreno_cprobe[6],native_adreno_cprobe[7],
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[8],native_adreno_cprobe[9],
+      native_adreno_cprobe[10],native_adreno_cprobe[11],native_adreno_cprobe[12],
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[13],native_adreno_cprobe[14],
+      native_adreno_cprobe[15],native_adreno_cprobe[16],cb_boot_id);
+    at=put(out,at,cap,cpr,sizeof cpr);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was

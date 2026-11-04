@@ -3,6 +3,7 @@
 // checks the register values, the BLIT2D packet pair, the R32_UINT solid fill
 // bounds, and the color-flush wait. No hardware is touched.
 #include "../package/BoardRuntime/CheeseburgerGpuBlit540.h"
+#include "../package/BoardRuntime/CheeseburgerGpuCompute540.h"
 
 #include <cstdio>
 #include <cstring>
@@ -16,6 +17,7 @@ struct Decoded {
     std::map<uint32_t, uint32_t> regs;
     uint32_t blit2d = 0, end2d = 0, fillPackets = 0, copyPackets = 0, flushPackets = 0, waits = 0;
     uint32_t copyEnd = 0, srcPitch = 0, dstPitch = 0;
+    uint32_t state30 = 0, execPackets = 0, execGroups = 0, flush4 = 0;
     uint32_t fillEnd = 0;
     uint32_t dstSize = 0, solid = 0, dstLo = 0, dstHi = 0;
     uint32_t restoreMode = 0, invalidate = 0;
@@ -48,7 +50,9 @@ bool decode(const uint32_t *w, uint32_t n, Decoded &d) {
             if (body[0] == 0) { ++d.fillPackets; d.fillEnd = body[2]; }
             else { ++d.copyPackets; d.copyEnd = body[2]; }
         }
-        if (op == 0x46 && count == 4) ++d.flushPackets;
+        if (op == 0x46 && count == 4) { ++d.flushPackets; if (body[0] == 4) ++d.flush4; }
+        if (op == 0x30 && count >= 3) ++d.state30;
+        if (op == 0x33 && count == 4) { ++d.execPackets; d.execGroups = body[1]; }
         if (op == 0x3c && count == 6) ++d.waits;
         i += count;
     }
@@ -152,6 +156,35 @@ int main() {
         expect(fb.solidFill(0x2200000ull + uint64_t(i) * 480 * 4352, 1088, 480, 4352,
                             0xff2040c0u + i, scratch), "frame band encodes");
     expect(fe.size() < 2048, "frame stream fits the 2048-word IB");
+
+    // Compute band (sagit dispatch + Mesa IR3 shader). The SSBO is bound to
+    // the scanout band and the geometry covers 64 rows of 1080 pixels.
+    static uint32_t computeStream[2048] = {};
+    Encoder540 ke(computeStream, 2048);
+    expect(ScanBand540::encode(ke, 0x2300000, 0x2100000, 276480, 64, 1080, scratch),
+           "compute stream encodes");
+    expect(ke.size() < 2048, "compute stream fits");
+    Decoded kd;
+    expect(decode(computeStream, ke.size(), kd), "compute stream decodes");
+    expect(kd.regs[REG_A5XX_SP_CS_CONFIG] == A5XX_SP_CS_CONFIG_ENABLED, "CS enabled");
+    expect(kd.regs[REG_A5XX_HLSQ_CS_CONFIG] == A5XX_HLSQ_CS_CONFIG_ENABLED, "HLSQ CS enabled");
+    expect(kd.regs[REG_A5XX_HLSQ_CS_CNTL] & A5XX_HLSQ_CS_CNTL_SSBO_ENABLE, "SSBO enable");
+    expect((kd.regs[REG_A5XX_HLSQ_CS_CNTL] & A5XX_HLSQ_CS_CNTL_INSTRLEN__MASK) ==
+               A5XX_HLSQ_CS_CNTL_INSTRLEN(1), "instrlen");
+    expect((kd.regs[REG_A5XX_SP_CS_CTRL_REG0] & A5XX_SP_CS_CTRL_REG0_FULLREGFOOTPRINT__MASK) ==
+               A5XX_SP_CS_CTRL_REG0_FULLREGFOOTPRINT(2), "full regs");
+    expect((kd.regs[REG_A5XX_SP_CS_CTRL_REG0] & A5XX_SP_CS_CTRL_REG0_THREADSIZE__MASK) ==
+               A5XX_SP_CS_CTRL_REG0_THREADSIZE(1), "thread size");
+    expect(kd.regs[REG_A5XX_SP_CS_OBJ_START] == 0x2300000, "shader object low");
+    expect(kd.regs[REG_A5XX_SP_CS_OBJ_START + 1] == 0, "shader object high");
+    expect((kd.regs[REG_A5XX_HLSQ_CS_CNTL_0] & A5XX_HLSQ_CS_CNTL_0_LOCALIDREGID__MASK) ==
+               A5XX_HLSQ_CS_CNTL_0_LOCALIDREGID(0), "local id register");
+    expect((kd.regs[REG_A5XX_HLSQ_CS_NDRANGE_0] & A5XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX__MASK) ==
+               A5XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX(63), "local size 64");
+    expect(kd.regs[REG_A5XX_HLSQ_CS_NDRANGE_1] == 64 * 1080, "total threads");
+    expect(kd.execPackets == 1 && kd.execGroups == 1080, "dispatch groups");
+    expect(kd.state30 >= 3, "shader load and two SSBO packets");
+    expect(kd.flush4 == 1 && kd.waits >= 1, "shader-memory flush");
 
     // Argument validation.
     static uint32_t more[256] = {};

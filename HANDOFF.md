@@ -1,3 +1,37 @@
+## 2026-11-04：P21-Egret / P21-Gannet（IR3 compute 通路：着色器可汇编并下发，SSBO 写入尚未观察到）
+
+### 一、IR3 工具链（本机可用）
+- 用本机 Mesa 26.2 的 `ir3_parse_asm` + `libfreedreno_ir3` 构建了一个宿主汇编器（`fd_dev_id{gpu_id=540}`、`disable_cache=true`）；命令与头文件路径记录在 `tools/gpu-ir3/README.md`。产物是 a5xx IR3 机器码 + 元数据（instrlen/constlen/max_reg/localid/threadsize）。
+- 两个 shader（源码在 `tools/gpu-ir3/`）：
+  - `scan_band.asm`：`shl.b r1.x, r0.x, 8` → `stib` 写 SSBO0 的第 id 个 dword（id<<8）。
+  - 常量探针：写 `0xdeadbeef`。
+  两者的 32 字 ISA、`instrlen=1`、`constlen=0`、`max_reg=1`、`double_threadsize=1`、`localid=0`、`wgid=252` 均写入 `package/BoardRuntime/CheeseburgerGpuCompute540.h`。
+
+### 二、compute 下发实现（sagit `dispatch` 移植）
+- `ScanBand540::encode()`：`restore()` → SP/HLSQ CS 配置（`SP_CS_CTRL_REG0` THREADSIZE/FULLREGFOOTPRINT、`HLSQ_CS_CNTL` instrlen+SSBO、`HLSQ_CS_CONSTLEN/INSTRLEN`）→ `SP_CS_OBJ_START` 六寄存器 → `HLSQ_UPDATE_CNTL=0x1f00000` → `HLSQ_CS_CNTL_0/1` → CP_LOAD_STATE4 0x30 加载 1 个指令单元 → 两条 SSBO 描述符（state block 15，16 项，尺寸/地址）→ NDRANGE/`KERNEL_GROUP` → CP 0x33 `{0,groups,1,1}` → idle → flush(4)+wait，最后由既有 Engine540 fence 收尾。
+- 内核在 PE 控制台可用的前提下把 GOP 前 64 行（1080×64、pitch 4320，正好线性 276480 B）映射到 GPU VA `0x2100000`，把 ISA 页映射到 `0x2300000`，另把 4 KiB 自有 SSBO 映射到 `0x2400000` 作为“执行与否”的判据。
+- 宿主模型 `tests/gpu_blit540_model.cpp` 覆盖 compute 流：CS/SSBO 寄存器、shader object、NDRANGE、0x33 组数、flush(4)。
+
+### 三、实机结果
+- P21-Egret（boot `0x40a7d465`，日志 `20261104T180726Z`）：compute `rc=0 seq=9 words=360 local=64 groups=1080`，fence 完成，但扫描带采样仍是旧内容 `0xff000000`。
+- P21-Gannet（boot `0x40a6afd2`，日志 `20261104T182302Z`）：加入隔离矩阵后：
+  - 自有 SSBO 常量探针 `rc=0`，采样 `0/0/0/0`（应为 `deadbeef`）；
+  - 自有 SSBO shift 探针 `rc=0`，采样 `0/0/0/0`；
+  - 扫描带常量/shift `rc=0`，采样仍 `ff000000`。
+  - `CB GPU engine: pre pwr ... st=80000101` 在首次 dispatch 后变为 `st=c0000101`（bit30 置位，非 idle），随后用户提交仍成功（`GPSVC err=0`、`GBOD adc0de1/feed0002/600d0003`）。
+- **结论（已确认）**：CP 接受并完成了包含 0x33 的流，但没有观察到任何 SSBO 写入，连自有 4 KiB 缓冲也没有；因此不是 GOP 地址/pitch/映射问题，问题在 CS 启动/状态或完成顺序。GPU 在 dispatch 后处于 busy 状态，不能排除 CS 仍在运行或未真正启动。
+
+### 四、下一步（具体）
+1. 在探针 dispatch 后加 20–100 ms 延时并二次读取（当前在同一毫秒内读取；fence 只证明 CP 消费了 0x33，不证明 CS 完成）。
+2. 变体矩阵（一次启动内）：`HLSQ_CS_CNTL_0` 的 WGID/UNK 由 252 改 0；`THREADSIZE` 0/1；去掉 `SP_CS_CTRL_REG0` 的 0x2/BUFFER 位；local=1、groups=1 的单线程 dispatch。每种写不同常量到自有 SSBO 的不同 dword，读回即可判定哪组状态能启动 CS。
+3. 若仍无写入，按 sagit `dispatch` 补齐 `constantSamplers`/常量上传（即使 constlen=0 也上传一组驱动常量）与 `HLSQ_CS_CNTL_1` 细节；仍保持一次构建一次启动。
+4. compute 写入自有缓冲成功后再回到 GOP 扫描带，最后接 2D/3D 渲染结果。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Egret** | `6c273d9e…` | `afa931aa…` | IR3 compute 首次下发：rc=0/fence，但 SSBO 无写入 |
+  | 2026-11-04 | **P21-Gannet** | `5456b660…` | `e59cbe3c…` | compute 隔离矩阵：自有 SSBO 探针也为 0；dispatch 后 GPU bit30 busy；用户链无回归 |
+
 ## 2026-11-04：P21-Curlew / P21-Dunlin（显示扫描线约束定位：GOP pitch=4320 非 64B 对齐；MDP 帧落在 4 GiB 以上）
 
 ### 一、Curlew：把 P21-Bittern 的静默跳过变成可诊断结果

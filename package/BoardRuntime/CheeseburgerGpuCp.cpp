@@ -25,6 +25,7 @@ static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
 #include "CheeseburgerGpuBlit540.h"
+#include "CheeseburgerGpuCompute540.h"
 extern "C" {
 volatile uint64_t cb_cp[128];
 extern volatile uint64_t cb_smmu[24];
@@ -39,6 +40,7 @@ int cheeseburger_gpu_service_publish(void);
 int cheeseburger_gpu_clear540_test(void);
 int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
 int cheeseburger_gpu_scanout_flip_test(void);
+int cheeseburger_gpu_compute_band_test(void);
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -66,6 +68,13 @@ volatile uint32_t native_adreno_clear[24];
 // GPU->panel handoff (P21-Curlew follow-up): rc, low physical address,
 // stride, four band pixels, the display-hook result and its pipe/ctl.
 volatile uint32_t native_adreno_flip[10];
+// Compute band: rc, sequence, IB words, four samples, match count, band base,
+// buffer bytes and the local/group geometry.
+volatile uint32_t native_adreno_compute[12];
+// Compute isolation matrix: [0] const-probe rc, [1..3] samples; [4] shift-probe
+// rc, [5..7] samples; [8] band-const rc, [9..12] samples; [13] band-shift rc,
+// [14] seq, [15] words, [16] match.
+volatile uint32_t native_adreno_cprobe[20];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
@@ -553,6 +562,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
       if(crc==0&&gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
        const int frc=cheeseburger_gpu_scanout_flip_test();
        IOLog("CB GPU flip: exit rc=%d\n",frc);
+       const int crc2=cheeseburger_gpu_compute_band_test();
+       IOLog("CB GPU compute: exit rc=%d\n",crc2);
       }
      } }
    cb_cp[48]=m.read(CheeseburgerGpu::TrustControl);
@@ -1171,6 +1182,129 @@ extern "C" int cheeseburger_gpu_scanout_flip_test(void){
   (unsigned long long)dout[2],(unsigned long long)dout[3]);
  gFlipRc=drc?drc:0;
  return gFlipRc;
+}
+// ---------------------------------------------------------------------------
+// IR3 compute band on the firmware scanout. The GOP pitch (4320 bytes) blocks
+// the 2D/3D engines, but an SSBO store is byte-addressed: one invocation
+// writes one dword, so 64 full rows are a linear 276480-byte range. The shader
+// and dispatch state follow sagit's compute path; the CPU reads the same
+// physical pages back through an uncached window.
+enum {ComputeRows=64};
+static IOBufferMemoryDescriptor *gComputeShaderBuf=nullptr,*gComputeProbeBuf=nullptr;
+static uint64_t gComputeShaderIova=0,gComputeBandIova=0,gComputeProbeIova=0;
+static volatile uint32_t *gComputeProbeVA=nullptr;
+static uint32_t gComputeSamples[4];
+static int gComputeRc=0xffff;
+static uint32_t computeReadPixel(uint32_t bandPa,uint32_t pitch,uint32_t x,uint32_t y){
+ const uint64_t off=uint64_t(y)*pitch+uint64_t(x)*4;
+ IODeviceMemory *m=IODeviceMemory::withRange(bandPa+(off&~4095ull),4096);
+ if(!m)return 0xdeadbeefu;
+ IOMemoryMap *mp=m->map(kIOMapAnywhere|kIOMapInhibitCache);m->release();
+ if(!mp)return 0xdeadbeefu;
+ volatile uint32_t *v=(volatile uint32_t*)mp->getVirtualAddress();
+ const uint32_t px=v?v[(off&4095)/4]:0xdeadbeefu;
+ mp->release();
+ return px;
+}
+// Copy one 32-word ISA into the mapped shader page, encode the sagit compute
+// stream for it and kick it through the verified engine path.
+static int computeKick(const uint32_t *code,uint64_t shaderVA,uint64_t bufferVA,
+ uint32_t bufferBytes,uint32_t local,uint32_t groups,uint32_t &seq,uint32_t &words){
+ void *va=gComputeShaderBuf?gComputeShaderBuf->getBytesNoCopy():nullptr;
+ if(!va)return -1;
+ memcpy(va,code,128);
+ flush_dcache((vm_offset_t)va,128,FALSE);
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ if(!CheeseburgerGpu::ScanBand540::encode(e,shaderVA,bufferVA,bufferBytes,local,groups,
+    gClearScratchIova))return -2;
+ words=e.size();
+ return clearKick(words,seq);
+}
+extern "C" int cheeseburger_gpu_compute_band_test(void){
+ if(gComputeRc!=0xffff)return gComputeRc;
+ gComputeRc=-1;
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
+    !gClearIbVA||!gClearScratchIova)return gComputeRc;
+ PE_Video v={};
+ if(PE_current_console(&v)||!v.v_baseAddr||v.v_depth!=32||v.v_width<64||
+    v.v_height<ComputeRows||v.v_rowBytes!=uint64_t(v.v_width)*4||(v.v_baseAddr&4095)){
+  IOLog("CB GPU compute: console rejected base=%llx w=%u h=%u pitch=%llu depth=%u\n",
+   (unsigned long long)v.v_baseAddr,v.v_width,v.v_height,
+   (unsigned long long)v.v_rowBytes,v.v_depth);
+  return gComputeRc;
+ }
+ const uint32_t bandBytes=uint32_t(v.v_rowBytes)*ComputeRows;
+ const unsigned pages=(bandBytes+4095)/4096;
+ if(clearMapPhysical(v.v_baseAddr,0x2100000,pages)){
+  IOLog("CB GPU compute: band map failed pa=%llx pages=%u\n",
+   (unsigned long long)v.v_baseAddr,pages);
+  return gComputeRc;
+ }
+ gComputeBandIova=0x2100000;
+ gComputeShaderBuf=clearBuffer(4096);
+ gComputeProbeBuf=clearBuffer(4096);
+ if(!gComputeShaderBuf||!gComputeProbeBuf){
+  IOLog("CB GPU compute: no shader/probe page\n");return gComputeRc;}
+ void *shaderVA=gComputeShaderBuf->getBytesNoCopy();
+ gComputeProbeVA=(volatile uint32_t*)gComputeProbeBuf->getBytesNoCopy();
+ if(!shaderVA||!gComputeProbeVA){IOLog("CB GPU compute: no page view\n");return gComputeRc;}
+ memset((void*)gComputeProbeVA,0,4096);
+ flush_dcache((vm_offset_t)gComputeProbeVA,4096,FALSE);
+ if(clearMap(gComputeShaderBuf,0x2300000,1)||clearMap(gComputeProbeBuf,0x2400000,1)){
+  IOLog("CB GPU compute: probe/shader map failed\n");return gComputeRc;}
+ gComputeShaderIova=0x2300000;gComputeProbeIova=0x2400000;
+ // (a) constant store into our own 4 KiB SSBO; (b) id<<8 into the same page.
+ uint32_t seq=0,words=0;
+ int rc=computeKick(CheeseburgerGpu::Probe540::Code,gComputeShaderIova,gComputeProbeIova,
+  4096,64,16,seq,words);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)gComputeProbeVA,4096,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ native_adreno_cprobe[0]=uint32_t(rc);
+ for(unsigned i=0;i<4;++i)native_adreno_cprobe[1+i]=gComputeProbeVA[i<3?i:1023];
+ IOLog("CB GPU compute: probe const rc=%d seq=%u words=%u px=%x/%x/%x/%x\n",
+  rc,seq,words,gComputeProbeVA[0],gComputeProbeVA[1],gComputeProbeVA[2],gComputeProbeVA[1023]);
+ rc=computeKick(CheeseburgerGpu::ScanBand540::Code,gComputeShaderIova,gComputeProbeIova,
+  4096,64,16,seq,words);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)gComputeProbeVA,4096,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ native_adreno_cprobe[4]=uint32_t(rc);
+ for(unsigned i=0;i<4;++i)native_adreno_cprobe[5+i]=gComputeProbeVA[i<3?i:1023];
+ IOLog("CB GPU compute: probe shift rc=%d seq=%u words=%u px=%x/%x/%x/%x\n",
+  rc,seq,words,gComputeProbeVA[0],gComputeProbeVA[1],gComputeProbeVA[2],gComputeProbeVA[1023]);
+ // (c)/(d) the same two shaders over the scanout band.
+ const uint32_t local=64,pixels=uint32_t(v.v_width)*ComputeRows,groups=pixels/local;
+ static const uint32_t xs[4]={0,1,256,1000},ys[4]={0,0,1,63};
+ rc=computeKick(CheeseburgerGpu::Probe540::Code,gComputeShaderIova,gComputeBandIova,
+  bandBytes,local,groups,seq,words);
+ native_adreno_cprobe[8]=uint32_t(rc);
+ for(unsigned i=0;i<4;++i)
+  native_adreno_cprobe[9+i]=rc?0:computeReadPixel(uint32_t(v.v_baseAddr),uint32_t(v.v_rowBytes),xs[i],ys[i]);
+ IOLog("CB GPU compute: band const rc=%d seq=%u words=%u px=%x/%x/%x/%x\n",
+  rc,seq,words,native_adreno_cprobe[9],native_adreno_cprobe[10],
+  native_adreno_cprobe[11],native_adreno_cprobe[12]);
+ unsigned match=0;
+ rc=computeKick(CheeseburgerGpu::ScanBand540::Code,gComputeShaderIova,gComputeBandIova,
+  bandBytes,local,groups,seq,words);
+ if(!rc)for(unsigned i=0;i<4;++i){
+  const uint32_t id=ys[i]*uint32_t(v.v_width)+xs[i];
+  gComputeSamples[i]=computeReadPixel(uint32_t(v.v_baseAddr),uint32_t(v.v_rowBytes),xs[i],ys[i]);
+  if(gComputeSamples[i]==(id<<8))++match;
+ }
+ native_adreno_compute[0]=uint32_t(rc);native_adreno_compute[1]=seq;native_adreno_compute[2]=words;
+ for(unsigned i=0;i<4;++i)native_adreno_compute[3+i]=gComputeSamples[i];
+ native_adreno_compute[7]=match;native_adreno_compute[8]=uint32_t(v.v_baseAddr);
+ native_adreno_compute[9]=bandBytes;native_adreno_compute[10]=local;native_adreno_compute[11]=groups;
+ native_adreno_cprobe[13]=native_adreno_compute[0];native_adreno_cprobe[14]=native_adreno_compute[1];
+ native_adreno_cprobe[15]=native_adreno_compute[2];native_adreno_cprobe[16]=match;
+ IOLog("CB GPU compute: rc=%d seq=%u words=%u local=%u groups=%u band=%llx bytes=%u px=%x/%x/%x/%x match=%u/4\n",
+  rc,seq,words,local,groups,(unsigned long long)v.v_baseAddr,bandBytes,
+  gComputeSamples[0],gComputeSamples[1],gComputeSamples[2],gComputeSamples[3],match);
+ gComputeRc=rc;
+ return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
