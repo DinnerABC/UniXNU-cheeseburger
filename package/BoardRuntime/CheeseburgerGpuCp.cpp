@@ -51,7 +51,7 @@ volatile uint32_t native_adreno_copy_test[8];
 // Staged gate results: A/B/C rc and engine stage, each stage's three
 // sentinels, stage C's four CP-read words and the kernel's view of the first
 // client IB word.
-volatile uint32_t native_adreno_gate[22];
+volatile uint32_t native_adreno_gate[18];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
 // Low pool: count and first page, filled at probe time.
@@ -73,12 +73,6 @@ int cheeseburger_gpu_smmu_resume_micro(void);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
-namespace CheeseburgerGpu { struct SubmitRecord; }
-static int keepAliveInline(uint32_t,CheeseburgerGpu::SubmitRecord &);
-// Set once a submission, drain or table update cannot be proven safe. Defined
-// here because the probe's handoff keep-alive can fail before the engine's
-// submission entry points are reached.
-static bool gEngineSubmitFailed=false;
 namespace {
 struct W {IOMemoryMap *map=nullptr;volatile uint32_t *v=nullptr;};
 static bool mapw(W &w,uint64_t pa,unsigned size){
@@ -493,18 +487,6 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     IOLog("CB GPU engine: adopt failed; user submits stay refused\n");
     cb_cp[97]=1;
    }
-   // Ring keep-alive at handoff: the gate's first stage (a CP_MEM_WRITE
-   // submitted in the ring) re-run where the probe's own fences just finished.
-   // Running it again after the service publishes attributes a ring that stops
-   // accepting work to the probe, the publish path or the client's map instead
-   // of assuming the last one.
-   if(gEngine540&&gEngine540->ready()){
-    CheeseburgerGpu::SubmitRecord ka;
-    const int k0=keepAliveInline(gFenceSeq+1,ka);
-    native_adreno_gate[18]=uint32_t(k0);native_adreno_gate[19]=ka.stage;
-    IOLog("CB GPU engine: keepalive0 rc=%d stage=%u fr=%x\n",k0,ka.stage,ka.fence);
-    if(k0==0)gFenceSeq=gFenceSeq+1;else gEngineSubmitFailed=true;
-   }
    unsigned svc=0;
    if(PE_parse_boot_argn("cheeseburger-gpu-service",&svc,sizeof svc)&&svc==1){
     int prc=cheeseburger_gpu_service_publish();
@@ -514,15 +496,6 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    {uint64_t after[6];powerCore(gp,after);cb_cp[87]=after[4];cb_cp[88]=after[5];
     IOLog("CB GPU power: after-zap rbccu=%x/%x sp=%x/%x\n",
      uint32_t(after[0]),uint32_t(after[1]),uint32_t(after[2]),uint32_t(after[3]));}
-   // Second keep-alive: after the accelerator is published and Apple's client
-   // stack has had its chance to touch the device, before any BO exists.
-   if(gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
-    CheeseburgerGpu::SubmitRecord kb;
-    const int k1=keepAliveInline(gFenceSeq+1,kb);
-    native_adreno_gate[20]=uint32_t(k1);native_adreno_gate[21]=kb.stage;
-    IOLog("CB GPU engine: keepalive1 rc=%d stage=%u fr=%x\n",k1,kb.stage,kb.fence);
-    if(k1==0)gFenceSeq=gFenceSeq+1;else gEngineSubmitFailed=true;
-   }
    cb_cp[48]=m.read(CheeseburgerGpu::TrustControl);
    cb_cp[60]=m.read(CheeseburgerGpu::MEControl);cb_cp[61]=m.read(CheeseburgerGpu::VBIFHalted);
    cb_cp[105]=m.read(CheeseburgerGpu::RBWrite);
@@ -582,6 +555,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
 // way a user request reaches the CP. Each submit waits for its own fence, so
 // the ring is idle when it wraps and a later BO cannot be freed under an
 // in-flight fetch.
+static bool gEngineSubmitFailed=false;
 // Internal result of the last failed user submission. The persistent log and
 // the heartbeat carry these so a wedged msgbuf does not erase them.
 volatile int32_t native_adreno_submit_rc=-1;
@@ -730,25 +704,6 @@ extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor *
 // until all three pass. After a failure only the fence page and the CPU-owned
 // scratch page are read: no GPU register is sampled (boot 0x47806558 hung
 // there).
-// The gate's first stage used as a handoff keep-alive: one CP_MEM_WRITE
-// submitted in the ring, no indirect buffer, its own fence and its own target
-// so a later run cannot be read as an earlier one's result.
-static int keepAliveInline(uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec){
- if(!gScratchVA||!gScratchGva||!gEngine540)return -1;
- volatile uint32_t *t=gScratchVA+0x1f0;      // byte 0x7c0
- const uint32_t sent[2]={0xc0de0001u,0xc0de0002u};
- uint32_t words[16];
- CheeseburgerGpu::Encoder540 e(words,16);
- if(!e.memWrite(gScratchGva+0x7c0,sent,2))return -1;
- t[0]=0;t[1]=0;
- flush_dcache((vm_offset_t)t,8,FALSE);
- int rc=gEngine540->submit(nullptr,0,sequence,1000000,rec,0,nullptr,words,e.size());
- __asm__ volatile("dsb sy":::"memory");
- flush_dcache((vm_offset_t)t,8,FALSE);
- __asm__ volatile("dsb sy":::"memory");
- if(rc)return rc;
- return (t[0]==sent[0]&&t[1]==sent[1])?0:-2;
-}
 static int gateSubmit(uint32_t sequence,bool useIb,uint32_t ibDwords,
  const uint32_t *inlineWords,uint32_t inlineCount,CheeseburgerGpu::SubmitRecord &rec){
  CheeseburgerGpu::Ib540 one={gScratchGva+0x200,ibDwords};
@@ -880,14 +835,6 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
    IOLockUnlock(gSubmitLock);return prc;
   }
   s=gFenceSeq+1;
- }
- // sheng invalidates the context bank's TLB before every submission
- // (NativeAdrenoVm::invalidateTlb). The engine port dropped that step; it is
- // restored here, before the gate and the client IBs, and refused if it fails.
- if(cheeseburger_gpu_smmu_invalidate()){
-  gEngineSubmitFailed=true;gEngine540->quarantine();
-  native_adreno_submit_rc=-8;native_adreno_submit_stage=0x83;native_adreno_submit_seq=s;
-  IOLockUnlock(gSubmitLock);return -8;
  }
  CheeseburgerGpu::SubmitRecord rec;
  // The probe's streams fetch from 0x2000000 without any CP table packet, so

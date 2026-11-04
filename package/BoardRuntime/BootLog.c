@@ -79,7 +79,7 @@ extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_atos[18] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
 /* Staged submission gate before the first client IB, and the last streams. */
-extern volatile uint32_t native_adreno_gate[22] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_gate[18] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -623,12 +623,9 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    /* Staged gate: A ring-inline write, B the same write through an indirect
     * buffer, C a CP-side read of the client's page. Each shows its rc/stage
     * and sentinels; cp vs kv are the CP's and the kernel's first client word. */
-   if (&native_adreno_gate[0] && (native_adreno_gate[0]|native_adreno_gate[5]|native_adreno_gate[10]|
-       native_adreno_gate[18]|native_adreno_gate[20])) {
+   if (&native_adreno_gate[0] && (native_adreno_gate[0]|native_adreno_gate[5]|native_adreno_gate[10])) {
     char gate[220];
-    snprintf(gate,sizeof gate,"GATE k0=%d/%u k1=%d/%u a=%d/%u %x/%x/%x b=%d/%u %x/%x/%x c=%d/%u cp=%x/%x kv=%x bid=%llx",
-      (int)(int16_t)(uint16_t)native_adreno_gate[18],native_adreno_gate[19],
-      (int)(int16_t)(uint16_t)native_adreno_gate[20],native_adreno_gate[21],
+    snprintf(gate,sizeof gate,"GATE a=%d/%u %x/%x/%x b=%d/%u %x/%x/%x c=%d/%u cp=%x/%x kv=%x bid=%llx",
       (int)(int16_t)(uint16_t)native_adreno_gate[0],native_adreno_gate[1],
       native_adreno_gate[2],native_adreno_gate[3],native_adreno_gate[4],
       (int)(int16_t)(uint16_t)native_adreno_gate[5],native_adreno_gate[6],
