@@ -99,6 +99,11 @@ class AGXDeviceUserClient : public IOUserClient {
     struct Bo {
         uint64_t handle=0,bytes=0,iova=0,physical=0;
         IOBufferMemoryDescriptor *buf=nullptr;
+        // Kernel view of THIS object's first byte. A buffer taken from the
+        // low pool is one page of a shared block, so getBytesNoCopy() alone
+        // points at the block base and made every readback (and the empty-IB
+        // check) look at the wrong page.
+        void *cpu=nullptr;
         IOMemoryDescriptor *desc=nullptr;
         uint32_t token=0;
         bool mapped=false,cpuMapped=false;
@@ -438,7 +443,11 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     IOByteCount span=0;
     uint64_t pa=low?poolPa:buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
     if(!pa||(pa&4095)||(!low&&span<a.bytes)||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
-    void *cpu=buf->getBytesNoCopy();
+    void *block=buf->getBytesNoCopy();
+    IOByteCount span0=0;
+    const uint64_t blockPa=low?buf->getPhysicalSegment(0,&span0,kIOMemoryMapperNone):pa;
+    if(!block||!blockPa||pa<blockPa||pa-blockPa>=a.bytes+4096){buf->release();return kIOReturnNoMemory;}
+    void *cpu=(void*)((uint8_t*)block+(pa-blockPa));
     if(!cpu){buf->release();return kIOReturnNoMemory;}
     // Publish initialized cache lines before the pages are GPU-visible. The
     // WCOMB attribute from b9f698f was removed in boot 0x4a508e1d and changed
@@ -450,6 +459,7 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     bo.bytes=a.bytes;
     bo.physical=pa;
     bo.buf=buf;
+    bo.cpu=cpu;
     // One descriptor object per BO: clientMemoryForType must return this same
     // instance so IOConnectUnmapMemory64 can find and remove the mapping. The
     // descriptor describes the same raw physical range the SMMU maps; its
@@ -571,7 +581,7 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=0;
     native_adreno_submit_staged=0;
     { Bo *ib=find(s.buffers[0].handle);
-      const uint32_t *src=ib&&ib->buf?(const uint32_t*)ib->buf->getBytesNoCopy():nullptr;
+      const uint32_t *src=ib&&ib->cpu?(const uint32_t*)ib->cpu:nullptr;
       __asm__ volatile("dsb sy":::"memory");
       if(src)for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=src[i];
     }
@@ -588,7 +598,7 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     for(unsigned i=0;i<MaxBo;++i){
         Bo &b=bos_[i];
         if(!b.handle||!b.buf)continue;
-        void *p=b.buf->getBytesNoCopy();
+        void *p=b.cpu;
         if(p)flush_dcache((vm_offset_t)p,(unsigned)b.bytes,FALSE);
     }
     __asm__ volatile("dsb sy":::"memory");
@@ -596,7 +606,7 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // the board enables gpu-inline-ib; publish its kernel view here.
     if(s.buffer_count){
         Bo *ib=find(s.buffers[0].handle);
-        void *p=ib&&ib->buf?ib->buf->getBytesNoCopy():nullptr;
+        void *p=ib?ib->cpu:nullptr;
         cb_inline_ib=(volatile uint32_t *)p;
         cb_inline_dwords=(p&&s.buffers[0].bytes<=ib->bytes)?unsigned(s.buffers[0].bytes/4):0;
     }
@@ -606,7 +616,7 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     { unsigned n=0;
       for(unsigned i=0;i<MaxBo&&n<4;++i){ Bo &b=bos_[i];
         if(!b.handle||!b.mapped||!b.buf)continue;
-        const uint32_t *p=(const uint32_t*)b.buf->getBytesNoCopy(); if(!p)continue;
+        const uint32_t *p=(const uint32_t*)b.cpu; if(!p)continue;
         __asm__ volatile("dsb sy":::"memory");
         flush_dcache((vm_offset_t)p,64,FALSE);
         __asm__ volatile("dsb sy":::"memory");
