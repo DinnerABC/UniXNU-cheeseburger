@@ -13,6 +13,8 @@ extern "C" {
 volatile uint32_t native_gop_ready,native_gop_failures;
 volatile uint64_t native_gop_transfers,native_gop_bytes,native_gop_physical,native_gop_virtual;
 volatile uint64_t native_gop_gpu_offers,native_gop_gpu_completions,native_gop_gpu_failures,native_gop_gpu_abandoned;
+/* The live scanout as the GPU needs it: physical base, bytes, stride and packed width/height. Written once in start(). */
+volatile uint64_t native_gop_scanout[4];
 /* waitSwap: [0] calls, [1] timeouts, [2] the requested timeout of the last call (ms), [3] time the last timed-out call really waited (ns), [4] the shortest
  * and [5] the longest such wait (ns), [6] total ns waited in timed-out calls. A timed wait that returns long before its deadline shows here. */
 volatile uint64_t native_gop_wait_stats[7];
@@ -95,6 +97,8 @@ bool NativeGOPPresenter::start(IOService *provider) {
     {unsigned v=0;PE_parse_boot_argn("sheng-fb-gpu",&v,sizeof v);gpuMode=(v==1);}
     mode={NGP_VERSION,NGP_BGRX8888,video.v_width,video.v_height,video.v_rowBytes,mapping->getLength()};
     native_gop_physical=mapping->getPhysicalAddress();native_gop_virtual=mapping->getVirtualAddress();
+    native_gop_scanout[0]=native_gop_physical;native_gop_scanout[1]=mode.bytes;
+    native_gop_scanout[2]=mode.stride;native_gop_scanout[3]=(uint64_t(mode.width)<<32)|mode.height;
     online=true;native_gop_ready=1;if(gpuMode)gHandoff=this;registerService();return true;
 }
 void NativeGOPPresenter::stop(IOService *provider) {
