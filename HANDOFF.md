@@ -1,3 +1,18 @@
+## 2026-11-04：P21-Ruff 结果（合并 sheng 的每次提交 TLBIALL；移除逐行填充；ABI 与 sheng 完全一致）
+
+- **合并的 sheng 案例（`NativeAdrenoVm::invalidateTlb`）**：每次用户提交前对 context bank 做 TLBIALL，避免上一次提交之后新写的 leaf 被陈旧 TLB 命中；失败即 fail-closed（`rc=-8 stage=0x83`）。这是 `Engine540` 移植时丢掉的一步。
+- **移除逐行扫描填充**：`cheeseburger-gpu-fill` 与相关代码整体删除（按用户要求，不再用逐行 `CP_MEM_WRITE` 当绘制手段）。GPU 写扫描线的结论保留在 `P21-Oriole`/`P21-Pintail` 两轮记录里。
+- **ABI 核对（关键发现）**：`package/BoardRuntime/NativeAdrenoABI.h` 与 sheng `Adreno740/NativeAdrenoABI.h` **逐字节相同**（`diff` 为空，各 165 行）。因此 sheng 的前端（Metal 插件 → metal2vulkan → Turnip）在 ABI 层可以直接对接本驱动；缺口只在器件相关的队列/能力字段与 Turnip 的 a5xx 后端。
+- **sheng 前端工件的可得性**：`build-turnip-darwin.py` 引用 `patches/mesa/turnip-darwin-kmd.patch`（`src/freedreno/vulkan/tu_knl_darwin.cc`，即“面向 NativeAdreno IOKit 服务的 Darwin KNL 后端”），但该补丁**不在 sheng 公共仓库 main 的 `patches/` 下**（sparse clone 只拿到 `xnu-12377` 相关补丁，`patches/mesa` 不存在）。这一项需要先向 sheng 取得该补丁或其构建产物，才能继续。
+- **P21-Ruff 实机（日志 `out/p21/persistent-logs/20261104T140947Z/`，400 s 自动回 Recovery）**：`keepalive0/1 rc=0`；门禁 `A/B/C rc=0`；`GPSVC sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`；客户端 `v4`。**TLBIALL 合并未破坏提交链路。**
+- **下一步**：
+  1. 取得 sheng 的 `turnip-darwin-kmd.patch`（或询问作者），按 `build-turnip-darwin.py --target ios` 的流程把 Turnip 的 Darwin KNL 后端接到本驱动；ABI 已对齐，主要工作是 a5xx 的器件能力字段（GMEM、通道数、`fd_dev_info`）与 shader 编译器输入。
+  2. 在此之前，内核侧可以继续补 sheng 的 BO 生命周期语义（`holdJob`/`retireJobAfterCompletion`、`publishForDevice`/`acquireDeviceWrites`），让 Vulkan 前端所需的“提交期间持有、fence 后释放”在 ABI 上完整。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Ruff** | `abb91554…` | `ef6751fe…` | 合并 sheng 每次提交 TLBIALL、删除逐行填充；提交链路仍 device-verified |
+
 ## 2026-11-04：P21-Pintail 结果（扫描线填充改为可校验的 2D 渐变图案）
 
 - **改动**：条带内容从单色改为 2D 图案——红色沿 x 渐变、绿色沿行渐变、蓝固定；回读时用同一公式重算每个采样点，结果是 `match=n/n` 而不是“颜色相同”。
