@@ -758,105 +758,6 @@ static int keepAliveInline(uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec)
  if(rc)return rc;
  return (t[0]==sent[0]&&t[1]==sent[1])?0:-2;
 }
-// First GPU-authored pixels on the panel, following sheng's GpuScanoutPresenter
-// (the GPU writes the frame into the firmware scanout). The scanout pages are
-// mapped into the GPU context ONCE, before gSubmitLock is taken: mapping calls
-// cheeseburger_gpu_smmu_map -> cheeseburger_gpu_mapping_begin, which takes that
-// same non-recursive IOLock (P21-Skua deadlocked by mapping under the lock).
-// The bars are encoded and kicked later, under the lock, a few rows per IB so
-// one submission stays inside the GPMU page.
-enum { FillBars=4, FillPixels=448, FillRows=24, FillRowsPerIb=4 };
-static struct { uint64_t iova; } gFillBar[FillBars];
-static uint32_t gFillBars=0,gFillColor=0,gFillRc=0xffffu,gFillPixel[FillBars];
-static bool gFillWant=false,gFillPrepared=false,gFillDone=false;
-static uint32_t gFillStride=0,gFillHeight=0;
-
-static int fillPrepare(void){
- PE_Video video={};
- if(PE_current_console(&video)||!video.v_baseAddr||!video.v_width||!video.v_height||
-    video.v_depth!=32||video.v_rowBytes<video.v_width*4ull)return -1;
- const uint64_t pa=video.v_baseAddr,stride=video.v_rowBytes;
- const uint64_t imageBytes=stride*uint64_t(video.v_height);
- if(!imageBytes||imageBytes>(1ull<<31))return -1;
- gFillStride=uint32_t(stride);gFillHeight=video.v_height;
- const uint64_t span=uint64_t(FillRows-1)*stride+FillPixels*4;
- for(unsigned i=0;i<FillBars;++i){
-  const uint64_t y=uint64_t(video.v_height)*(i+1)/5;
-  const uint64_t o=y*stride+256;                  // x = 64 pixels
-  const uint64_t page=o&~0xfffull,inPage=o-page;
-  const unsigned pages=unsigned((inPage+span+4095)/4096);
-  if(page+uint64_t(pages)*4096>imageBytes)return -1;
-  const uint64_t base=0x2040000ull+uint64_t(i)*0x20000ull;
-  if(cheeseburger_gpu_smmu_map(base,pa+page,pages))return -2;
-  gFillBar[i].iova=base+inPage;
- }
- gFillBars=FillBars;
- return 0;
-}
-static int fillSubmit(uint32_t color,uint32_t &sequence,uint32_t *submitted){
- if(gFillBars!=FillBars||!gScratchVA||!gScratchGva||!gEngine540)return -1;
- uint32_t *ib=(uint32_t*)((uint8_t*)gScratchVA+0x1000);
- uint32_t px[FillPixels];
- // A known 2D pattern: red ramps across the bar, green ramps down the rows,
- // blue fixed. The readback recomputes the same value, so a wrong pixel is
- // reported instead of "the colour matched".
- auto expected=[&](unsigned gx,unsigned y)->uint32_t{
-  return 0xff000000u|(uint32_t(gx*255/(FillPixels-1))<<16)|
-         (uint32_t(y*255/(gFillHeight?gFillHeight-1:1))<<8)|0x40u; };
- (void)color;
- unsigned row=0,done=0;
- while(row<FillBars*FillRows){
-  CheeseburgerGpu::Encoder540 e(ib,(11884-0x1000)/4);
-  unsigned n=0;
-  for(;n<FillRowsPerIb&&row<FillBars*FillRows;++n,++row){
-   const unsigned bar=row/FillRows,r=row%FillRows;
-   const uint64_t iova=gFillBar[bar].iova+uint64_t(r)*gFillStride;
-   const unsigned y=unsigned(uint64_t(gFillHeight)*(bar+1)/5)+r;
-   for(unsigned x=0;x<FillPixels;++x)px[x]=expected(x,y);
-   if(!e.memWrite(iova,px,FillPixels))return -3;
-  }
-  flush_dcache((vm_offset_t)ib,unsigned(e.size()*4),FALSE);
-  CheeseburgerGpu::Ib540 one={gScratchGva+0x1000,e.size()};
-  CheeseburgerGpu::SubmitRecord rec;
-  const int rc=gEngine540->submit(&one,1,sequence,1000000,rec);
-  if(rc)return rc;
-  ++sequence;++done;
- }
- if(submitted)*submitted=done;
- __asm__ volatile("dsb sy":::"memory");
- PE_Video video={};
- if(!PE_current_console(&video)&&video.v_baseAddr&&video.v_depth==32&&video.v_rowBytes>=video.v_width*4ull){
-  // Three samples per bar, compared against the same formula.
-  unsigned matches=0,samples=0;
-  for(unsigned b=0;b<FillBars;++b){
-   const unsigned y=unsigned(uint64_t(video.v_height)*(b+1)/5)+FillRows/2;
-   const uint64_t base=(uint64_t(y)*video.v_rowBytes)&~0xfffull;
-   IODeviceMemory *m=IODeviceMemory::withRange(video.v_baseAddr+base,4096);
-   if(!m)continue;
-   IOMemoryMap *mp=m->map(kIOMapAnywhere|kIOMapInhibitCache);
-   OSSafeReleaseNULL(m);
-   if(!mp)continue;
-   volatile uint32_t *v=(volatile uint32_t*)mp->getVirtualAddress();
-   if(v){
-    const unsigned xs[3]={64,64+FillPixels/2,64+FillPixels-1};
-    for(unsigned k=0;k<3;++k){
-     const uint64_t o=uint64_t(y)*video.v_rowBytes+uint64_t(xs[k])*4;
-     if((o&~0xfffull)!=base)continue;
-     const uint32_t got=v[(o&0xfff)/4];
-     const uint32_t want=expected(xs[k]-64,y);
-     if(k<2&&b==0)gFillPixel[k]=got;
-     ++samples;if(got==want)++matches;
-    }
-   }
-   mp->release();
-  }
-  gFillPixel[2]=matches;gFillPixel[3]=samples;
- }
- gFillRc=0;
- IOLog("CB GPU fill rc=0 bars=%u rows=%u ibs=%u pattern=gradient px=%x/%x match=%u/%u\n",
-  gFillBars,FillRows,done,gFillPixel[0],gFillPixel[1],gFillPixel[2],gFillPixel[3]);
- return 0;
-}
 static int gateSubmit(uint32_t sequence,bool useIb,uint32_t ibDwords,
  const uint32_t *inlineWords,uint32_t inlineCount,CheeseburgerGpu::SubmitRecord &rec){
  CheeseburgerGpu::Ib540 one={gScratchGva+0x200,ibDwords};
@@ -932,14 +833,6 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  if(!gEngine||!gRing||!gFence||!gFenceGva||!gSubmitLock||!seq||count>16||(count&&(!vas||!dwords)))return -1;
  CheeseburgerGpu::Ib540 ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
- // Boot-arg gated scanout fill, part one: map the scanout into the GPU now,
- // while no submission lock is held. A failure only disables the fill.
- { unsigned fill=0;
-   if(!gFillPrepared){gFillPrepared=true;
-    gFillWant=(PE_parse_boot_argn("cheeseburger-gpu-fill",&fill,sizeof fill)&&fill);
-    gFillColor=fill==1?0xff00ff00u:uint32_t(fill);
-    if(gFillWant){const int frc=fillPrepare();if(frc)gFillRc=uint32_t(frc);}}
- }
  IOLockLock(gSubmitLock);
  // A submission that failed may have left the CP fetching a bad IB. Fail
  // closed until reboot; the engine refuses as well, so neither the ring nor a
@@ -960,6 +853,13 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
   IOLockUnlock(gSubmitLock);return pwr;
  }
  uint32_t s=gFenceSeq+1;if(!s)s=1;
+ // sheng NativeAdrenoVm::invalidateTlb: a bank TLBIALL before every submission,
+ // so a leaf written since the last kick cannot be served from a stale entry.
+ if(cheeseburger_gpu_smmu_invalidate()){
+  gEngineSubmitFailed=true;gEngine540->quarantine();
+  native_adreno_submit_rc=-8;native_adreno_submit_stage=0x83;native_adreno_submit_seq=s;
+  IOLockUnlock(gSubmitLock);return -8;
+ }
  // Software translation gate for every submitted IB. The pinned ATOS helper
  // rewrites the live CB0, so when the kit owns the context its LiveUpdate is
  // the only authority; a leaf missing from the kit's ledger is refused here.
@@ -1022,14 +922,6 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
      IOLockUnlock(gSubmitLock);return 0;
     }
    } }
- // Scanout fill, part two: the ring work itself, under the lock, once.
- if(gFillWant&&!gFillDone&&gFillRc==0xffffu&&gFillBars==FillBars&&gEngine540&&gEngine540->ready()){
-  gFillDone=true;
-  uint32_t used=0;
-  const int frc=fillSubmit(gFillColor,s,&used);   // advances s past every IB it kicked
-  if(frc==0){gFenceSeq=s-1;IOLog("CB GPU fill seq last=%u\n",s-1);}
-  else {gFillRc=uint32_t(frc);IOLog("CB GPU fill failed rc=%d; submissions continue\n",frc);}
- }
  CheeseburgerGpu::SubmitRecord rec;
  // The probe's streams fetch from 0x2000000 without any CP table packet, so
  // the table CB0 already holds is the one the CP walks. sagit's per-job
