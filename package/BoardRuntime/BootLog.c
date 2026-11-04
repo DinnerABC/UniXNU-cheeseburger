@@ -77,6 +77,8 @@ extern volatile uint32_t native_adreno_pa_test[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ib_head[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_dump[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bo_atos[18] __attribute__((weak_import));
+/* Turnip tunnel: calls carrying the NTNL header, and selector probes. */
+extern volatile uint64_t native_adreno_tunnel[2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
 /* Staged submission gate before the first client IB, and the last streams. */
 extern volatile uint32_t native_adreno_gate[22] __attribute__((weak_import));
@@ -701,6 +703,12 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    snprintf(lowl,sizeof lowl,"GLOW low=%llu high=%llu bid=%llx",
      native_adreno_bo_low[0],native_adreno_bo_low[1],cb_boot_id);
    at=put(out,at,cap,lowl,sizeof lowl);
+  }
+  if (&native_adreno_tunnel[0] && (native_adreno_tunnel[0]|native_adreno_tunnel[1])) {
+   char tun[96];
+   snprintf(tun,sizeof tun,"GTUN calls=%llu probes=%llu bid=%llx",
+     (unsigned long long)native_adreno_tunnel[0],(unsigned long long)native_adreno_tunnel[1],cb_boot_id);
+   at=put(out,at,cap,tun,sizeof tun);
   }
   if (&native_adreno_bo_atos[0] && native_adreno_bo_atos[16]) {
     unsigned rows=native_adreno_bo_atos[16]<2?native_adreno_bo_atos[16]:2;

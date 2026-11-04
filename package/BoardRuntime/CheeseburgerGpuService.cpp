@@ -28,6 +28,8 @@
 
 extern "C" {
 volatile uint64_t native_adreno_service_stats[20];
+// Turnip tunnel: [0] calls carrying the NTNL header, [1] selector probes.
+volatile uint64_t native_adreno_tunnel[2];
 volatile uint64_t native_adreno_client_uid=~0ull;
 char native_adreno_client_name[17];
 volatile int native_adreno_open_stage;
@@ -107,7 +109,20 @@ class AGXDeviceUserClient : public IOUserClient {
         IOMemoryDescriptor *desc=nullptr;
         uint32_t token=0;
         bool mapped=false,cpuMapped=false;
+        // An imported BO wraps the caller's own pages; a BO may therefore be
+        // several physically contiguous runs that are mapped one by one.
+        bool imported=false;
+        struct Span { uint64_t iova; uint64_t pa; uint32_t pages; };
+        Span spans[64]={};
+        unsigned spanCount=0;
+        // Submissions that still reference this object. A held BO is never
+        // unmapped or released, whatever the client asks for.
+        unsigned held=0;
     };
+    // Jobs the engine may still be reading: the handles a submission named,
+    // released only when its fence is observed complete.
+    struct Job { uint32_t fence=0; unsigned count=0; uint64_t handles[16]={}; };
+    Job jobs_[8]={};
     Bo *bos_=nullptr;
     IOLock *lock_=nullptr;
     bool live_=false;
@@ -122,6 +137,8 @@ class AGXDeviceUserClient : public IOUserClient {
     IOReturn boAlloc(const NativeAdrenoAbiBoAlloc &,NativeAdrenoAbiBoAllocReply &);
     IOReturn boMap(const NativeAdrenoAbiBoMap &,NativeAdrenoAbiBoMapReply &);
     IOReturn boFree(uint64_t);
+    IOReturn boImport(const NativeAdrenoAbiBoImport &,NativeAdrenoAbiBoAllocReply &);
+    void releaseJob(uint32_t fence);
     IOReturn boCpuMap(uint64_t,NativeAdrenoAbiBoCpuMapReply &);
     IOReturn boCpuUnmap(uint64_t,uint32_t);
     IOReturn submit(const NativeAdrenoAbiSubmit &,NativeAdrenoAbiSubmitReply &);
@@ -310,9 +327,17 @@ void AGXDeviceUserClient::dropView(Bo &bo) {
 }
 bool AGXDeviceUserClient::freeBo(Bo &bo) {
     if(!bo.handle)return true;
+    // A job that has not reported its fence may still fetch this memory.
+    if(bo.held)return false;
     dropView(bo);
     auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
-    auto unmap=[&](){ return cheeseburger_gpu_smmu_unmap(bo.iova,unsigned(bo.bytes/4096)); };
+    auto unmap=[&](){
+        if(!bo.spanCount)return cheeseburger_gpu_smmu_unmap(bo.iova,unsigned(bo.bytes/4096));
+        int rc=0;
+        for(unsigned i=0;i<bo.spanCount;++i)
+            if(cheeseburger_gpu_smmu_unmap(bo.spans[i].iova,bo.spans[i].pages))rc=-1;
+        return rc;
+    };
     if(!CheeseburgerGpu::releaseMappedBuffer(bo.mapped,idle,unmap)){
         // The pages may still be reachable from the GPU, or the SMMU could not
         // be updated: keep the object and its mapping, and retire the IOVA for
@@ -322,10 +347,13 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
         return false;
     }
     if(bo.mapped)native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
+    // An imported BO unwires the caller's pages; their cache mode is the
+    // caller's and must not be touched here.
+    if(bo.imported&&bo.desc)bo.desc->complete(kIODirectionInOut);
     OSSafeReleaseNULL(bo.desc);
     // Restore the VM's default page attributes only after the GPU can no
     // longer access this BO. This mirrors sheng's owned BO lifecycle.
-    if(bo.physical)
+    if(!bo.imported&&bo.physical)
         for(uint64_t off=0;off<bo.bytes;off+=4096)
             pmap_set_cache_attributes((ppnum_t)((bo.physical+off)>>12),VM_WIMG_USE_DEFAULT);
     OSSafeReleaseNULL(bo.buf);
@@ -409,7 +437,9 @@ IOReturn AGXDeviceUserClient::deviceInfo(NativeAdrenoAbiDeviceInfo &d) {
 IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdrenoAbiBoAllocReply &r) {
     uint64_t start=0,window=0;
     if(cheeseburger_gpu_engine_window(&start,&window)||!window)return kIOReturnNotReady;
-    if(!a.bytes||(a.bytes&4095)||a.bytes>window||a.align_log2<12||a.align_log2>24||!a.contiguous)
+    // contiguous is a hint: a physically contiguous allocation also satisfies
+    // a non-contiguous request, which is what Turnip's Darwin backend asks for.
+    if(!a.bytes||(a.bytes&4095)||a.bytes>window||a.align_log2<12||a.align_log2>24)
         return kIOReturnBadArgument;
     unsigned index=MaxBo;
     for(unsigned i=0;i<MaxBo;++i)if(!bos_[i].handle){index=i;break;}
@@ -502,13 +532,32 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
         if(!o.handle||!o.mapped)continue;
         if(m.iova<o.iova+o.bytes&&o.iova<m.iova+bo->bytes)return kIOReturnBusy;
     }
-    // The low pool hands out pages of one contiguous block, so use the exact
-    // physical address recorded at allocation instead of re-reading only the
-    // block's first segment.
-    uint64_t pa=bo->physical;
-    if(!pa||(pa&4095))return kIOReturnNoMemory;
-    int rc=cheeseburger_gpu_smmu_map(m.iova,pa,unsigned(bo->bytes/4096));
+    // Allocated BOs are one physically contiguous run; an imported BO may be
+    // scattered over the caller's pages, so every run is mapped at its offset.
+    bo->spanCount=0;
+    int rc=0;
+    if(!bo->imported){
+        const uint64_t pa=bo->physical;
+        if(!pa||(pa&4095))return kIOReturnNoMemory;
+        if(cheeseburger_gpu_smmu_map(m.iova,pa,unsigned(bo->bytes/4096)))rc=-1;
+        else {bo->spans[0]={m.iova,pa,unsigned(bo->bytes/4096)};bo->spanCount=1;}
+    } else {
+        IOByteCount off=0;
+        while(!rc&&off<bo->bytes&&bo->spanCount<64){
+            IOByteCount seg=0;
+            const uint64_t pa=bo->desc?bo->desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone):0;
+            if(!pa||!seg){rc=-1;break;}
+            if(seg>bo->bytes-off)seg=bo->bytes-off;
+            const unsigned pages=unsigned((seg+4095)/4096);
+            if(cheeseburger_gpu_smmu_map(m.iova+off,pa,pages)){rc=-1;break;}
+            bo->spans[bo->spanCount++]={m.iova+off,pa,pages};
+            off+=uint64_t(pages)*4096;
+        }
+        if(!rc&&off<bo->bytes)rc=-1;
+    }
     if(rc){
+        for(unsigned i=0;i<bo->spanCount;++i)cheeseburger_gpu_smmu_unmap(bo->spans[i].iova,bo->spans[i].pages);
+        bo->spanCount=0;
         // A failed map should leave no entry, but if the rollback cannot sync
         // the TLB the IOVA is retired rather than offered to another map.
         if(cheeseburger_gpu_smmu_unmap(m.iova,unsigned(bo->bytes/4096)))
@@ -534,6 +583,46 @@ IOReturn AGXDeviceUserClient::boFree(uint64_t handle) {
     native_adreno_service_stats[3]=native_adreno_service_stats[3]+1;
     return kIOReturnSuccess;
 }
+// Pin the calling task's own pages as a BO (NativeAdrenoAbiBoImport): the
+// caller keeps its CPU mapping and cache mode and maintains them; the pages
+// stay wired until BoFree, which is refused while a job still references them.
+IOReturn AGXDeviceUserClient::boImport(const NativeAdrenoAbiBoImport &a,NativeAdrenoAbiBoAllocReply &r) {
+    if(!a.address||!a.bytes||(a.bytes&4095)||(a.address&4095)||a.bytes>(1ull<<36))
+        return kIOReturnBadArgument;
+    unsigned index=MaxBo;
+    for(unsigned i=0;i<MaxBo;++i)if(!bos_[i].handle){index=i;break;}
+    if(index==MaxBo)return kIOReturnNoResources;
+    IOMemoryDescriptor *d=IOMemoryDescriptor::withAddressRange(a.address,(IOByteCount)a.bytes,
+        kIODirectionInOut,task_);
+    if(!d)return kIOReturnNoMemory;
+    if(d->prepare(kIODirectionInOut)!=kIOReturnSuccess){d->release();return kIOReturnNoMemory;}
+    IOByteCount seg=0;
+    const uint64_t first=d->getPhysicalSegment(0,&seg,kIOMemoryMapperNone);
+    if(!first||!seg){d->complete(kIODirectionInOut);d->release();return kIOReturnNoMemory;}
+    Bo &bo=bos_[index];
+    bo=Bo();
+    bo.handle=uint64_t(index)+1;
+    bo.bytes=a.bytes;
+    bo.physical=first;
+    bo.desc=d;
+    bo.imported=true;
+    bo.token=BoTokenBase+index;
+    r.handle=bo.handle;
+    native_adreno_service_stats[2]=native_adreno_service_stats[2]+1;
+    native_adreno_service_stats[12]=native_adreno_service_stats[12]+a.bytes;
+    return kIOReturnSuccess;
+}
+// A job's fence was observed complete: the handles it named may be released.
+void AGXDeviceUserClient::releaseJob(uint32_t fence) {
+    for(unsigned j=0;j<8;++j){
+        if(jobs_[j].fence!=fence)continue;
+        for(unsigned k=0;k<jobs_[j].count;++k){
+            Bo *b=find(jobs_[j].handles[k]);
+            if(b&&b->held)b->held--;
+        }
+        jobs_[j]=Job();
+    }
+}
 IOReturn AGXDeviceUserClient::boCpuMap(uint64_t handle,NativeAdrenoAbiBoCpuMapReply &r) {
     Bo *bo=find(handle);
     if(!bo||!bo->desc)return kIOReturnBadArgument;
@@ -550,8 +639,11 @@ IOReturn AGXDeviceUserClient::boCpuUnmap(uint64_t handle,uint32_t token) {
 IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdrenoAbiSubmitReply &r) {
     if(s.buffer_count<1||s.buffer_count>NativeAdrenoAbiMaxBuffers||s.reserved)
         return kIOReturnBadArgument;
-    if(s.wait_fence && cheeseburger_gpu_engine_wait(uint32_t(s.wait_fence),s.wait_timeout_ns?s.wait_timeout_ns:1000000000ull))
-        return kIOReturnTimeout;
+    if(s.wait_fence){
+        if(cheeseburger_gpu_engine_wait(uint32_t(s.wait_fence),s.wait_timeout_ns?s.wait_timeout_ns:1000000000ull))
+            return kIOReturnTimeout;
+        releaseJob(uint32_t(s.wait_fence));
+    }
     uint64_t vas[NativeAdrenoAbiMaxBuffers];
     uint32_t dwords[NativeAdrenoAbiMaxBuffers];
     for(unsigned i=0;i<s.buffer_count;++i) {
@@ -636,6 +728,19 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;
     if(rc){native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;return kIOReturnIOError;}
     r.fence=seq;
+    // Hold every object this submission named until its fence is observed
+    // complete; a client that frees one earlier keeps the pages instead.
+    { uint64_t hs[16]={};unsigned n=0;
+      for(unsigned i=0;i<s.buffer_count&&n<16;++i){
+        const uint64_t h=s.buffers[i].handle;bool dup=false;
+        for(unsigned j=0;j<n;++j)if(hs[j]==h)dup=true;
+        if(!dup)hs[n++]=h;
+      }
+      for(unsigned j=0;j<8;++j)if(!jobs_[j].fence){
+        jobs_[j].fence=seq;jobs_[j].count=n;
+        for(unsigned k=0;k<n;++k){jobs_[j].handles[k]=hs[k];Bo *b=find(hs[k]);if(b)b->held++;}
+        break;
+      } }
     native_adreno_service_stats[8]=native_adreno_service_stats[8]+1;
     return kIOReturnSuccess;
 }
@@ -644,6 +749,7 @@ IOReturn AGXDeviceUserClient::waitFence(const NativeAdrenoAbiWaitFence &w) {
     if(!w.fence)return kIOReturnBadArgument;
     uint64_t timeout=w.timeout_ns?w.timeout_ns:1000000ull;
     int rc=cheeseburger_gpu_engine_wait(uint32_t(w.fence),timeout);
+    if(!rc)releaseJob(uint32_t(w.fence));
     return rc?kIOReturnTimeout:kIOReturnSuccess;
 }
 IOReturn AGXDeviceUserClient::run(uint32_t method,const void *input,size_t input_size,void *output,size_t output_size) {
@@ -737,9 +843,12 @@ IOReturn AGXDeviceUserClient::run(uint32_t method,const void *input,size_t input
         NativeAdrenoAbiQueue q{};memcpy(&q,input,sizeof q);
         status=q.queue==1?kIOReturnSuccess:kIOReturnBadArgument;
         break;}
-    case NativeAdrenoMethodBoImport:
-        status=kIOReturnUnsupported;
-        break;
+    case NativeAdrenoMethodBoImport: {
+        if(input_size!=sizeof(NativeAdrenoAbiBoImport)||output_size!=sizeof(NativeAdrenoAbiBoAllocReply))break;
+        NativeAdrenoAbiBoImport a{};NativeAdrenoAbiBoAllocReply rp{};
+        memcpy(&a,input,sizeof a);status=boImport(a,rp);
+        if(!status)memcpy(output,&rp,sizeof rp);
+        break;}
     default:
         status=kIOReturnUnsupported;
         break;
@@ -759,6 +868,19 @@ IOReturn AGXDeviceUserClient::externalMethod(uint32_t selector,IOExternalMethodA
     // Only the 0x4147 client owns the ring, the BOs and the mappings; the
     // discovery's other-type device client stays connected but sees no ABI.
     if(!abi_)return kIOReturnUnsupported;
+    // Turnip's Darwin backend reaches the ABI through one admitted selector:
+    // a struct call whose first two words are {'NTNL', method}. The probe
+    // (method 0xffffffff) answers success for every selector the sandbox lets
+    // through; a real call carries the method's own record after the header.
+    if(arguments&&arguments->structureInput&&arguments->structureInputSize>=8){
+        const uint32_t *h=(const uint32_t*)arguments->structureInput;
+        if(h[0]==0x4e544e4cu){
+            native_adreno_tunnel[0]=native_adreno_tunnel[0]+1;
+            if(h[1]==0xffffffffu){native_adreno_tunnel[1]=native_adreno_tunnel[1]+1;return kIOReturnSuccess;}
+            return run(h[1],(const uint8_t*)arguments->structureInput+8,
+                arguments->structureInputSize-8,arguments->structureOutput,arguments->structureOutputSize);
+        }
+    }
     static const IOExternalMethodDispatch table[]={
         {&action,0,0,0,sizeof(NativeAdrenoAbiParams)},
         {&action,0,sizeof(NativeAdrenoAbiBoAlloc),0,sizeof(NativeAdrenoAbiBoAllocReply)},
