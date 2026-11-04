@@ -1,3 +1,14 @@
+## 2026-11-04：P21-Quail 结果（握手 keep-alive + 每次提交 TLBI，启动后未回 Recovery，已回退）· 基线 = P21-Merlin
+
+- **改动（提交 `d52ea88`）**：把门禁第一段（ring 内联 `CP_MEM_WRITE` + fence）在**探针 fence 之后**（`k0`）和**服务发布之后**（`k1`）各再跑一次，用来区分“CP 在探针处就停了 / 发布路径 / 客户端映射”；同时恢复 sheng `NativeAdrenoVm::invalidateTlb` 的每次提交前 bank TLBIALL（`CheeseburgerGpuEngine540` 移植时丢失的一步）。宿主模型与内核语法检查通过。
+- **P21-Quail 实机**：`out/p21/p21-quail/uefi/boot-p21-up1.img` SHA-256 `ea3d323a5f9cef558d6619dc0b6c02395c55ecc97b70d556f66b910b940d4c2f`，内核 `a19bb207…`，固件 `da3f09b1…`，payload 展开 `df898d6a…`，gate `20261104T090403Z` PASS（670 B）。09:04:27Z 单次 `fastboot boot` Sending/Booting OKAY；**到 09:13:35Z 仍未回到 Recovery，也没有出现在 `adb devices` / `fastboot devices` / IOUSB 枚举中**（与 P21-Harrier 相同签名）。设备电源/屏幕状态未由本轮观察，400 s 自动返回没有产生落点。
+- **处理（提交 `d6f18f4`）**：整体回退 `d52ea88`，工作树回到 P21-Merlin（`a14fc50`，`git diff a14fc50 -- package tests` 为 0）——该版本映射成功、门禁运行、可启动并自动返回。
+- **未确认**：Quail 卡住的具体步骤（没有日志）。`k0` 段是新增代码中最早执行、也最可疑的一处：它在 ZAP 之后、服务发布之前直接向 ring 提交并轮询 fence；若要重新引入，应先只保留 `k0`（不恢复 TLBI），并给它一个更短的有界等待和“失败即放弃整个 GPU 服务”的明确路径。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Quail** | `ea3d323a…` | `a19bb207…` | 握手 keep-alive（k0/k1）+ 每次提交 TLBI；启动后未回 Recovery、USB 未枚举，已回退 |
+
 ## 2026-11-04：P21-Nighthawk / P21-Peregrine 结果（强制停流使 BO 映射失败，已回退）· 当前基线 = P21-Merlin
 
 - **P21-Nighthawk（boot `0x478151eb`，日志 `out/p21/persistent-logs/20261104T083113Z/`）**：`GPSVC map=0 sel=3 err=1 st=e00002bd`、`sub=0`——客户端 BO 映射被 `cheeseburger_gpu_mapping_begin` 拒绝，没有任何提交；系统仍正常启动并自动回 Recovery。
