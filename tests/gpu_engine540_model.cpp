@@ -99,7 +99,7 @@ int main() {
         check(r.fenced && e.lastCompleted() == 3, "fence recorded");
         check(m.seenIbs == 1, "one indirect buffer");
         check(m.sawBarrierBeforeIb, "barrier before the IB");
-        check(r.words == 2 + 2 + 4 + 2 + 2 + 5, "stream words");
+        check(r.words == 2 + 4 + 2 + 5, "stream words");
         check(m.fence[0] == 0 && m.fence[1] == 3, "timestamp at +4 only");
         check(e.ready(), "engine still ready");
         // 2. A second stream is allowed once the first completed.

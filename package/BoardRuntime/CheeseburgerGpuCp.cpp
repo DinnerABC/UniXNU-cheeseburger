@@ -791,9 +791,6 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
    gEngineSubmitFailed=true;gEngine540->quarantine();
    native_adreno_submit_rc=prc;native_adreno_submit_stage=pre.stage?pre.stage:0x90;
    native_adreno_submit_seq=s;native_adreno_submit_fence_raw=pre.fence;
-   native_adreno_submit_irq=pre.irqAfter;native_adreno_submit_cpirq=pre.cpirqAfter;
-   native_adreno_submit_preirq=pre.preIrq;native_adreno_submit_precpirq=pre.preCpIrq;
-   native_adreno_submit_prefence=pre.rptr;
    IOLockUnlock(gSubmitLock);return prc;
   }
   gFenceSeq=s;++s;
@@ -808,18 +805,17 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  else {
   gEngineSubmitFailed=true;
   native_adreno_submit_rc=rc;native_adreno_submit_stage=rec.stage;
-  // Pre-kick latches and the one bounded post-timeout sample; 0xffffffff marks
-  // a register the bus could not deliver.
-  native_adreno_submit_irq=rec.irqAfter;native_adreno_submit_cpirq=rec.cpirqAfter;
+  // No post-doorbell MMIO read happened: the IRQ fields are unknown, not zero.
+  native_adreno_submit_irq=0xffffffffu;native_adreno_submit_cpirq=0xffffffffu;
   native_adreno_submit_seq=s;native_adreno_submit_post=0;
-  native_adreno_submit_preirq=rec.preIrq;native_adreno_submit_precpirq=rec.preCpIrq;
+  native_adreno_submit_preirq=0;native_adreno_submit_precpirq=0;
   native_adreno_submit_fenced=rec.fenced?1:0;
   native_adreno_submit_prefence=rec.rptr;
   native_adreno_submit_prefence_valid=0;
   native_adreno_submit_fence_raw=rec.fence;
   static unsigned logged;
-  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rb=%x/%x fenced=%u fr=%x ring=%u\n",
-    rc,rec.stage,s,rec.readAfter,rec.writeAfter,(unsigned)rec.fenced,rec.fence,rec.words);
+  if(logged++<4)IOLog("CB GPU engine: submit rc=%d stage=%u seq=%u rptr=%x wptr=%x fenced=%u fr=%x ring=%u\n",
+    rc,rec.stage,s,rec.rptr,rec.wptr,(unsigned)rec.fenced,rec.fence,rec.words);
  }
  IOLockUnlock(gSubmitLock);
  return rc;

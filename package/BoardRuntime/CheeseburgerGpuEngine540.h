@@ -25,11 +25,6 @@ struct SubmitRecord {
     uint32_t wptr = 0;       // producer cursor after this stream
     uint32_t fence = 0;      // fence page +4: the completion timestamp
     uint32_t words = 0;      // ring dwords this stream occupied
-    // Latches sampled before the doorbell, and the one bounded register sample
-    // taken after a timeout. 0xffffffff means the bus could not be read.
-    uint32_t preIrq = 0, preCpIrq = 0;
-    uint32_t readAfter = 0xffffffffu, writeAfter = 0xffffffffu;
-    uint32_t irqAfter = 0xffffffffu, cpirqAfter = 0xffffffffu;
     bool wrapped = false;
     bool fenced = false;
     bool timedOut = false;
@@ -60,13 +55,6 @@ public:
     }
     bool barrier() {
         return packet(0x12, nullptr, 0) && packet(0x26, nullptr, 0);
-    }
-    // CP_SET_PROTECTED_MODE. The GPMU upload runs its indirect buffer inside
-    // this pair (sagit AdrenoStartup::gpmu); user work is submitted the same
-    // way so the CP fetches it under the mode the ring was proven with.
-    bool protectedMode(uint32_t enable) {
-        const uint32_t v = enable ? 1u : 0u;
-        return packet(0x5f, &v, 1);
     }
     bool indirect(uint64_t va, uint32_t dwords) {
         const uint32_t d[3] = {uint32_t(va), uint32_t(va >> 32), dwords};
@@ -185,24 +173,13 @@ public:
         // of the producer means the state is not the one this engine left.
         const uint32_t hw = r.read(RBRead);
         if (hw >= ringDwords || hw != read) { broken = true; rec.stage = 1; rec.broken = true; return -2; }
-        // sagit samples the latches before publishing a stream and refuses to
-        // kick into a CP fault. A completion bit left by an earlier stream is
-        // acknowledged here, exactly as Startup::submit did.
-        rec.preIrq = r.read(InterruptStatus);
-        rec.preCpIrq = r.read(CPInterruptStatus);
-        if (rec.preIrq == 0xffffffffu || rec.preCpIrq == 0xffffffffu ||
-            (rec.preCpIrq & 0x3f) || (rec.preIrq & ErrorIRQs)) {
-            broken = true; rec.stage = 4; rec.broken = true; return -6;
-        }
-        r.write(InterruptClear, OwnedIRQs);
 
         uint32_t staged[StageDwords];
         Encoder540 e(staged, StageDwords);
-        bool ok = e.barrier() && e.protectedMode(0);
+        bool ok = e.barrier();
         if (ok && ttbr) ok = e.pageTable(ttbr);
         if (ok && prelude) ok = e.indirect(prelude->va, prelude->dwords);
         for (uint32_t i = 0; ok && i < count; ++i) ok = e.indirect(ibs[i].va, ibs[i].dwords);
-        if (ok) ok = e.protectedMode(1);
         if (ok) ok = e.barrier();
         if (ok) ok = e.fence(fenceVA, sequence);
         if (!ok) { rec.stage = 3; return -3; }
@@ -249,14 +226,9 @@ public:
             }
             r.delay(10);
         }
-        // The CP did not report this stream. One bounded sample, taken before
-        // anything else, separates a doorbell the CP never saw (write pointer
-        // and read pointer unchanged) from a consumed stream whose timestamp
-        // was lost. An unreadable bus leaves 0xffffffff in every field.
-        rec.readAfter = r.read(RBRead);
-        rec.writeAfter = r.read(RBWrite);
-        rec.irqAfter = r.read(InterruptStatus);
-        rec.cpirqAfter = r.read(CPInterruptStatus);
+        // The CP did not report this stream. Do not read the GPU bus again and
+        // do not release anything: the ring, its IBs and any mapping they cite
+        // stay owned for the rest of the boot.
         rec.rptr = fence[0];
         rec.timedOut = true; rec.broken = true; rec.stage = 5;
         broken = true;
