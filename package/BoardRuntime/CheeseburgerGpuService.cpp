@@ -453,7 +453,9 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
         // refusing an allocation that used to succeed.
         IOByteCount span0=0;
         const uint64_t blockPa=buf->getPhysicalSegment(0,&span0,kIOMemoryMapperNone);
-        if(blockPa&&pa>=blockPa&&pa-blockPa<8192)cpu=(void*)((uint8_t*)block+(pa-blockPa));
+        const IOByteCount blockLen=buf->getLength();
+        if(blockPa&&pa>=blockPa&&a.bytes<=blockLen&&pa-blockPa<=blockLen-a.bytes)
+            cpu=(void*)((uint8_t*)block+(pa-blockPa));
         else IOLog("CB GPU bo: pool view fallback pa=%llx base=%llx\n",
             (unsigned long long)pa,(unsigned long long)blockPa);
     }
