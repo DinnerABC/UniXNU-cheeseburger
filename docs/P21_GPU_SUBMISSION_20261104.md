@@ -15,11 +15,24 @@ later reader can re-check them.
 | GPU write into the client's target BO, CPU readback | `GBOD 1:adc0de1/feed0002/600d0003` — exactly the three values in the client IB |
 | Fence completion and wait | `GPSVC sub=1 fence=1 wait=1 err=0`, client report `P21 plugin done s12 e0 v4` (4/4 checks) |
 | BO unmap and release | `GPSVC unmap=2 free=2 err=0` |
+| GPU-authored pixels on the panel | four 24-row bars written by the CP into the firmware scanout, middle row of each reads back the written colour (`CB GPU fill rc=0 bars=4 rows=24 ibs=24 px=ff00ff00/…`), visible on the panel (P21-Oriole) |
 
 Round: `P21-Linnet`, boot `0x477aef4e`,
 log `out/p21/persistent-logs/20261104T110602Z/`, image
 `d496059936e5c6d33b27f55d97c0fbf82b328e2108659eac05422b610719bd21`, kernel
 `1282e4a4f6677e61c3d4f271459a565450840018ec230e8891b745584d825276`.
+
+## Scanout fill
+
+`cheeseburger-gpu-fill=<argb>` paints bars into the buffer named by
+`PE_current_console()` — the firmware console frame buffer the panel scans,
+the same memory the boot text and the early stage bars use. The scanout pages
+are mapped once, before the submission lock is taken, because
+`cheeseburger_gpu_smmu_map` takes that same non-recursive lock through
+`cheeseburger_gpu_mapping_begin` (mapping under the lock deadlocked a boot).
+The rows are then written by `CP_MEM_WRITE` inside the lock, a few rows per IB,
+each IB carrying its own fence. The bars last only while nothing repaints the
+frame buffer; a periodic repaint is the next step.
 
 ## What is not implemented
 
