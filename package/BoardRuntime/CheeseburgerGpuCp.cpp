@@ -766,11 +766,17 @@ static int keepAliveInline(uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec)
 static volatile uint32_t native_gpu_fill[12];
 static bool gScanoutFillDone=false;
 static int gpuScanoutFill(uint32_t color,uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec){
- if(!&native_gop_scanout[0]||!native_gop_scanout[0]||!native_gop_scanout[1]||!native_gop_scanout[2])return -1;
  if(!gEngine540||!gScratchVA||!gScratchGva)return -1;
- const uint64_t pa=native_gop_scanout[0],bytes=native_gop_scanout[1],stride=native_gop_scanout[2];
- const uint32_t width=uint32_t(native_gop_scanout[3]>>32),height=uint32_t(native_gop_scanout[3]&0xffffffffu);
- if(!width||!height||stride<width*4ull||bytes<stride*height)return -1;
+ // The live console frame buffer: the display transfers every presented frame
+ // into this range, so it is the scanout the firmware shows. Read it from the
+ // PE state rather than a driver global, which exists only on some paths.
+ PE_Video video={};
+ if(PE_current_console(&video)||!video.v_baseAddr||!video.v_width||!video.v_height||
+    video.v_depth!=32||video.v_rowBytes<video.v_width*4ull)return -1;
+ const uint64_t pa=video.v_baseAddr,stride=video.v_rowBytes;
+ const uint32_t width=video.v_width,height=video.v_height;
+ const uint64_t bytes=stride*height;
+ if(stride<width*4ull||!bytes)return -1;
  enum {Bars=8,Pixels=192,BarBytes=Pixels*4};
  uint32_t *ib=(uint32_t*)((uint8_t*)gScratchVA+0x1000);   // inside the GPMU page, past the gate's use
  CheeseburgerGpu::Encoder540 e(ib,(11884-0x1000)/4);
