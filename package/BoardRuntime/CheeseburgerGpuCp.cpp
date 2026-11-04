@@ -797,7 +797,13 @@ static int fillSubmit(uint32_t color,uint32_t &sequence,uint32_t *submitted){
  if(gFillBars!=FillBars||!gScratchVA||!gScratchGva||!gEngine540)return -1;
  uint32_t *ib=(uint32_t*)((uint8_t*)gScratchVA+0x1000);
  uint32_t px[FillPixels];
- for(unsigned i=0;i<FillPixels;++i)px[i]=color;
+ // A known 2D pattern: red ramps across the bar, green ramps down the rows,
+ // blue fixed. The readback recomputes the same value, so a wrong pixel is
+ // reported instead of "the colour matched".
+ auto expected=[&](unsigned gx,unsigned y)->uint32_t{
+  return 0xff000000u|(uint32_t(gx*255/(FillPixels-1))<<16)|
+         (uint32_t(y*255/(gFillHeight?gFillHeight-1:1))<<8)|0x40u; };
+ (void)color;
  unsigned row=0,done=0;
  while(row<FillBars*FillRows){
   CheeseburgerGpu::Encoder540 e(ib,(11884-0x1000)/4);
@@ -805,6 +811,8 @@ static int fillSubmit(uint32_t color,uint32_t &sequence,uint32_t *submitted){
   for(;n<FillRowsPerIb&&row<FillBars*FillRows;++n,++row){
    const unsigned bar=row/FillRows,r=row%FillRows;
    const uint64_t iova=gFillBar[bar].iova+uint64_t(r)*gFillStride;
+   const unsigned y=unsigned(uint64_t(gFillHeight)*(bar+1)/5)+r;
+   for(unsigned x=0;x<FillPixels;++x)px[x]=expected(x,y);
    if(!e.memWrite(iova,px,FillPixels))return -3;
   }
   flush_dcache((vm_offset_t)ib,unsigned(e.size()*4),FALSE);
@@ -818,21 +826,35 @@ static int fillSubmit(uint32_t color,uint32_t &sequence,uint32_t *submitted){
  __asm__ volatile("dsb sy":::"memory");
  PE_Video video={};
  if(!PE_current_console(&video)&&video.v_baseAddr&&video.v_depth==32&&video.v_rowBytes>=video.v_width*4ull){
+  // Three samples per bar, compared against the same formula.
+  unsigned matches=0,samples=0;
   for(unsigned b=0;b<FillBars;++b){
-   const uint64_t o=(uint64_t(video.v_height)*(b+1)/5+FillRows/2)*video.v_rowBytes+256;
-   IODeviceMemory *m=IODeviceMemory::withRange(video.v_baseAddr+(o&~0xfffull),4096);
+   const unsigned y=unsigned(uint64_t(video.v_height)*(b+1)/5)+FillRows/2;
+   const uint64_t base=(uint64_t(y)*video.v_rowBytes)&~0xfffull;
+   IODeviceMemory *m=IODeviceMemory::withRange(video.v_baseAddr+base,4096);
    if(!m)continue;
    IOMemoryMap *mp=m->map(kIOMapAnywhere|kIOMapInhibitCache);
    OSSafeReleaseNULL(m);
    if(!mp)continue;
    volatile uint32_t *v=(volatile uint32_t*)mp->getVirtualAddress();
-   if(v)gFillPixel[b]=v[(o&0xfff)/4];
+   if(v){
+    const unsigned xs[3]={64,64+FillPixels/2,64+FillPixels-1};
+    for(unsigned k=0;k<3;++k){
+     const uint64_t o=uint64_t(y)*video.v_rowBytes+uint64_t(xs[k])*4;
+     if((o&~0xfffull)!=base)continue;
+     const uint32_t got=v[(o&0xfff)/4];
+     const uint32_t want=expected(xs[k]-64,y);
+     if(k<2&&b==0)gFillPixel[k]=got;
+     ++samples;if(got==want)++matches;
+    }
+   }
    mp->release();
   }
+  gFillPixel[2]=matches;gFillPixel[3]=samples;
  }
  gFillRc=0;
- IOLog("CB GPU fill rc=0 bars=%u rows=%u ibs=%u color=%x px=%x/%x/%x/%x\n",
-  gFillBars,FillRows,done,color,gFillPixel[0],gFillPixel[1],gFillPixel[2],gFillPixel[3]);
+ IOLog("CB GPU fill rc=0 bars=%u rows=%u ibs=%u pattern=gradient px=%x/%x match=%u/%u\n",
+  gFillBars,FillRows,done,gFillPixel[0],gFillPixel[1],gFillPixel[2],gFillPixel[3]);
  return 0;
 }
 static int gateSubmit(uint32_t sequence,bool useIb,uint32_t ibDwords,
