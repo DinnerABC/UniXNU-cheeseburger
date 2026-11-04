@@ -55,9 +55,27 @@ struct ScanBand540 {
     static constexpr uint32_t WgIdConst = 252; // no @wgid
     static constexpr uint32_t ComputeBlock = 13;
 
+    // CS state under test. Variant 0 is sagit's exact configuration; the
+    // others isolate one field at a time when a dispatch fences without any
+    // observed store.
+    struct Variant {
+        uint32_t wgid, unk0, unk1, threadSize, ctrlBase, bufBlock, bufCount;
+        bool bufferBit;
+    };
+    static constexpr Variant DefaultVariant() {
+        return Variant{252, 252, 252, ThreadSize, 0x2, 15, 16, true};
+    }
+
     static bool encode(Encoder540 &e, uint64_t shaderVA, uint64_t bufferVA,
                        uint32_t bufferBytes, uint32_t local, uint32_t groups,
                        uint64_t scratch) {
+        return encodeVariant(e, shaderVA, bufferVA, bufferBytes, local, groups,
+                             scratch, DefaultVariant());
+    }
+
+    static bool encodeVariant(Encoder540 &e, uint64_t shaderVA, uint64_t bufferVA,
+                              uint32_t bufferBytes, uint32_t local, uint32_t groups,
+                              uint64_t scratch, const Variant &v) {
         Blit540 base(e);
         if (!base.restore()) return false;
         bool ok = true;
@@ -69,7 +87,7 @@ struct ScanBand540 {
             return false;
         r(REG_A5XX_SP_SP_CNTL, 0);
         r(REG_A5XX_HLSQ_CONTROL_0_REG,
-          A5XX_HLSQ_CONTROL_0_REG_CSTHREADSIZE(ThreadSize) | 0x880);
+          A5XX_HLSQ_CONTROL_0_REG_CSTHREADSIZE(v.threadSize) | 0x880);
         r(REG_A5XX_SP_VS_CONFIG, 0); r(REG_A5XX_SP_FS_CONFIG, 0);
         r(REG_A5XX_HLSQ_VS_CONFIG, 0); r(REG_A5XX_HLSQ_FS_CONFIG, 0);
         r(REG_A5XX_HLSQ_VS_CONSTLEN, 0); r(REG_A5XX_HLSQ_FS_CONSTLEN, 0);
@@ -77,8 +95,8 @@ struct ScanBand540 {
         r(REG_A5XX_HLSQ_CS_CONFIG, A5XX_HLSQ_CS_CONFIG_ENABLED);
         r(REG_A5XX_SP_CS_CONFIG, A5XX_SP_CS_CONFIG_ENABLED);
         r(REG_A5XX_SP_CS_CTRL_REG0,
-          0x2u | A5XX_SP_CS_CTRL_REG0_BUFFER |
-          A5XX_SP_CS_CTRL_REG0_THREADSIZE(ThreadSize) |
+          v.ctrlBase | (v.bufferBit ? A5XX_SP_CS_CTRL_REG0_BUFFER : 0u) |
+          A5XX_SP_CS_CTRL_REG0_THREADSIZE(v.threadSize) |
           A5XX_SP_CS_CTRL_REG0_FULLREGFOOTPRINT(FullRegs) |
           A5XX_SP_CS_CTRL_REG0_HALFREGFOOTPRINT(HalfRegs) |
           A5XX_SP_CS_CTRL_REG0_BRANCHSTACK(BranchStack));
@@ -93,8 +111,8 @@ struct ScanBand540 {
         for (unsigned i = 2; i < 6; ++i) r(REG_A5XX_SP_CS_OBJ_START + i, 0);
         r(REG_A5XX_HLSQ_UPDATE_CNTL, 0x1f00000);
         r(REG_A5XX_HLSQ_CS_CNTL_0,
-          A5XX_HLSQ_CS_CNTL_0_WGIDCONSTID(WgIdConst) |
-          A5XX_HLSQ_CS_CNTL_0_UNK0(252) | A5XX_HLSQ_CS_CNTL_0_UNK1(252) |
+          A5XX_HLSQ_CS_CNTL_0_WGIDCONSTID(v.wgid) |
+          A5XX_HLSQ_CS_CNTL_0_UNK0(v.unk0) | A5XX_HLSQ_CS_CNTL_0_UNK1(v.unk1) |
           A5XX_HLSQ_CS_CNTL_0_LOCALIDREGID(LocalIdReg));
         r(REG_A5XX_HLSQ_CS_CNTL_1, 1);
         // SS4 load of the cached instruction unit from the shader object.
@@ -105,15 +123,16 @@ struct ScanBand540 {
         // is bound; WIDTH/HEIGHT carry its byte size, the second packet its
         // 64-bit GPU address.
         uint32_t values[3 + 16 * 2] = {};
-        values[0] = (15u << 18) | (16u << 22);
+        const uint32_t count = v.bufCount > 16 ? 16 : v.bufCount;
+        values[0] = (v.bufBlock << 18) | (count << 22);
         values[1] = 1;
         values[3] = bufferBytes & 0xffffu;
         values[4] = bufferBytes >> 16;
-        p(0x30, values, 3 + 16 * 2);
+        p(0x30, values, 3 + count * 2);
         values[1] = 2;
         values[3] = uint32_t(bufferVA);
         values[4] = uint32_t(bufferVA >> 32);
-        p(0x30, values, 3 + 16 * 2);
+        p(0x30, values, 3 + count * 2);
         r(REG_A5XX_HLSQ_CS_NDRANGE_0,
           A5XX_HLSQ_CS_NDRANGE_0_KERNELDIM(1) |
           A5XX_HLSQ_CS_NDRANGE_0_LOCALSIZEX(local - 1) |

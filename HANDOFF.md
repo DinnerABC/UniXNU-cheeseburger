@@ -1,3 +1,24 @@
+## 2026-11-04：P21-Lapwing / P21-Petrel / P21-Plover（CS 变体矩阵全部为 0；发现 ZAP 后 SP/RBCCU 域回落；核心域 resume 尝试把 Plover 挂住）
+
+### 一、根因线索（已确认）
+- 启动日志：pre-reset 上电后 `after=140000/140001`（RBCCU/SP status bit20 置位），而 ZAP 之后 `rbccu=778001/1 sp=778001/1`（bit20 清零）。**2D 引擎不依赖 SP 所以一直正常；CS 需要 SP，域回落时 CS 无法执行。** 这与 sagit `QcomGPUHardware` 的 `fDomainResumeEnabled` + `idlePowerTransition` 设计一致（他们也必须在 CP 静止窗口里重新上电）。
+- Lapwing（boot `0x4229114e`，日志 `20261104T184708Z`）跑了 7 个状态变体：sagit 原始、WGID/UNK=0、THREADSIZE=0、去 0x2/BUFFER、单线程 local=1、SSBO block=14、NUM_UNIT=1；每个变体 dispatch `rc=0`、fence 完成，自有 4 KiB SSBO 的 immediate 与 20 ms 后读回**全部为 0**。因此不是几何/绑定字段或完成顺序，且在 SP 域关闭时 CS 不会写。
+- Petrel（boot `0x409f2d15`，日志 `20261104T190451Z`）：首次实现 `gpuResumeCoreDomains`（sagit idlePowerTransition 式：空 ring + idle 检查 → halt CP/VBIF → 0xa887/0xa881=0x778000 等 bit20 → 恢复），但空闲判定误用 `st&~1`，拒绝正常 idle 状态 `0x80000101/0x800001c1`，返回 `rc=-3`，引擎按 fail-closed 停止；计算/清屏本轮未执行，设备仍自动回 Recovery。
+- Plover（镜像 `1d6e6958…`，内核 `3208aede…`，固件 `f9e9bf1c…`）：修正空闲判定后再次运行 resume；`19:11:30Z` 单次 `fastboot boot`，到 `19:19` 仍无 ADB/Fastboot，系统在 halt/域写入路径上挂住。**Plover 的持久日志尚未回收。**
+- 处置：resume 路径已改为仅 `cheeseburger-gpu-core-resume=1` 时执行（默认关闭），普通启动保持已验证的只读 pre-kick；设备需要手动重启回 Recovery 后才能读取 Plover 日志并继续。
+
+### 二、下一步
+1. 设备回 Recovery 后先回收 Plover 日志（boot/窗口哈希），看 halt、域写入、resume 各走到哪一步。
+2. 若确认 halt/域写入是挂因：改成 sagit 的完整前置健康检查与 `platformReady` 语义，或只 halt ME、不 halt VBIF；在确认显示/UFS/AXI 不受影响前不再默认启用。
+3. 若 SP 域无法安全拉起，CS 路线暂停，继续用 2D 引擎推进（GPU→GPU copy、IOSurface 导入）；compute 写入自有缓冲成功后再回 GOP 扫描带。
+4. 所有新实验仍保持一次构建一次启动，失败整体回退到 Bittern 的已验证 2D 基线。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Lapwing** | `20af38df…` | `bfa444f7…` | 7 个 CS 状态变体全部 `rc=0` 但 SSBO 无写入；确认 ZAP 后域回落 |
+  | 2026-11-04 | **P21-Petrel** | `4fd9c807…` | `0fb0e4c3…` | 首次核心域 resume，空闲判定过严 `rc=-3`；引擎 fail-closed |
+  | 2026-11-04 | **P21-Plover** | `1d6e6958…` | `3208aede…` | 修正后 resume 把系统挂住；日志待回收；resume 已默认关闭 |
+
 ## 2026-11-04：P21-Egret / P21-Gannet（IR3 compute 通路：着色器可汇编并下发，SSBO 写入尚未观察到）
 
 ### 一、IR3 工具链（本机可用）

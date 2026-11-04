@@ -93,7 +93,9 @@ extern volatile uint32_t native_adreno_flip[10] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_compute[12] __attribute__((weak_import));
 /* Compute isolation matrix: const/shift probes into our own 4 KiB SSBO and
  * the same two shaders over the scanout band. */
-extern volatile uint32_t native_adreno_cprobe[20] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_cprobe[24] __attribute__((weak_import));
+/* Core-domain resume: rc, RBCCU/SP status before, bit20 state after. */
+extern volatile uint32_t native_adreno_resume[4] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -692,22 +694,32 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_compute[10],native_adreno_compute[11],cb_boot_id);
     at=put(out,at,cap,cmpt,sizeof cmpt);
    }
-   /* Compute isolation: c/s are the constant and id<<8 probes into our own
-    * SSBO; bc/bs are the same shaders writing the scanout band. A zero probe
-    * means the dispatch or SSBO binding did not write, independent of GOP. */
-   if (&native_adreno_cprobe[0] && (native_adreno_cprobe[0]|native_adreno_cprobe[4]|
-       native_adreno_cprobe[8]|native_adreno_cprobe[13])) {
-    char cpr[220];
-    snprintf(cpr,sizeof cpr,"CPRB c=%d/%x/%x/%x s=%d/%x/%x/%x bc=%d/%x/%x/%x/%x bs=%d/%u/%u/%u bid=%llx",
-      (int)(int16_t)(uint16_t)native_adreno_cprobe[0],native_adreno_cprobe[1],
-      native_adreno_cprobe[2],native_adreno_cprobe[3],
-      (int)(int16_t)(uint16_t)native_adreno_cprobe[4],native_adreno_cprobe[5],
-      native_adreno_cprobe[6],native_adreno_cprobe[7],
-      (int)(int16_t)(uint16_t)native_adreno_cprobe[8],native_adreno_cprobe[9],
-      native_adreno_cprobe[10],native_adreno_cprobe[11],native_adreno_cprobe[12],
-      (int)(int16_t)(uint16_t)native_adreno_cprobe[13],native_adreno_cprobe[14],
-      native_adreno_cprobe[15],native_adreno_cprobe[16],cb_boot_id);
+   /* CS variant matrix: late/immediate dword0 of the private probe page per
+    * variant and its dispatch rc. A page that stays zero means that CS
+    * configuration launched no writing shader. */
+   if (&native_adreno_cprobe[0] && (native_adreno_cprobe[8]|native_adreno_cprobe[9]|
+       native_adreno_cprobe[10]|native_adreno_cprobe[11]|native_adreno_cprobe[12]|
+       native_adreno_cprobe[13]|native_adreno_cprobe[14])) {
+    char cpr[260];
+    snprintf(cpr,sizeof cpr,"CPRB late=%x/%x/%x/%x/%x/%x/%x imm=%x/%x/%x/%x/%x/%x/%x rc=%d/%d/%d/%d/%d/%d/%d bid=%llx",
+      native_adreno_cprobe[0],native_adreno_cprobe[1],native_adreno_cprobe[2],
+      native_adreno_cprobe[3],native_adreno_cprobe[4],native_adreno_cprobe[5],
+      native_adreno_cprobe[6],
+      native_adreno_cprobe[16],native_adreno_cprobe[17],native_adreno_cprobe[18],
+      native_adreno_cprobe[19],native_adreno_cprobe[20],native_adreno_cprobe[21],
+      native_adreno_cprobe[22],
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[8],(int)(int16_t)(uint16_t)native_adreno_cprobe[9],
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[10],(int)(int16_t)(uint16_t)native_adreno_cprobe[11],
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[12],(int)(int16_t)(uint16_t)native_adreno_cprobe[13],
+      (int)(int16_t)(uint16_t)native_adreno_cprobe[14],cb_boot_id);
     at=put(out,at,cap,cpr,sizeof cpr);
+   }
+   if (&native_adreno_resume[0] && (native_adreno_resume[0] || native_adreno_resume[1])) {
+    char rsm[120];
+    snprintf(rsm,sizeof rsm,"RSM rc=%d rb=%x sp=%x after=%x bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_resume[0],native_adreno_resume[1],
+      native_adreno_resume[2],native_adreno_resume[3],cb_boot_id);
+    at=put(out,at,cap,rsm,sizeof rsm);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was
