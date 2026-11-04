@@ -24,6 +24,7 @@ static const unsigned char gpu_firmware_blob[1]={0};
 static const unsigned gpu_firmware_size=0;
 #define CB_GPU_FW 0
 #endif
+#include "CheeseburgerGpuBlit540.h"
 extern "C" {
 volatile uint64_t cb_cp[128];
 extern volatile uint64_t cb_smmu[24];
@@ -35,6 +36,8 @@ int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 int cheeseburger_gpu_smmu4k_active(void);
 int cheeseburger_gpu_smmu4k_faulted(void);
 int cheeseburger_gpu_service_publish(void);
+int cheeseburger_gpu_clear540_test(void);
+int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
 // Kernel IB self-test in a page the CP already fetched: rc, stage and the three
@@ -54,6 +57,9 @@ volatile uint32_t native_adreno_copy_test[8];
 volatile uint32_t native_adreno_gate[22];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
+// A540 2D clear: rc, sequence, IB words, four quadrant pixels, edge sample,
+// match count, IB/target PAs and the scanout band result (rc/seq/pixel).
+volatile uint32_t native_adreno_clear[16];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
@@ -529,6 +535,16 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     IOLog("CB GPU engine: keepalive1 rc=%d stage=%u fr=%x\n",k1,kb.stage,kb.fence);
     if(k1==0)gFenceSeq=gFenceSeq+1;else gEngineSubmitFailed=true;
    }
+   // The A540 2D graphics path, once per boot: four quadrants of an offscreen
+   // linear target by CP_BLIT, then the same engine fills a scanout band. This
+   // is the first real RB/GRAS drawing path in this port; see
+   // CheeseburgerGpuBlit540.h for its sagit/Mesa provenance.
+   { unsigned clear=1;
+     PE_parse_boot_argn("cheeseburger-gpu-clear",&clear,sizeof clear);
+     if(clear&&gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
+      const int crc=cheeseburger_gpu_clear540_test();
+      IOLog("CB GPU clear: exit rc=%d\n",crc);
+     } }
    cb_cp[48]=m.read(CheeseburgerGpu::TrustControl);
    cb_cp[60]=m.read(CheeseburgerGpu::MEControl);cb_cp[61]=m.read(CheeseburgerGpu::VBIFHalted);
    cb_cp[105]=m.read(CheeseburgerGpu::RBWrite);
@@ -826,6 +842,185 @@ static int preflightUserPage(uint64_t userIova,uint32_t sequence,CheeseburgerGpu
     rcc,rec.stage,sc[0],sc[1],native_adreno_gate[16],rec.fence);
    if(rcc)return -4; }
  gFenceSeq=sequence;
+ return 0;
+}
+// ---------------------------------------------------------------------------
+// A540 2D graphics path (sagit CP_BLIT solid fill). The offscreen target is a
+// linear 256x64 RGBA8 image; four 128x32 quadrants are filled by the RB/GRAS
+// 2D engine and read back through the CPU. The optional second stream fills a
+// band of the firmware scanout with the same engine, so the result can be seen
+// on the panel without any CPU pixel copy.
+//
+// All mapping happens outside gSubmitLock (cheeseburger_gpu_smmu_map takes it
+// through cheeseburger_gpu_mapping_begin; P21-Skua deadlocked by mapping under
+// the lock). Objects are created once and kept for the boot; a failure keeps
+// every page and mapping, like the other GPU diagnostics.
+enum {ClearWidth=256,ClearHeight=64,ClearPitch=1024,ClearBytes=ClearPitch*ClearHeight,
+      ClearScanoutRows=64};
+static IOBufferMemoryDescriptor *gClearIbBuf=nullptr,*gClearTargetBuf=nullptr,*gClearScratchBuf=nullptr;
+static void *gClearIbVA=nullptr;
+static volatile uint32_t *gClearTargetVA=nullptr,*gClearScratchVA=nullptr;
+static uint64_t gClearIbIova=0,gClearTargetIova=0,gClearScratchIova=0;
+static uint64_t gClearScanoutIova=0,gClearScanoutPa=0;
+static uint32_t gClearScanoutW=0,gClearScanoutPitch=0;
+static bool gClearPrepared=false,gClearDone=false;
+static int gClearRc=0xffff;
+static uint32_t gClearPixels[8];
+static const uint32_t gClearColors[4]={0xff102030u,0xff405060u,0xff8090a0u,0xffb0c0d0u};
+
+static IOBufferMemoryDescriptor *clearBuffer(unsigned bytes){
+ return IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+  kIODirectionInOut|kIOMemoryMapperNone,(vm_size_t)bytes,4096);
+}
+// Map `pages` 4 KiB pages of a kernel buffer at `iova`. The fast path keeps
+// one range when the allocation is physically contiguous; otherwise every page
+// gets its own leaf (the kit updates the live table per call).
+static int clearMap(IOBufferMemoryDescriptor *b,uint64_t iova,unsigned pages){
+ if(!b||!pages)return -1;
+ IOByteCount span=0;
+ const uint64_t pa=b->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ if(pa&&!(pa&4095)&&span>=uint64_t(pages)*4096){
+  if(!cheeseburger_gpu_smmu_map(iova,pa,pages))return 0;
+ }
+ for(unsigned i=0;i<pages;++i){
+  IOByteCount s=0;
+  const uint64_t p=b->getPhysicalSegment(i*4096ull,&s,kIOMemoryMapperNone);
+  if(!p||(p&4095)||!s)return -1;
+  if(cheeseburger_gpu_smmu_map(iova+uint64_t(i)*4096,p,1))return -2;
+ }
+ return 0;
+}
+// The firmware console is one contiguous physical range; map the rows this
+// test fills, not the whole 8-11 MiB frame.
+static int clearPrepareScanout(void){
+ PE_Video v={};
+ if(PE_current_console(&v)||!v.v_baseAddr||v.v_depth!=32||!v.v_width||
+    v.v_height<ClearScanoutRows||v.v_rowBytes<v.v_width*4ull||(v.v_rowBytes&63))
+  return -1;
+ const uint64_t span=uint64_t(ClearScanoutRows)*v.v_rowBytes;
+ const unsigned pages=unsigned((span+4095)/4096);
+ if(pages>128||(v.v_baseAddr&4095))return -1;
+ if(cheeseburger_gpu_smmu_map(0x2100000,v.v_baseAddr,pages))return -2;
+ gClearScanoutIova=0x2100000;
+ gClearScanoutPa=v.v_baseAddr;
+ gClearScanoutW=uint32_t(v.v_width);gClearScanoutPitch=uint32_t(v.v_rowBytes);
+ return 0;
+}
+static int clearPrepare(void){
+ gClearIbBuf=clearBuffer(8192);
+ gClearTargetBuf=clearBuffer(ClearBytes);
+ gClearScratchBuf=clearBuffer(4096);
+ if(!gClearIbBuf||!gClearTargetBuf||!gClearScratchBuf)return -1;
+ gClearIbVA=gClearIbBuf->getBytesNoCopy();
+ gClearTargetVA=(volatile uint32_t*)gClearTargetBuf->getBytesNoCopy();
+ gClearScratchVA=(volatile uint32_t*)gClearScratchBuf->getBytesNoCopy();
+ if(!gClearIbVA||!gClearTargetVA||!gClearScratchVA)return -1;
+ memset((void*)gClearTargetVA,0,ClearBytes);
+ memset((void*)gClearScratchVA,0,4096);
+ flush_dcache((vm_offset_t)gClearTargetVA,ClearBytes,FALSE);
+ flush_dcache((vm_offset_t)gClearScratchVA,64,FALSE);
+ int rc=clearMap(gClearIbBuf,0x2040000,2);
+ if(!rc)rc=clearMap(gClearTargetBuf,0x2060000,ClearBytes/4096);
+ if(!rc)rc=clearMap(gClearScratchBuf,0x2050000,1);
+ if(rc)return -2;
+ gClearIbIova=0x2040000;gClearTargetIova=0x2060000;gClearScratchIova=0x2050000;
+ return 0;
+}
+static int clearEncodeOffscreen(uint32_t &words){
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ CheeseburgerGpu::Blit540 b(e);
+ bool ok=b.restore()&&b.begin2D();
+ for(unsigned q=0;q<4&&ok;++q){
+  const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
+  ok=b.solidFill(gClearTargetIova+uint64_t(qy)*ClearPitch+qx*4u,128,32,ClearPitch,
+   gClearColors[q],gClearScratchIova);
+ }
+ words=e.size();
+ return ok?0:-10;
+}
+static int clearEncodeScanout(uint32_t &words){
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ CheeseburgerGpu::Blit540 b(e);
+ const bool ok=b.restore()&&b.begin2D()&&
+  b.solidFill(gClearScanoutIova,gClearScanoutW,ClearScanoutRows,gClearScanoutPitch,
+   0xff00c0ffu,gClearScratchIova);
+ words=e.size();
+ return ok?0:-11;
+}
+static int clearKick(uint32_t words,uint32_t &seq){
+ memset((void*)gClearScratchVA,0,64);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)gClearScratchVA,64,FALSE);
+ flush_dcache((vm_offset_t)gClearIbVA,words*4,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ const uint64_t va=gClearIbIova;const uint32_t dw=words;
+ seq=0;
+ return cheeseburger_gpu_engine_submit(&va,&dw,1,&seq);
+}
+extern "C" int cheeseburger_gpu_clear540_test(void){
+ if(gClearDone)return gClearRc;
+ gClearDone=true;
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()){
+  gClearRc=-1;return gClearRc;
+ }
+ if(!gClearPrepared){
+  gClearPrepared=true;
+  const int prc=clearPrepare();
+  if(prc){gClearRc=prc;IOLog("CB GPU clear: prepare rc=%d\n",prc);return prc;}
+  IOByteCount span0=0;
+  native_adreno_clear[8]=uint32_t(gClearIbBuf->getPhysicalSegment(0,&span0,kIOMemoryMapperNone));
+  native_adreno_clear[9]=uint32_t(gClearTargetBuf->getPhysicalSegment(0,&span0,kIOMemoryMapperNone));
+ }
+ uint32_t words=0,seq=0;
+ int rc=clearEncodeOffscreen(words);
+ if(rc){gClearRc=rc;IOLog("CB GPU clear: encode rc=%d\n",rc);return rc;}
+ rc=clearKick(words,seq);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)gClearTargetVA,ClearBytes,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ unsigned match=0;
+ for(unsigned q=0;q<4;++q){
+  const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
+  const uint32_t px=gClearTargetVA[(qy+16)*(ClearPitch/4)+qx+64];
+  gClearPixels[q]=px;
+  if(px==gClearColors[q])++match;
+ }
+ // One sample inside the first quadrant near a quadrant edge: a blit that
+ // ignored the destination width would overwrite this with quadrant 1.
+ gClearPixels[4]=gClearTargetVA[16*(ClearPitch/4)+120];
+ native_adreno_clear[0]=uint32_t(rc);native_adreno_clear[1]=seq;native_adreno_clear[2]=words;
+ for(unsigned i=0;i<4;++i)native_adreno_clear[3+i]=gClearPixels[i];
+ native_adreno_clear[7]=match;
+ native_adreno_clear[13]=gClearPixels[4];
+ IOLog("CB GPU clear: rc=%d seq=%u words=%u px=%x/%x/%x/%x edge=%x match=%u/%u\n",
+  rc,seq,words,gClearPixels[0],gClearPixels[1],gClearPixels[2],gClearPixels[3],
+  gClearPixels[4],match,4u);
+ if(rc){gClearRc=rc;return rc;}
+ // Second stream: the same engine writes the top band of the firmware scanout.
+ if(!clearPrepareScanout()){
+  uint32_t sw=0,sseq=0;
+  const int src=clearEncodeScanout(sw);
+  const int rrc=src?src:clearKick(sw,sseq);
+  uint32_t px=0;
+  if(!rrc){
+   // Read one pixel of the band (row 10, centre column) through a fresh
+   // uncached mapping of the page that holds it.
+   const uint64_t off=10ull*gClearScanoutPitch+uint64_t(gClearScanoutW/2)*4;
+   IODeviceMemory *m=IODeviceMemory::withRange(gClearScanoutPa+(off&~4095ull),4096);
+   if(m){IOMemoryMap *mp=m->map(kIOMapAnywhere|kIOMapInhibitCache);m->release();
+    if(mp){volatile uint32_t *v=(volatile uint32_t*)mp->getVirtualAddress();
+     if(v)px=v[(off&4095)/4];mp->release();}}
+  }
+  native_adreno_clear[10]=uint32_t(rrc);native_adreno_clear[11]=sseq;
+  native_adreno_clear[12]=px;
+  IOLog("CB GPU clear: scanout rc=%d seq=%u w=%u pitch=%u px=%x\n",
+   rrc,sseq,gClearScanoutW,gClearScanoutPitch,px);
+ }
+ gClearRc=0;
  return 0;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,

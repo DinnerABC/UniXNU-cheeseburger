@@ -82,6 +82,9 @@ extern volatile uint64_t native_adreno_tunnel[2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import));
 /* Staged submission gate before the first client IB, and the last streams. */
 extern volatile uint32_t native_adreno_gate[22] __attribute__((weak_import));
+/* A540 2D clear: rc/seq/words, four quadrant pixels, edge sample, match, the
+ * IB and target physical addresses, and the scanout band result. */
+extern volatile uint32_t native_adreno_clear[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -638,6 +641,19 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       (int)(int16_t)(uint16_t)native_adreno_gate[10],native_adreno_gate[11],
       native_adreno_gate[12],native_adreno_gate[13],native_adreno_gate[16],cb_boot_id);
     at=put(out,at,cap,gate,sizeof gate);
+   }
+   /* A540 2D path: the CP_BLIT clear of the offscreen target and the optional
+    * scanout band. `match` compares each quadrant with the value the stream
+    * wrote; edge is a sample inside quadrant 0 near its right edge. */
+   if (&native_adreno_clear[0] && native_adreno_clear[2]) {
+    char clr[200];
+    snprintf(clr,sizeof clr,"CLR rc=%d seq=%u w=%u px=%x/%x/%x/%x edge=%x match=%u/%u scan=%d/%u px=%x ib=%x tgt=%x bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_clear[0],native_adreno_clear[1],native_adreno_clear[2],
+      native_adreno_clear[3],native_adreno_clear[4],native_adreno_clear[5],native_adreno_clear[6],
+      native_adreno_clear[13],native_adreno_clear[7],4u,
+      (int)(int16_t)(uint16_t)native_adreno_clear[10],native_adreno_clear[11],
+      native_adreno_clear[12],native_adreno_clear[8],native_adreno_clear[9],cb_boot_id);
+    at=put(out,at,cap,clr,sizeof clr);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was

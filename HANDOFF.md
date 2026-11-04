@@ -1,3 +1,40 @@
+## 2026-11-04：P21-Bittern（A540 2D 图形路径实机：CP_BLIT 四象限清屏 match=4/4；服务期资源持有/隔离）
+
+### 一、源码来源与复用边界
+- **小米 6 公开源码**已拉到独立参考目录 `/Volumes/NAS-MacData/Project/IOS/upstream/ios_sagit`，commit `673f85070fe9f7872793015eb230a5c3987d4a8c`（2026-11-03）。`drivers/gpu/QcomGPU`（A540 内核后端）与 `QcomMTL`（Metal 前端）为完整 native Metal 栈，许可证见各文件 SPDX（MIT / BSD-2-Clause，Mesa 24.3.4 IR3 参考）。
+- 本轮只复用其 **A5xx 2D 状态与命令序列**：`AdrenoPipeline.h` 的 `restore()` 基线与 `clearRows()` 的 CP_BLIT solid fill。sagit 的启动/板级地址、QcomMTL 前端、IOSurface/显示交接未引入；一加 5 已验证的电源、CP/GPMU/ZAP、SMMU、ring/fence、用户提交链未改动。
+- 新增 `package/BoardRuntime/CheeseburgerGpuBlit540.h`（逐寄存器移植）与 `package/BoardRuntime/A5xxRegs.h`（由 Mesa `a5xx.xml` + `gen_header.py` 生成；Mesa 26 把 RB_2D/UCHE 的 LO/HI 合并为 reg64，头内保留旧名别名）。MIT 版权与许可保存在 `package/BoardRuntime/A5XX_NOTICE.txt`。
+
+### 二、图形路径（P21-Bittern 源码）
+- `restore()`：A5xx 线性/GMEM-bypass 基线（SP/RB/TPL1 64 位地址、UCHE invalidate、HLSQ、PC/GRAS/RB/VPC/SP/TPL1 默认、`RB_CCU_CNTL=0x10000000`、`RB_CNTL=BYPASS`）。
+- `begin2D()` + `solidFill()`：Mesa fd5 sysmem event 25/24，BLIT2D（`0x6c`=5）、`RB_2D_*` 目标格式 75（R32_UINT）、solid source、CP_BLIT（`0x2c`）像素边界、END2D、`CACHE_FLUSH_TS(29)` + `CP_WAIT_REG_MEM`，最后由既有 Engine540 fence 收尾。
+- 开机探针在第二次 keep-alive 之后执行（`cheeseburger-gpu-clear`，默认开）：分配 8 KiB IB、64 KiB 线性 256x64 RGBA8 目标、4 KiB flush 页，映射在 `0x2040000/0x2060000/0x2050000`（**提交锁之外**）；一次 restore + 四个 128x32 象限填充，CPU 读回四象限中心与一个边缘样本；随后尝试用同一引擎填一条 64 行扫描线带。
+- 宿主模型 `tests/gpu_blit540_model.cpp` 解析真实编码流（寄存器、BLIT2D/END2D 次数、填充边界、DST pitch/array pitch、flush/等待），失败关闭（小缓冲）与参数校验；`scripts/run-gpu-start-model-test.py` 已纳入，全部 PASS。
+
+### 三、服务端生命周期（与图形同一候选）
+- **导入 BO 映射**：`BoMap` 不再要求自有 `buf`；导入 BO 以钉页描述符的物理段逐段映射，`BoCpuMap` 拒绝导入 BO（ABI 规定其无 CPU token）。
+- **提交期持有**：每个 BO 获得全局 serial；提交前先预留 job 槽，把本客户端所有已映射 BO 的 serial 计入持有表；fence 完成才释放。无空槽时返回 `kIOReturnBusy`，不会“先提交后漏记”；失败提交保留持有（fail-closed），不释放 GPU 可能仍在读的页。
+- **异常退出**：client close 时未能释放的对象移入可追踪 quarantine（保留 buffer/描述符/映射记录），fence 消失且引擎 idle 后再 unmap、`complete()`、恢复 pmap、释放；unmap 失败则保留并退休 IOVA。新 ABI 客户端在存在 quarantine 时拒绝打开。
+- **可见性**：自有 BO 在提交前 clean+invalidate（`flush_dcache`），fence 后再次 flush 再回读；导入 BO 的 cache 属性归调用方（ABI 原文），服务不触碰。
+
+### 四、实机（P21-Bittern，日志 `out/p21/persistent-logs/20261104T170051Z/`，boot `0x409f33da`，400 s 自动回 Recovery）
+- 镜像 `19b766e5…`、内核 `c222817f…`（编译 `4ec0b1d9…`）、固件 `5e5e9edf…`、payload `ef72ce2e…`、gate `20261104T165253Z` PASS（670 B，三项 pin 命中）、misc 回读 `8698abf4…`（`boot-recovery`，push→dd→回读一致）；`16:53:13Z` 单次 `fastboot boot` OKAY。
+- **门禁与清屏**：`keepalive0/1 rc=0`；`gate A/B/C rc=0`（cp=`70268000/70ec8005`）；`CB GPU clear: rc=0 seq=8 words=491 px=ff102030/ff405060/ff8090a0/ffb0c0d0 edge=ff102030 match=4/4`。持久行：`CLR rc=0 seq=8 w=491 px=ff102030/ff405060/ff8090a0/ffb0c0d0 edge=ff102030 match=4/4 scan=0/0 px=0 ib=527f9000 tgt=52809000 bid=409f33da`。
+- 该结果证明 **A540 RB/GRAS 2D 引擎**由 CP 执行并写出四个不同颜色的象限，CPU 回读与写入逐一相等，边缘样本未越界；这不是逐行 `CP_MEM_WRITE`，也不是用户态渲染。
+- 用户态提交链无回归：`GPSVC open=2 bo=2 map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0 st=0`；`GBOD 1:adc0de1/feed0002/600d0003`。系统继续运行到 399 s 后自动复位回 Recovery。
+- **扫描线带未执行**（`scan=0/0` 表示未尝试）：`clearPrepareScanout()` 的 PE 控制台前提未通过，本轮未记录具体原因；因此**不能**声称面板上出现本轮 GPU 像素。离屏清屏是唯一图形证据。
+- 过时镜像说明：`254f8d0a…`（内核 `6fe8358a…`）在 `cheeseburger-gpu-clear` 默认门修复前构建，实机启动一次（日志 `20261104T164552Z`，boot `0x45631556`）只验证了基线与用户提交链；其 gate 已移到 `out/p21/p21-bittern/logs/superseded/` 保留，未再次启动。
+
+### 五、下一步（可直接执行）
+1. `CheeseburgerGpuCp.cpp`：在 `clearPrepareScanout()` 的失败分支记录 `PE_current_console` 的 base/width/height/depth/rowBytes 与失败码（当前静默返回），修复后把 64 行带画到面板；这是“GPU 像素可见”的下一步。
+2. 最小三角形：以 sagit `PipelineEncoder` 的 VSC/RB + IR3 着色器（Mesa 24.3.4 编译链）为准，先做离屏三角形回读，再谈 IOSurface/Metal。
+3. `CheeseburgerGpuService.cpp`：把 IOSurface 的 `BoImport` 接入 2D blit 的源/目标，验证 no-copy 与 fence 后 cache 语义。
+4. 扫描线映射与清除仍只在提交锁外；不要恢复逐行 `CP_MEM_WRITE` 绘制或 CPU 帧搬运冒充 GPU 合成。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Bittern** | `19b766e5…` | `c222817f…` | A540 CP_BLIT 2D 清屏实机 `match=4/4`；服务导入映射/持有/隔离；提交链无回归 |
+
 ## 2026-11-04：P21-Auk（Turnip Darwin-KMD 构建链恢复 + 服务端 tunnel/import/持有语义 + A540 拷贝路径）
 
 ### 一、官方 Turnip Darwin-KMD 构建链（workstream A）

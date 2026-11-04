@@ -30,6 +30,9 @@ extern "C" {
 volatile uint64_t native_adreno_service_stats[20];
 // Turnip tunnel: [0] calls carrying the NTNL header, [1] selector probes.
 volatile uint64_t native_adreno_tunnel[2];
+// Submission lifetime: [0] quarantined objects, [1] retired, [2] held BOs,
+// [3] submits refused because no job slot was free.
+volatile uint64_t native_adreno_retire[4];
 volatile uint64_t native_adreno_client_uid=~0ull;
 char native_adreno_client_name[17];
 volatile int native_adreno_open_stage;
@@ -94,7 +97,121 @@ void retainIova(uint64_t iova,uint64_t bytes) {
     if(gRetainedCount<MaxRetained)gRetained[gRetainedCount++]={iova,bytes};
     IOLockUnlock(gGateLock);
 }
+
+// --- Submission holds, jobs and quarantine ---------------------------------
+// A job keeps every mapped object of the client until its fence is observed.
+// The ABI has no resource list beyond the submitted buffers, so holding the
+// mapped set is the safe superset: an IB can name any mapped object as data,
+// texture or write target. Holds are keyed by a per-BO serial, not by the
+// per-client handle, so a client that exits cannot make a later client's
+// handle free a resource it never owned.
+enum { MaxJobs=8, MaxJobBos=MaxBo, MaxHolds=MaxBo*2 };
+struct BoSpan { uint64_t iova=0, pa=0; uint32_t pages=0; };
+struct Hold { uint64_t serial=0; unsigned count=0; };
+Hold gHolds[MaxHolds];
+struct PendingJob { uint32_t fence=0; unsigned count=0; uint64_t serials[MaxJobBos]={}; bool reserved=false; };
+PendingJob gJobs[MaxJobs];
+// A client that closes while the GPU still references its pages hands the
+// objects here instead of dropping the array. Each entry owns its buffer and
+// descriptor until the fence retires and the engine is idle.
+struct Quarantined {
+    uint64_t serial=0,iova=0,bytes=0,physical=0;
+    IOBufferMemoryDescriptor *buf=nullptr;
+    IOMemoryDescriptor *desc=nullptr;
+    BoSpan spans[64]={};
+    unsigned spanCount=0;
+    bool mapped=false,imported=false;
+};
+Quarantined gQuarantine[MaxBo];
+unsigned gQuarantineCount=0;
+uint64_t gSerialCounter=0;
+IOLock *gRetireLock=nullptr;
+
+bool holdsAdd(uint64_t serial) {  // gRetireLock held
+    if(!serial)return false;
+    for(unsigned i=0;i<MaxHolds;++i)
+        if(gHolds[i].serial==serial){gHolds[i].count++;return true;}
+    for(unsigned i=0;i<MaxHolds;++i)
+        if(!gHolds[i].serial){gHolds[i].serial=serial;gHolds[i].count=1;return true;}
+    return false;
 }
+unsigned holdsCount(uint64_t serial) {
+    if(!serial)return 0;
+    for(unsigned i=0;i<MaxHolds;++i)
+        if(gHolds[i].serial==serial)return gHolds[i].count;
+    return 0;
+}
+bool holdsDrop(uint64_t serial) {  // gRetireLock held
+    for(unsigned i=0;i<MaxHolds;++i)
+        if(gHolds[i].serial==serial){
+            if(!gHolds[i].count)return false;
+            if(!--gHolds[i].count)gHolds[i].serial=0;
+            return true;
+        }
+    return false;
+}
+void releaseJobFenceLocked(uint32_t fence) {  // gRetireLock held
+    if(!fence)return;
+    for(unsigned j=0;j<MaxJobs;++j){
+        if(!gJobs[j].reserved||gJobs[j].fence!=fence)continue;
+        for(unsigned k=0;k<gJobs[j].count;++k)holdsDrop(gJobs[j].serials[k]);
+        gJobs[j]=PendingJob();
+    }
+}
+// Retire quarantined objects whose fence is gone and whose engine is idle.
+// A failed unmap keeps the entry and retires the IOVA for the boot.
+void retireQuarantinedLocked() {
+    for(unsigned i=0;i<gQuarantineCount;){
+        Quarantined &q=gQuarantine[i];
+        if(holdsCount(q.serial)){++i;continue;}
+        bool done=true;
+        if(q.mapped){
+            int rc=0;
+            if(!q.spanCount)rc=cheeseburger_gpu_smmu_unmap(q.iova,unsigned(q.bytes/4096));
+            else for(unsigned s=0;s<q.spanCount;++s)
+                if(cheeseburger_gpu_smmu_unmap(q.spans[s].iova,q.spans[s].pages))rc=-1;
+            auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
+            if(!CheeseburgerGpu::releaseMappedBuffer(true,idle,[&](){ return rc; }))done=false;
+        }
+        if(!done){retainIova(q.iova,q.bytes);++i;continue;}
+        if(q.imported&&q.desc)q.desc->complete(kIODirectionInOut);
+        if(!q.imported&&q.physical)
+            for(uint64_t off=0;off<q.bytes;off+=4096)
+                pmap_set_cache_attributes((ppnum_t)((q.physical+off)>>12),VM_WIMG_USE_DEFAULT);
+        OSSafeReleaseNULL(q.desc);
+        OSSafeReleaseNULL(q.buf);
+        q=Quarantined();
+        for(unsigned k=i+1;k<gQuarantineCount;++k)gQuarantine[k-1]=gQuarantine[k];
+        --gQuarantineCount;
+        native_adreno_retire[1]=native_adreno_retire[1]+1;
+    }
+}
+// Poll every active job once. Called with gRetireLock held; the fence read is
+// CPU-owned memory, not a GPU register read.
+void sweepJobsLocked() {
+    unsigned held=0;
+    for(unsigned i=0;i<MaxHolds;++i)if(gHolds[i].serial)held+=gHolds[i].count;
+    native_adreno_retire[2]=held;
+    for(unsigned j=0;j<MaxJobs;++j){
+        if(!gJobs[j].reserved||!gJobs[j].fence)continue;
+        if(cheeseburger_gpu_engine_wait(gJobs[j].fence,0)==0)
+            releaseJobFenceLocked(gJobs[j].fence);
+    }
+    retireQuarantinedLocked();
+}
+int reserveJobSlot(const uint64_t *serials,unsigned count) {  // gRetireLock held
+    if(count>MaxJobBos)return -1;
+    for(unsigned j=0;j<MaxJobs;++j){
+        if(gJobs[j].reserved)continue;
+        for(unsigned k=0;k<count;++k)holdsAdd(serials[k]);
+        gJobs[j].reserved=true;gJobs[j].fence=0;gJobs[j].count=count;
+        for(unsigned k=0;k<count;++k)gJobs[j].serials[k]=serials[k];
+        return int(j);
+    }
+    return -1;
+}
+}
+
 
 class AGXDeviceUserClient : public IOUserClient {
     OSDeclareDefaultStructors(AGXDeviceUserClient)
@@ -112,17 +229,12 @@ class AGXDeviceUserClient : public IOUserClient {
         // An imported BO wraps the caller's own pages; a BO may therefore be
         // several physically contiguous runs that are mapped one by one.
         bool imported=false;
-        struct Span { uint64_t iova; uint64_t pa; uint32_t pages; };
-        Span spans[64]={};
+        BoSpan spans[64]={};
         unsigned spanCount=0;
-        // Submissions that still reference this object. A held BO is never
-        // unmapped or released, whatever the client asks for.
-        unsigned held=0;
+        // Identity in the global hold table. Holds survive this client, so a
+        // later client's handle 1 can never release this object's pages.
+        uint64_t serial=0;
     };
-    // Jobs the engine may still be reading: the handles a submission named,
-    // released only when its fence is observed complete.
-    struct Job { uint32_t fence=0; unsigned count=0; uint64_t handles[16]={}; };
-    Job jobs_[8]={};
     Bo *bos_=nullptr;
     IOLock *lock_=nullptr;
     bool live_=false;
@@ -138,7 +250,7 @@ class AGXDeviceUserClient : public IOUserClient {
     IOReturn boMap(const NativeAdrenoAbiBoMap &,NativeAdrenoAbiBoMapReply &);
     IOReturn boFree(uint64_t);
     IOReturn boImport(const NativeAdrenoAbiBoImport &,NativeAdrenoAbiBoAllocReply &);
-    void releaseJob(uint32_t fence);
+    void quarantine(Bo &);
     IOReturn boCpuMap(uint64_t,NativeAdrenoAbiBoCpuMapReply &);
     IOReturn boCpuUnmap(uint64_t,uint32_t);
     IOReturn submit(const NativeAdrenoAbiSubmit &,NativeAdrenoAbiSubmitReply &);
@@ -232,7 +344,7 @@ extern "C" IOReturn cheeseburger_gpu_open_client(IOService *provider,task_t owni
         // makes a late close of an older client harmless to a newer one.
         if(!gGateLock){native_adreno_service_stats[19]=native_adreno_service_stats[19]+1;return kIOReturnNotReady;}
         IOLockLock(gGateLock);
-        bool retained=gRetainedCount!=0;
+        bool retained=gRetainedCount!=0||gQuarantineCount!=0;
         bool acquired=retained?false:gGate.acquire(generation);
         IOLockUnlock(gGateLock);
         if(retained){
@@ -325,10 +437,39 @@ void AGXDeviceUserClient::dropView(Bo &bo) {
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
     }
 }
+// Move an object the GPU may still reference out of this client's table. The
+// buffers and the descriptor keep their references; retireQuarantinedLocked()
+// releases them after the fence and an idle engine, or keeps them for the boot.
+void AGXDeviceUserClient::quarantine(Bo &bo) {
+    if(!gRetireLock||!bo.handle)return;
+    IOLockLock(gRetireLock);
+    if(gQuarantineCount<MaxBo){
+        Quarantined &q=gQuarantine[gQuarantineCount++];
+        q=Quarantined();
+        q.serial=bo.serial;q.iova=bo.iova;q.bytes=bo.bytes;q.physical=bo.physical;
+        q.buf=bo.buf;q.desc=bo.desc;q.mapped=bo.mapped;q.imported=bo.imported;
+        q.spanCount=bo.spanCount;
+        for(unsigned i=0;i<bo.spanCount;++i)q.spans[i]=bo.spans[i];
+        native_adreno_retire[0]=native_adreno_retire[0]+1;
+        IOLog("CB GPU service: quarantine serial=%llu bytes=%llu iova=%llx held=%u\n",
+            (unsigned long long)bo.serial,(unsigned long long)bo.bytes,
+            (unsigned long long)bo.iova,holdsCount(bo.serial));
+    }
+    IOLockUnlock(gRetireLock);
+    bo=Bo();
+}
 bool AGXDeviceUserClient::freeBo(Bo &bo) {
     if(!bo.handle)return true;
     // A job that has not reported its fence may still fetch this memory.
-    if(bo.held)return false;
+    // Completed jobs are retired first: the usual client order is submit,
+    // wait, then free, and a client that skips the wait must not lose the BO.
+    if(bo.serial&&gRetireLock){
+        IOLockLock(gRetireLock);
+        sweepJobsLocked();
+        const unsigned held=holdsCount(bo.serial);
+        IOLockUnlock(gRetireLock);
+        if(held)return false;
+    }
     dropView(bo);
     auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
     auto unmap=[&](){
@@ -367,14 +508,18 @@ void AGXDeviceUserClient::free() {
     }
     if(task_){task_deallocate(task_);task_=TASK_NULL;}
     if(bos_) {
-        for(unsigned i=0;i<MaxBo;++i)freeBo(bos_[i]);
+        // A failed release is not dropped with the array: the object moves to
+        // the tracked quarantine and its pages stay owned.
+        for(unsigned i=0;i<MaxBo;++i)
+            if(!freeBo(bos_[i])&&bos_[i].handle)quarantine(bos_[i]);
         IODelete(bos_,Bo,MaxBo);bos_=nullptr;
     }
     if(lock_){IOLockFree(lock_);lock_=nullptr;}
     IOUserClient::free();
 }
 IOReturn AGXDeviceUserClient::clientClose() {
-    if(bos_)for(unsigned i=0;i<MaxBo;++i)freeBo(bos_[i]);
+    if(bos_)for(unsigned i=0;i<MaxBo;++i)
+        if(!freeBo(bos_[i])&&bos_[i].handle)quarantine(bos_[i]);
     if(live_){live_=false;native_adreno_service_stats[1]=native_adreno_service_stats[1]+1;}
     if(ownsClient_){
         if(gGateLock){IOLockLock(gGateLock);gGate.release(generation_);IOLockUnlock(gGateLock);}
@@ -511,6 +656,7 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
         buf->release();bo=Bo();return kIOReturnNoMemory;
     }
     bo.token=BoTokenBase+index;
+    if(gRetireLock){IOLockLock(gRetireLock);bo.serial=++gSerialCounter;IOLockUnlock(gRetireLock);}
     r.handle=bo.handle;
     native_adreno_service_stats[2]=native_adreno_service_stats[2]+1;
     native_adreno_service_stats[12]=native_adreno_service_stats[12]+a.bytes;
@@ -520,7 +666,9 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
     uint64_t start=0,window=0;
     if(cheeseburger_gpu_engine_window(&start,&window))return kIOReturnNotReady;
     Bo *bo=find(m.handle);
-    if(!bo||!bo->buf)return kIOReturnBadArgument;
+    // An imported BO has no owned buffer; its pinned descriptor is the storage
+    // and every physical run is mapped at its offset below.
+    if(!bo||(!bo->imported&&!bo->buf)||(bo->imported&&!bo->desc))return kIOReturnBadArgument;
     if(!(m.permissions&1)||m.reserved||(m.iova&4095)||m.iova<start||m.iova+bo->bytes>start+window)
         return kIOReturnBadArgument;
     if(bo->mapped)return bo->iova==m.iova?kIOReturnSuccess:kIOReturnBusy;
@@ -607,25 +755,17 @@ IOReturn AGXDeviceUserClient::boImport(const NativeAdrenoAbiBoImport &a,NativeAd
     bo.desc=d;
     bo.imported=true;
     bo.token=BoTokenBase+index;
+    if(gRetireLock){IOLockLock(gRetireLock);bo.serial=++gSerialCounter;IOLockUnlock(gRetireLock);}
     r.handle=bo.handle;
     native_adreno_service_stats[2]=native_adreno_service_stats[2]+1;
     native_adreno_service_stats[12]=native_adreno_service_stats[12]+a.bytes;
     return kIOReturnSuccess;
 }
-// A job's fence was observed complete: the handles it named may be released.
-void AGXDeviceUserClient::releaseJob(uint32_t fence) {
-    for(unsigned j=0;j<8;++j){
-        if(jobs_[j].fence!=fence)continue;
-        for(unsigned k=0;k<jobs_[j].count;++k){
-            Bo *b=find(jobs_[j].handles[k]);
-            if(b&&b->held)b->held--;
-        }
-        jobs_[j]=Job();
-    }
-}
 IOReturn AGXDeviceUserClient::boCpuMap(uint64_t handle,NativeAdrenoAbiBoCpuMapReply &r) {
     Bo *bo=find(handle);
-    if(!bo||!bo->desc)return kIOReturnBadArgument;
+    // The ABI keeps the caller's own mapping for an imported BO; there is no
+    // service-owned token to hand out.
+    if(!bo||!bo->desc||bo->imported)return kIOReturnBadArgument;
     r.token=bo->token;r.reserved=0;r.bytes=bo->bytes;
     return kIOReturnSuccess;
 }
@@ -639,10 +779,16 @@ IOReturn AGXDeviceUserClient::boCpuUnmap(uint64_t handle,uint32_t token) {
 IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdrenoAbiSubmitReply &r) {
     if(s.buffer_count<1||s.buffer_count>NativeAdrenoAbiMaxBuffers||s.reserved)
         return kIOReturnBadArgument;
+    if(gRetireLock){IOLockLock(gRetireLock);sweepJobsLocked();IOLockUnlock(gRetireLock);}
     if(s.wait_fence){
         if(cheeseburger_gpu_engine_wait(uint32_t(s.wait_fence),s.wait_timeout_ns?s.wait_timeout_ns:1000000000ull))
             return kIOReturnTimeout;
-        releaseJob(uint32_t(s.wait_fence));
+        if(gRetireLock){
+            IOLockLock(gRetireLock);
+            releaseJobFenceLocked(uint32_t(s.wait_fence));
+            retireQuarantinedLocked();
+            IOLockUnlock(gRetireLock);
+        }
     }
     uint64_t vas[NativeAdrenoAbiMaxBuffers];
     uint32_t dwords[NativeAdrenoAbiMaxBuffers];
@@ -712,6 +858,26 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         cb_inline_ib=(volatile uint32_t *)p;
         cb_inline_dwords=(p&&s.buffers[0].bytes<=ib->bytes)?unsigned(s.buffers[0].bytes/4):0;
     }
+    // Every mapped object is held until this job's fence: the ABI names only
+    // the submitted buffers, while an IB may use any mapped object as data,
+    // texture or write target. Reserve the slot first so a submission can
+    // never be kicked without a place to record its resources.
+    uint64_t serials[MaxJobBos];unsigned serialCount=0;
+    for(unsigned i=0;i<MaxBo&&serialCount<MaxJobBos;++i){
+        Bo &b=bos_[i];
+        if(b.handle&&b.mapped&&b.serial)serials[serialCount++]=b.serial;
+    }
+    int slot=-1;
+    if(gRetireLock){
+        IOLockLock(gRetireLock);
+        sweepJobsLocked();
+        slot=reserveJobSlot(serials,serialCount);
+        IOLockUnlock(gRetireLock);
+    }
+    if(slot<0){
+        native_adreno_retire[3]=native_adreno_retire[3]+1;
+        return kIOReturnBusy;
+    }
     int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
     // Kernel-side readback of every mapped BO: the IB's write target is one of
     // them, and the values show whether the commands ran even without a fence.
@@ -726,21 +892,16 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         native_adreno_bo_dump[n*4+2]=p[1];native_adreno_bo_dump[n*4+3]=p[2];++n; }
       native_adreno_bo_dump[15]=n; }
     native_adreno_service_stats[6]=native_adreno_service_stats[6]+1;
+    if(gRetireLock){
+        IOLockLock(gRetireLock);
+        // A failed kick may have left the CP fetching this stream: keep the
+        // holds for the rest of the boot instead of releasing pages the GPU
+        // could still read. The engine refuses every later submission.
+        if(!rc)gJobs[slot].fence=seq;
+        IOLockUnlock(gRetireLock);
+    }
     if(rc){native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;return kIOReturnIOError;}
     r.fence=seq;
-    // Hold every object this submission named until its fence is observed
-    // complete; a client that frees one earlier keeps the pages instead.
-    { uint64_t hs[16]={};unsigned n=0;
-      for(unsigned i=0;i<s.buffer_count&&n<16;++i){
-        const uint64_t h=s.buffers[i].handle;bool dup=false;
-        for(unsigned j=0;j<n;++j)if(hs[j]==h)dup=true;
-        if(!dup)hs[n++]=h;
-      }
-      for(unsigned j=0;j<8;++j)if(!jobs_[j].fence){
-        jobs_[j].fence=seq;jobs_[j].count=n;
-        for(unsigned k=0;k<n;++k){jobs_[j].handles[k]=hs[k];Bo *b=find(hs[k]);if(b)b->held++;}
-        break;
-      } }
     native_adreno_service_stats[8]=native_adreno_service_stats[8]+1;
     return kIOReturnSuccess;
 }
@@ -749,7 +910,12 @@ IOReturn AGXDeviceUserClient::waitFence(const NativeAdrenoAbiWaitFence &w) {
     if(!w.fence)return kIOReturnBadArgument;
     uint64_t timeout=w.timeout_ns?w.timeout_ns:1000000ull;
     int rc=cheeseburger_gpu_engine_wait(uint32_t(w.fence),timeout);
-    if(!rc)releaseJob(uint32_t(w.fence));
+    if(!rc&&gRetireLock){
+        IOLockLock(gRetireLock);
+        releaseJobFenceLocked(uint32_t(w.fence));
+        retireQuarantinedLocked();
+        IOLockUnlock(gRetireLock);
+    }
     return rc?kIOReturnTimeout:kIOReturnSuccess;
 }
 IOReturn AGXDeviceUserClient::run(uint32_t method,const void *input,size_t input_size,void *output,size_t output_size) {
@@ -978,6 +1144,7 @@ extern "C" int cheeseburger_gpu_service_publish(void) {
         if(moderr)return -6;
     }
     if(!gGateLock){gGateLock=IOLockAlloc();if(!gGateLock)return -4;}
+    if(!gRetireLock){gRetireLock=IOLockAlloc();if(!gRetireLock)return -4;}
     uint64_t start=0,bytes=0;
     if(cheeseburger_gpu_engine_window(&start,&bytes))return -1;
     IOService *parent=IOService::getResourceService();
