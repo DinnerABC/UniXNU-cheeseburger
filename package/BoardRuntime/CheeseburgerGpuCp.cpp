@@ -71,7 +71,6 @@ int cheeseburger_gpu_smmu4k_ttbr(uint64_t *);
 int cheeseburger_gpu_smmu_micro(void);
 int cheeseburger_gpu_smmu_resume_micro(void);
 int cheeseburger_gpu_zap_load(volatile uint32_t *);
-extern volatile uint64_t native_gop_scanout[4] __attribute__((weak_import));
 void cheeseburger_bootlog_step(const char *) __attribute__((weak_import));
 }
 namespace CheeseburgerGpu { struct SubmitRecord; }
@@ -759,62 +758,6 @@ static int keepAliveInline(uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec)
  if(rc)return rc;
  return (t[0]==sent[0]&&t[1]==sent[1])?0:-2;
 }
-// First GPU-authored pixels: the same buffer the firmware scans out is mapped
-// into the GPU context and painted with horizontal bars by CP_MEM_WRITE, then
-// a pixel of each bar is read back from DRAM. This is a fill, not a draw: no
-// shader, no rasteriser. Enabled only by cheeseburger-gpu-fill=<nonzero>.
-static volatile uint32_t native_gpu_fill[12];
-static bool gScanoutFillDone=false;
-static int gpuScanoutFill(uint32_t color,uint32_t sequence,CheeseburgerGpu::SubmitRecord &rec){
- if(!gEngine540||!gScratchVA||!gScratchGva)return -1;
- // The live console frame buffer: the display transfers every presented frame
- // into this range, so it is the scanout the firmware shows. Read it from the
- // PE state rather than a driver global, which exists only on some paths.
- PE_Video video={};
- if(PE_current_console(&video)||!video.v_baseAddr||!video.v_width||!video.v_height||
-    video.v_depth!=32||video.v_rowBytes<video.v_width*4ull)return -1;
- const uint64_t pa=video.v_baseAddr,stride=video.v_rowBytes;
- const uint32_t width=video.v_width,height=video.v_height;
- const uint64_t bytes=stride*height;
- if(stride<width*4ull||!bytes)return -1;
- enum {Bars=8,Pixels=192,BarBytes=Pixels*4};
- uint32_t *ib=(uint32_t*)((uint8_t*)gScratchVA+0x1000);   // inside the GPMU page, past the gate's use
- CheeseburgerGpu::Encoder540 e(ib,(11884-0x1000)/4);
- uint64_t iova[8]={};uint32_t off[8]={};
- for(unsigned i=0;i<Bars;++i){
-  const uint32_t y=(uint32_t)((uint64_t)height*(i+1)/(Bars+1));
-  const uint64_t o=uint64_t(y)*stride+400;               // x = 100 pixels
-  const uint64_t page=o&~0xfffull, inPage=o-page;
-  const unsigned pages=unsigned((inPage+BarBytes+4095)/4096);
-  const uint64_t base=0x2040000ull+uint64_t(i)*0x10000ull;
-  if(cheeseburger_gpu_smmu_map(base,pa+page,pages))return -2;
-  iova[i]=base+inPage;off[i]=uint32_t(o);
-  uint32_t pixels[Pixels];
-  for(unsigned x=0;x<Pixels;++x)pixels[x]=color;
-  if(!e.memWrite(iova[i],pixels,Pixels))return -3;
- }
- flush_dcache((vm_offset_t)ib,unsigned(e.size()*4),FALSE);
- CheeseburgerGpu::Ib540 one={gScratchGva+0x1000,e.size()};
- int rc=gEngine540->submit(&one,1,sequence,1000000,rec);
- __asm__ volatile("dsb sy":::"memory");
- native_gpu_fill[0]=uint32_t(rc);native_gpu_fill[1]=color;
- // Read one pixel of each bar straight from DRAM through a fresh non-cached
- // mapping of the frame buffer page it lives in.
- for(unsigned i=0;i<Bars;++i){
-  const uint64_t o=uint64_t(height)*(i+1)/(Bars+1)*stride+400;
-  IODeviceMemory *m=IODeviceMemory::withRange(pa+(o&~0xfffull),4096);
-  if(!m)continue;
-  IOMemoryMap *mp=m->map(kIOMapAnywhere|kIOMapInhibitCache);
-  OSSafeReleaseNULL(m);
-  if(!mp)continue;
-  volatile uint32_t *v=(volatile uint32_t*)mp->getVirtualAddress();
-  if(v)native_gpu_fill[2+i]=v[(o&0xfff)/4];
-  mp->release();
- }
- IOLog("CB GPU fill rc=%d bars=%d color=%x pa=%llx stride=%llu %ux%u\n",
-  rc,(int)Bars,color,(unsigned long long)pa,(unsigned long long)stride,width,height);
- return rc;
-}
 static int gateSubmit(uint32_t sequence,bool useIb,uint32_t ibDwords,
  const uint32_t *inlineWords,uint32_t inlineCount,CheeseburgerGpu::SubmitRecord &rec){
  CheeseburgerGpu::Ib540 one={gScratchGva+0x200,ibDwords};
@@ -971,17 +914,6 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
      if(logged++<4)IOLog("CB GPU engine: empty IB seq=%u words=%u; completed without a kick\n",s,n);
      IOLockUnlock(gSubmitLock);return 0;
     }
-   } }
- // First GPU-authored pixels, once per boot and only when asked for: the gate
- // above has just proved the ring and the CP, and this writes bars into the
- // same buffer the firmware scans out.
- { unsigned fill=0;
-   if(PE_parse_boot_argn("cheeseburger-gpu-fill",&fill,sizeof fill)&&fill&&gEngine540&&gEngine540->ready()&&!gScanoutFillDone){
-    gScanoutFillDone=true;
-    CheeseburgerGpu::SubmitRecord fr;
-    const int frc=gpuScanoutFill(fill==1?0xff00ff00u:uint32_t(fill),s,fr);
-    if(frc==0){gFenceSeq=s;++s;}
-    else IOLog("CB GPU fill failed rc=%d; submissions continue\n",frc);
    } }
  CheeseburgerGpu::SubmitRecord rec;
  // The probe's streams fetch from 0x2000000 without any CP table packet, so
