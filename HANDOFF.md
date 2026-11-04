@@ -1,3 +1,22 @@
+## 2026-11-04：P21-Vesper / P21-Skua 结果（GPU 填充扫描线；自锁死导致 panic，已回退）· 基线回到 P21-Linnet
+
+- **目标**：合并 sheng `GpuScanoutPresenter` 的思路——让 GPU 把像素写进固件正在扫描的帧缓冲，做出第一帧“GPU 产出、屏幕可见”的画面。实现为 `cheeseburger-gpu-fill=<argb>`：门禁通过后一次性把 8 条横条用 `CP_MEM_WRITE` 写进扫描缓冲、fence、再从 DRAM 回读每个条带的一个像素。
+- **P21-Vesper（boot `0x477bc534`，日志 `out/p21/persistent-logs/20261104T114332Z/`）**：提交链路仍正常（`GBOD 1:adc0de1/feed0002/600d0003`、客户端 `v4`），但 `CB GPU fill failed rc=-1`：导出扫描线参数的 GOP presenter 在本机这条显示路径上没有被实例化，两个全局保持为 0，填充函数在入口就返回。
+- **P21-Skua（同一镜像两次启动）**：
+  - 第 1 次（boot `0x48cc3e33`，日志 `out/p21/persistent-logs/20261104T120300Z/`）：`DISPLAY clients=0 frames=0`——已知的首帧偶发未出现，`mediaserverd` 没有打开 GPU 服务，因此门禁与填充都没有执行；内核本身正常跑满 400 s 并自动回 Recovery。据此把填充改为调 `PE_current_console()` 取同一块帧缓冲。
+  - 第 2 次（boot 后用户看到 panic 屏）：**panic `Mutex 0x… is unexpectedly owned by thread 0xf @lock_mtx.c:175`**。根因已定位：`gpuScanoutFill()` 在 `cheeseburger_gpu_engine_submit()` 持有 `gSubmitLock` 时调用 `cheeseburger_gpu_smmu_map()`，后者经 `cheeseburger_gpu_mapping_begin()` 再次申请**同一个非递归 IOLock**，提交线程自锁。
+  - 过错记录：第 2 次启动前的 misc BCB 重写实际失败——上一轮重启清空了 `/tmp`，`/tmp/misc-request.bin` 已不存在，`dd` 未写入，回读为全 0（`misc-readback2.bin`），所以这一轮没有预置 `boot-recovery`，panic 屏 hold 后需要手动回 Recovery。以后每次 fastboot 前必须先 `push` 再 `dd` 并确认回读非零。
+- **处理**：`c732e55` 把这两个提交整体回退，工作树回到 P21-Linnet（`git diff d862f05 -- package` 为 0），可启动、提交链路 device-verified 的版本。
+- **下一步（重做填充时）**：
+  1. 映射必须在**提交锁之外**完成（例如在门禁前用同一把锁之外的序列化，或在 `engine_submit` 入口先 map、再取锁），绝不能在持锁路径里调 `cheeseburger_gpu_smmu_map`。
+  2. 扫描线用 `PE_current_console()` 取（GOP presenter 不一定实例化），并在填充前确认 `v_depth==32`、`v_rowBytes>=width*4`。
+  3. 填充仍需 `cheeseburger-gpu-fill` 开关，默认关闭；同时保留“单个像素回读”作为唯一证据，不用截图推断。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Vesper** | `e706bd22…` | `a6b69407…` | 扫描线填充（GOP 全局未实例化 → rc=-1）；提交链路正常 |
+  | 2026-11-04 | **P21-Skua** | `26a35ce7…` | `9553e9c6…` | 改用 PE 控制台；自锁 IOLock → panic（lock_mtx.c:175），已整体回退 |
+
 ## 2026-11-04：P21-Linnet 结果（用户态 GPU 提交全链路成功：CP 执行客户端 IB 并写回目标 BO）· 新基线 = P21-Linnet
 
 - **改动链**：
