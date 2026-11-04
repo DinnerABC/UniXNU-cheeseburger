@@ -1,3 +1,39 @@
+## 2026-11-04：P21-Auk（Turnip Darwin-KMD 构建链恢复 + 服务端 tunnel/import/持有语义 + A540 拷贝路径）
+
+### 一、官方 Turnip Darwin-KMD 构建链（workstream A）
+- **输入（本机固定框架 `16e592ab…`）**：Mesa `85fda3b36405bcaea8bffc64aa4f2651dc90770d`（freedesktop 稀疏检出到 `.work/p21-official-framework/.cache/mesa-work`，94 MB），官方 9 个补丁按 `scripts/data/adreno-compiler-inputs.json` 顺序全部 `git apply` 成功，其中 `patches/mesa/turnip-darwin-kmd.patch` 即 `src/freedreno/vulkan/tu_knl_darwin.cc`（Darwin KNL，面向 NativeAdreno IOKit 服务）。
+- **构建依赖**：meson 1.12.1（venv）、ninja、glslang 16.6、GNU bison 3.8.2（Apple 自带 bison 不支持 `-W`，脚本 PATH 里放 `.cache/mesa-tools/bin/bison` 软链）。iOS 目标需要 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`，否则 `xcrun --sdk iphoneos` 失败。
+- **结果（仅构建，未跑 GPU）**：
+  - `--target host`：**PASS**，`build/mesa-tu/src/freedreno/vulkan/libvulkan_freedreno.dylib` 22,918,696 B，sha256 `7bc75a02…`。
+  - `--target ios`：**PASS**，`build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib` 17,879,288 B，sha256 `b2cb2342…`。
+  - 这是“Darwin KMD 构建成功”，**不是** A540 Vulkan 可运行；Mesa 官方文档明确 Turnip 只面向 A6xx+，没有 A5xx 计划。
+
+### 二、服务端按 KNL 实际调用补齐（workstream B）
+对照 `tu_knl_darwin.cc` 的实际调用逐项修正：
+- **NTNL tunnel**：KNL 以 `IOAcceleratorES` + type `0x4147` 打开，把每个 ABI 方法包成 `{0x4e544e4c, method, payload}` 走**同一个被 sandbox 放行的 selector**，并用 `method=0xffffffff` 探测。`AGXDeviceUserClient::externalMethod` 现在回答探测并转发 tunnel 调用到同一套 handler（`GTUN calls/probes` 记录）。
+- **BoAlloc `contiguous=0`**：KNL 传 0，旧实现直接拒绝；现在接受（连续分配满足非连续请求）。
+- **BoImport**：原来 `kIOReturnUnsupported`，现已实现——`IOMemoryDescriptor::withAddressRange(调用方地址, 长度, task_)` 钉页并 `prepare`，BO 标记 imported；`BoMap` 按每个物理连续段映射（`bo.spans[64]`），`freeBo` 逐段 unmap 并 `complete()` 解钉，导入页的 cache 属性归调用方所有、服务不碰。
+- **提交期持有**：每笔成功提交记录 `{fence, handles}`（8 组），对应 BO `held++`；`waitFence` 成功才 `releaseJob` 递减；`freeBo` 对 `held>0` 直接拒绝并保留映射，客户端提前释放/异常退出都不会让 GPU 仍引用的页被回收。
+
+### 三、A540 图形/拷贝路径（workstream C）
+- `Encoder540::copy(dst, src, dwords)`：用 `CP_MEM_TO_MEM`（0x73）逐 dword 拷贝，是本机第一条非 `CP_MEM_WRITE` 的 GPU 数据路径，已编译并由门禁 C 段在实机执行（把客户端页 4 个 dword 拷进内核 scratch）。
+- **实机限制（新证据）**：16 个连续 0x73 包会让本 CP 在拷完 2 个 dword 后停住、fence 不触发（P21-Warbler/Zephyr），即使每 4 个插入 `0x12/0x26` 屏障也一样；因此一批最多 4 个，更大拷贝必须拆成多次提交。编码器注释已记录。
+- A5xx 真正的绘制（VSC/RB/着色器）不在 Turnip 支持范围，需要另立 A5xx 图形后端；本轮未伪造任何绘制结果。
+
+### 四、实机（P21-Auk，`out/p21/persistent-logs/20261104T154715Z/`，400 s 自动回 Recovery）
+- 镜像 `9b76208e…`、内核 `a065c69b…`、固件 `915a89c7…`、gate `20261104T153918Z` PASS、misc 回读一致、15:39:40Z 单次 `fastboot boot` OKAY。
+- `keepalive0/1 rc=0`；门禁 `A rc=0 / B rc=0 / C rc=0`（C 段走新的 copy 路径）；`GPSVC open=2 bo=2 map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`；客户端 `v4`。
+- 分项状态：BO/submit/fence **device-verified**；GPU 文本/条带像素 **device-verified（历史轮）**；IOSurface 导入路径 **源码实现，实机未验证**；Vulkan/Turnip **构建成功、未运行**；Metal 与系统 GPU 合成 **未开始**。
+
+### 五、下一个 agent 可直接继续
+1. `package/BoardRuntime/CheeseburgerGpuService.cpp`：`boImport`/`boMap`(spans)/`releaseJob`/tunnel 分支——用 Turnip 的 iOS dylib 在设备内实际打开一次（`TU_DARWIN_SERVICE=NativeAdrenoGpuPublished TU_DARWIN_OPEN_TYPE=0` 走直连 selector），看 `GTUN` 与 `GPSVC` 的调用序列。
+2. A5xx 图形后端：从 sagit `QcomGPU` 的 Encoder 与 Mesa `a5xx`/IR3 参考入手实现最小清扫/绘制；Turnip 不提供 A5xx，必须自建。
+3. `Engine540::copy` 的 4 个/批限制说明已写入头文件，跨提交拷贝需要引擎侧队列化（当前每次提交自带 fence）。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Auk** | `9b76208e…` | `a065c69b…` | Turnip Darwin-KMD host+iOS 构建成功；服务补 tunnel/BoImport/持有；A540 拷贝路径实机通过；提交链路无回归 |
+
 ## 2026-11-04：P21-Ruff 结果（合并 sheng 的每次提交 TLBIALL；移除逐行填充；ABI 与 sheng 完全一致）
 
 - **合并的 sheng 案例（`NativeAdrenoVm::invalidateTlb`）**：每次用户提交前对 context bank 做 TLBIALL，避免上一次提交之后新写的 leaf 被陈旧 TLB 命中；失败即 fail-closed（`rc=-8 stage=0x83`）。这是 `Engine540` 移植时丢掉的一步。
