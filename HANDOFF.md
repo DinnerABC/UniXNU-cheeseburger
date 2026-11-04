@@ -4,7 +4,7 @@
 - **P21-Vesper（boot `0x477bc534`，日志 `out/p21/persistent-logs/20261104T114332Z/`）**：提交链路仍正常（`GBOD 1:adc0de1/feed0002/600d0003`、客户端 `v4`），但 `CB GPU fill failed rc=-1`：导出扫描线参数的 GOP presenter 在本机这条显示路径上没有被实例化，两个全局保持为 0，填充函数在入口就返回。
 - **P21-Skua（同一镜像两次启动）**：
   - 第 1 次（boot `0x48cc3e33`，日志 `out/p21/persistent-logs/20261104T120300Z/`）：`DISPLAY clients=0 frames=0`——已知的首帧偶发未出现，`mediaserverd` 没有打开 GPU 服务，因此门禁与填充都没有执行；内核本身正常跑满 400 s 并自动回 Recovery。据此把填充改为调 `PE_current_console()` 取同一块帧缓冲。
-  - 第 2 次（boot 后用户看到 panic 屏）：**panic `Mutex 0x… is unexpectedly owned by thread 0xf @lock_mtx.c:175`**。根因已定位：`gpuScanoutFill()` 在 `cheeseburger_gpu_engine_submit()` 持有 `gSubmitLock` 时调用 `cheeseburger_gpu_smmu_map()`，后者经 `cheeseburger_gpu_mapping_begin()` 再次申请**同一个非递归 IOLock**，提交线程自锁。
+  - 第 2 次（boot `0x4908b95c`，日志 `out/p21/persistent-logs/20261104T121434Z/`）：**panic `Mutex 0x… is unexpectedly owned by thread 0xf @lock_mtx.c:175`**（屏幕原文由用户提供：`DISPLAY st=10 opens=5 rawframes=0`、`OPEN tries=5`、`EXITS total=227`、`TOUCH frames=3363`）。持久日志本身只写到 139.4 s（没有 `CB GPU fill` 行、panic 文本不进持久环），与“日志写手先停、panic 在后”一致，因此 panic 时刻以屏幕计数为准。根因已定位：`gpuScanoutFill()` 在 `cheeseburger_gpu_engine_submit()` 持有 `gSubmitLock` 时调用 `cheeseburger_gpu_smmu_map()`，后者经 `cheeseburger_gpu_mapping_begin()` 再次申请**同一个非递归 IOLock**，提交线程自锁。
   - 过错记录：第 2 次启动前的 misc BCB 重写实际失败——上一轮重启清空了 `/tmp`，`/tmp/misc-request.bin` 已不存在，`dd` 未写入，回读为全 0（`misc-readback2.bin`），所以这一轮没有预置 `boot-recovery`，panic 屏 hold 后需要手动回 Recovery。以后每次 fastboot 前必须先 `push` 再 `dd` 并确认回读非零。
 - **处理**：`c732e55` 把这两个提交整体回退，工作树回到 P21-Linnet（`git diff d862f05 -- package` 为 0），可启动、提交链路 device-verified 的版本。
 - **下一步（重做填充时）**：
