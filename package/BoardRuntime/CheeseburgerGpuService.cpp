@@ -438,17 +438,25 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     }
     if(!buf)buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
         kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,(vm_size_t)a.bytes,4096);
-    if(!buf)return kIOReturnNoMemory;
+    if(!buf){IOLog("CB GPU bo: alloc %llu align=%u contig=%u failed\n",
+        (unsigned long long)a.bytes,a.align_log2,a.contiguous);return kIOReturnNoMemory;}
     native_adreno_bo_low[low?0:1]=native_adreno_bo_low[low?0:1]+1;
     IOByteCount span=0;
     uint64_t pa=low?poolPa:buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
     if(!pa||(pa&4095)||(!low&&span<a.bytes)||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
     void *block=buf->getBytesNoCopy();
-    IOByteCount span0=0;
-    const uint64_t blockPa=low?buf->getPhysicalSegment(0,&span0,kIOMemoryMapperNone):pa;
-    if(!block||!blockPa||pa<blockPa||pa-blockPa>=a.bytes+4096){buf->release();return kIOReturnNoMemory;}
-    void *cpu=(void*)((uint8_t*)block+(pa-blockPa));
-    if(!cpu){buf->release();return kIOReturnNoMemory;}
+    if(!block){buf->release();return kIOReturnNoMemory;}
+    void *cpu=block;
+    if(low){
+        // A pool BO is one page of the shared block: view its own page. If the
+        // block base cannot be read back, keep the old view instead of
+        // refusing an allocation that used to succeed.
+        IOByteCount span0=0;
+        const uint64_t blockPa=buf->getPhysicalSegment(0,&span0,kIOMemoryMapperNone);
+        if(blockPa&&pa>=blockPa&&pa-blockPa<8192)cpu=(void*)((uint8_t*)block+(pa-blockPa));
+        else IOLog("CB GPU bo: pool view fallback pa=%llx base=%llx\n",
+            (unsigned long long)pa,(unsigned long long)blockPa);
+    }
     // Publish initialized cache lines before the pages are GPU-visible. The
     // WCOMB attribute from b9f698f was removed in boot 0x4a508e1d and changed
     // nothing: the failure follows the physical page, not its cache attribute.
