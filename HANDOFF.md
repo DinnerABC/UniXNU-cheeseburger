@@ -1,3 +1,21 @@
+## 2026-11-04：P21-Rook 结果（找到并修掉停 CP 的根因；内核 IB 全链路通过，客户端 IB 内容为全 0）· 新基线 = P21-Rook
+
+- **上电时序根因（提交 `f4bb1c7` 之前为 `9ea90a5`+`d52ea88` 诊断）**：探针在 ZAP 之后调用 `powerCore()`，此时 RBCCU/SP 状态位读回为 0（`after-zap rbccu=778801/1 sp=778001/1`），于是它向 `0xa887/0xa881` 写入 **0x778000 上电命令**——而这发生在 CP 已经启动、正在取指的时候。P21-Quail 的握手 keep-alive 把这一点钉死：`keepalive0 rc=0`（114.627 s），紧接着该写入，`keepalive1 rc=-4`（117.158 s），随后 `Unclassified kernel abort (fault_code=0x10)`。
+- **修复**：`powerCore(...,allowWrite)`——只有 **reset 之前** 的那次调用可以写；ZAP 之后与每次提交前的采样都是只读。`cheeseburger_gpu_pre_kick()` 不再要求电源状态位（只读无法修复它），只在总线不可读、CP fault 已锁存或 micro-MMU 无法恢复时拒绝；是否真正执行由该次提交自己的 fence 判定。
+- **P21-Rook 实机（boot `0x490c841d`，日志 `out/p21/persistent-logs/20261104T094646Z/`，400 s 自动回 Recovery，`frames=5`）**：
+  - `keepalive0 rc=0 fr=3`、`keepalive1 rc=0 fr=4` —— **发布之后 CP 仍然存活**（此前每一轮在这里就已死）。
+  - 门禁三段全过：`gate A rc=0 sent=a5a50001/a5a50002/a5a50003 fr=5`（ring 内联写）、`gate B rc=0 sent=b6b60001/b6b60002/b6b60003 fr=6`（**`0x3f` 间接缓冲取指成功**）、`gate C rc=0 cp=0/0 kview=0 fr=7`（CP 读客户端页）。
+  - 客户端提交仍失败：`GSUB rc=-4 stage=5 seq=8 fenced=0 pf=74/0`；`GRNG seq=8 103..116 n=13 w=70928000/70268000/70bf8003/4000000/0/c …`——客户端第一个 IB 是 **12 dword、内容全 0**（`kview=0`，门禁 C 也从 CP 侧读到 0，`GBOD 0:0/0/0 1:0/0/0`）。CP 把整条环取到 `rptr=0x74=116`（等于 wptr）却未执行到 fence，说明它停在 IB 内容上。
+- **结论（实机证据）**：GPU 提交后端在真实硬件上是通的——环、门铃、`0x3f` 取指、`0x46` fence、CP 读用户页都成立。当前唯一挡住用户态的，是客户端递交的 IB 为全 0；这属于上层 ABI/前端把命令写进哪个 BO 的问题，不再是 CP/提交后端问题。
+- **下一步**：
+  1. 在提交入口对客户端 IB 做**非零预检**（内核视图前若干 dword 全 0 即拒绝，`rc=-9`），避免一个空 IB 把 CP 顶死、连带拒绝后续真正有内容的提交。
+  2. 查客户端为何递交空 IB：`mediaserverd` 通过我们发布的 IOAccelerator 提交，命令可能在别的共享内存（IOGPU 命令队列/IOSharedDataQueue）而不是我们分配的 BO；需要对照 sheng `NativeAdrenoClient`/`NativeAdrenoVm` 的 `describe/submit` 与 Apple IOGPU 的 buffer 协商，确认 `NativeAdrenoAbiSubmitBuffer` 的 iova/bytes 是否被上层填对。
+  3. 空 IB 被拒后，观察是否有第二次带真实命令的提交（`GPSVC calls`）出现。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Rook** | `2243f292…` | `dba4917e…` | 修掉 ZAP 后重复上电写；keepalive0/1 全过、门禁 A/B/C 全过；客户端 IB 全 0 → 仍超时；可启动、自动返回 |
+
 ## 2026-11-04：P21-Quail 结果（握手 keep-alive + 每次提交 TLBI，启动后未回 Recovery，已回退）· 基线 = P21-Merlin
 
 - **改动（提交 `d52ea88`）**：把门禁第一段（ring 内联 `CP_MEM_WRITE` + fence）在**探针 fence 之后**（`k0`）和**服务发布之后**（`k1`）各再跑一次，用来区分“CP 在探针处就停了 / 发布路径 / 客户端映射”；同时恢复 sheng `NativeAdrenoVm::invalidateTlb` 的每次提交前 bank TLBIALL（`CheeseburgerGpuEngine540` 移植时丢失的一步）。宿主模型与内核语法检查通过。
