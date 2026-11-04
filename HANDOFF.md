@@ -1,3 +1,19 @@
+## 2026-11-04：P21-Nighthawk / P21-Peregrine 结果（强制停流使 BO 映射失败，已回退）· 当前基线 = P21-Merlin
+
+- **P21-Nighthawk（boot `0x478151eb`，日志 `out/p21/persistent-logs/20261104T083113Z/`）**：`GPSVC map=0 sel=3 err=1 st=e00002bd`、`sub=0`——客户端 BO 映射被 `cheeseburger_gpu_mapping_begin` 拒绝，没有任何提交；系统仍正常启动并自动回 Recovery。
+  - 原因可从启动快照读出：`GCP2 … vbif=0/f0000`，即 **`VBIF_HALT`(0x3080) 空闲时读 `0xf0000`**（每客户端状态在 bits 19:16，请求/确认在 bits 3:0），而新的前置条件按整寄存器 `vb==0` 判断，永远不成立。
+- **P21-Peregrine（boot `0x4783256a`，日志 `out/p21/persistent-logs/20261104T085010Z/`）**：提交 `38051d0` 把前置条件与恢复校验改成只看 bits 3:0，`gpu_quiesce_model` 也按真实回读建模（`HOST_MODELS_PASS`），但**映射仍然失败**（`map=0 sel=3`，客户端 155.6 s 打开、没有 `bo atos`/提交记录）。该轮没有打印 `dr=`（GATE 行只在门禁运行时输出），所以**是哪一个检查拒绝的未确认**：可能是 `drainForTables` 内部的 ack/空闲校验，也可能仍是前置条件。
+- **处理（提交 `9ea90a5`）**：回退 `2839d8a` + `38051d0`，工作树回到 P21-Merlin（`a14fc50`）——映射成功、门禁运行、系统启动并自动返回。**保留结论**：本机 `VBIF_HALT` 不能用整寄存器判断；任何“改表前停流”的策略必须先输出 `dr=`/各检查结果，再决定是否强制。
+- **下一步（按优先级）**：
+  1. 把 `mapping_begin` 的每个拒绝点写成独立状态字并在心跳里**无条件**打印（当前只在门禁运行时输出），用一次启动确认 `drainForTables` 在本机能否完成（precondition / ack / idle-status / r==w 四项分别可见）。
+  2. 若停流可完成：保持“改表前后停流”，观察门禁 A 段是否恢复执行；若门禁 A 仍超时，问题就不在改表与 CP 的竞态，转查 `cheeseburger_gpu_pre_kick`/服务发布之间的其它 GPU 侧动作。
+  3. 若停流不可完成：不要强制，改为在**首次映射前**做一次 ring 存活性验证（门禁 A 的 ring 内联写 + fence），并在失败时明确报“环在映射后失效”，把修复点定位到 `ArmSmmu4KLiveUpdateContext` 的 TLBI/上下文同步。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Nighthawk** | `39a779fa…` | `56fa7c6e…` | 改表前后强制停 CP+VBIF；`VBIF_HALT` 整寄存器判断失效 → `map=0`，无提交 |
+  | 2026-11-04 | **P21-Peregrine** | `4993afe7…` | `8c242e4f…` | 只测 bits 3:0；映射仍 `map=0`，拒绝点未打印、未确认；已回退 |
+
 ## 2026-11-04：P21-Merlin 结果（映射后 CP 连 ring 内联写都不执行）· P21-Nighthawk
 
 - **源码**：`7eccff1` 把 `516c248`（黑屏轮）整体回退，工作树与 P21-Falcon（`f7c26ba`）逐字节一致；`a14fc50` 用**三段门禁**替换单一 preflight IB（A：ring 内联 `0x3d` CP_MEM_WRITE；B：同样写入改从内核 IB 取指；C：CP 侧 `CP_MEM_TO_MEM` 读客户端页），每段自带 fence，任一段失败即拒绝客户端 IB；失败后只读自己的 scratch 页，**不再采样任何 GPU 寄存器**。
