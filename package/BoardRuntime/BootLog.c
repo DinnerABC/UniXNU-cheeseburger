@@ -625,13 +625,14 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     * and sentinels; cp vs kv are the CP's and the kernel's first client word. */
    if (&native_adreno_gate[0] && (native_adreno_gate[0]|native_adreno_gate[5]|native_adreno_gate[10])) {
     char gate[220];
-    snprintf(gate,sizeof gate,"GATE a=%d/%u %x/%x/%x b=%d/%u %x/%x/%x c=%d/%u cp=%x/%x kv=%x bid=%llx",
+    snprintf(gate,sizeof gate,"GATE a=%d/%u %x/%x/%x b=%d/%u %x/%x/%x c=%d/%u cp=%x/%x kv=%x dr=%x bid=%llx",
       (int)(int16_t)(uint16_t)native_adreno_gate[0],native_adreno_gate[1],
       native_adreno_gate[2],native_adreno_gate[3],native_adreno_gate[4],
       (int)(int16_t)(uint16_t)native_adreno_gate[5],native_adreno_gate[6],
       native_adreno_gate[7],native_adreno_gate[8],native_adreno_gate[9],
       (int)(int16_t)(uint16_t)native_adreno_gate[10],native_adreno_gate[11],
-      native_adreno_gate[12],native_adreno_gate[13],native_adreno_gate[16],cb_boot_id);
+      native_adreno_gate[12],native_adreno_gate[13],native_adreno_gate[16],
+      native_adreno_gate[17],cb_boot_id);
     at=put(out,at,cap,gate,sizeof gate);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words

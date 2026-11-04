@@ -910,16 +910,30 @@ extern "C" int cheeseburger_gpu_mapping_begin(void){
   IOLockUnlock(gSubmitLock);return -1;
  }
  gTableDrain={};
- // sheng updates the stream tables with the masters quiesced; an empty ring is
- // exactly that state (no fetch in flight, the kit syncs TLBs per update). The
- // CP/VBIF stop is only taken when the ring still carries work.
+ // The kit's live-update contract and sagit's idlePowerTransition require every
+ // master stopped before the tables change; an empty ring only means the CP
+ // retired its queue, not that its fetcher is idle. P21-Merlin showed the CP
+ // executing nothing after the client's first BO map (a ring-inline
+ // CP_MEM_WRITE timed out), so a started engine is always halted and drained
+ // around a table update. The precondition is checked here so a precondition
+ // failure (busy or unreadable) is told apart from a stop that did not finish.
  if(gEngine){
-  const uint32_t r=gMmio->read(CheeseburgerGpu::RBRead);
-  const uint32_t w=gMmio->read(CheeseburgerGpu::RBWrite);
-  const bool empty=(r==w)&&r!=0xffffffffu;
-  if(!empty&&!CheeseburgerGpu::drainForTables(*gMmio,running,gTableDrain)){
+  const uint32_t r=gMmio->read(CheeseburgerGpu::RBRead),w=gMmio->read(CheeseburgerGpu::RBWrite);
+  const uint32_t me=gMmio->read(CheeseburgerGpu::MEControl),vb=gMmio->read(CheeseburgerGpu::VBIFHalt);
+  const bool quiescible=(r==w)&&r!=0xffffffffu&&me==0&&vb==0;
+  native_adreno_gate[17]=uint32_t(quiescible)|(running?2u:0u)|((r==w)?4u:0u);
+  if(!quiescible){
+   // Not provably idle: a table update now could race the CP's fetcher.
+   native_adreno_gate[17]|=0x80000000u;
+   IOLockUnlock(gSubmitLock);return -1;
+  }
+  if(!CheeseburgerGpu::drainForTables(*gMmio,running,gTableDrain)){
+   // A stop that did not complete leaves the CP in an unknown state; do not
+   // update tables or kick under it.
+   native_adreno_gate[17]|=0x40000000u;
    gEngineSubmitFailed=true;IOLockUnlock(gSubmitLock);return -1;
   }
+  native_adreno_gate[17]|=0x10000000u;
  }
  return 1;
 }
