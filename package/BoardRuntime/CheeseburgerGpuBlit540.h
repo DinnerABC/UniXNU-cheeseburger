@@ -204,6 +204,63 @@ public:
         return flushWait(scratch, 29) && ok_;
     }
 
+    // fd5_blitter / sagit snapshot2D copy setup: the same linear 2D path, but
+    // with RB_2D_BLIT_CNTL 0x86000000 and UNKNOWN_2184=9 for a sourced blit.
+    bool copySetup() {
+        r(REG_A5XX_RB_2D_BLIT_CNTL, 0x86000000);
+        r(REG_A5XX_GRAS_2D_BLIT_CNTL, 0x86000000);
+        r(REG_A5XX_UNKNOWN_2184, 9);
+        r(REG_A5XX_RB_MODE_CNTL, 4);
+        r(REG_A5XX_SP_MODE_CNTL, 12);
+        r(REG_A5XX_TPL1_MODE_CNTL, 0x344);
+        r(REG_A5XX_HLSQ_MODE_CNTL, 2);
+        r(REG_A5XX_GRAS_CL_CNTL, 0x181);
+        return ok_;
+    }
+
+    // One R32_UINT blit from a linear source to a linear destination. Pitches
+    // are bytes and must be 64-byte aligned; width/height are pixels. This is
+    // sagit's snapshot2D region: source and destination may have different
+    // pitches, the copy starts at texel (0,0) of both.
+    bool copyTile(uint64_t source, uint32_t sourcePitch, uint64_t destination,
+                  uint32_t destinationPitch, uint32_t width, uint32_t height) {
+        if (!width || !height || (source & 63) || (destination & 63) ||
+            !sourcePitch || !destinationPitch || (sourcePitch & 63) ||
+            (destinationPitch & 63) || uint64_t(width) * 4 > sourcePitch ||
+            uint64_t(width) * 4 > destinationPitch) {
+            ok_ = false;
+            return false;
+        }
+        uint32_t mode = 5;
+        p(0x6c, &mode, 1);  // BLIT2D
+        const uint32_t format = 75;  // RB5_R32_UINT
+        r(REG_A5XX_RB_2D_SRC_INFO, format);
+        r(REG_A5XX_RB_2D_SRC_LO, uint32_t(source));
+        r(REG_A5XX_RB_2D_SRC_HI, uint32_t(source >> 32));
+        const uint32_t slice = sourcePitch * height;
+        r(REG_A5XX_RB_2D_SRC_SIZE,
+          A5XX_RB_2D_SRC_SIZE_PITCH(sourcePitch) | A5XX_RB_2D_SRC_SIZE_ARRAY_PITCH(slice));
+        for (unsigned i = 4; i < 9; ++i) r(REG_A5XX_RB_2D_SRC_INFO + i, 0);
+        r(REG_A5XX_GRAS_2D_SRC_INFO, format);
+        r(REG_A5XX_RB_2D_DST_INFO, format);
+        r(REG_A5XX_RB_2D_DST_LO, uint32_t(destination));
+        r(REG_A5XX_RB_2D_DST_HI, uint32_t(destination >> 32));
+        r(REG_A5XX_RB_2D_DST_SIZE,
+          A5XX_RB_2D_DST_SIZE_PITCH(destinationPitch) |
+          A5XX_RB_2D_DST_SIZE_ARRAY_PITCH(destinationPitch * height));
+        for (unsigned i = 4; i < 9; ++i) r(REG_A5XX_RB_2D_DST_INFO + i, 0);
+        r(REG_A5XX_GRAS_2D_DST_INFO, format);
+        const uint32_t end = (width - 1) | ((height - 1) << 16);
+        const uint32_t copy[5] = {1, 0, end, 0, end};
+        p(0x2c, copy, 5);
+        mode = 8;
+        p(0x6c, &mode, 1);  // END2D
+        idle();
+        return ok_;
+    }
+
+    bool copyEnd(uint64_t scratch) { return flushWait(scratch, 29) && ok_; }
+
     // Full clear: the fd5 restore baseline, then one solid fill. Kept for a
     // caller that wants a self-contained stream.
     bool clearRows(uint64_t address, uint32_t width, uint32_t height, uint32_t pitch,

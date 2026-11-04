@@ -1,3 +1,34 @@
+## 2026-11-04：P21-Curlew / P21-Dunlin（显示扫描线约束定位：GOP pitch=4320 非 64B 对齐；MDP 帧落在 4 GiB 以上）
+
+### 一、Curlew：把 P21-Bittern 的静默跳过变成可诊断结果
+- `clearPrepareScanout()` 现在记录 `PE_current_console` 的 base/width/height/rowBytes/depth、失败码与页数；`CLR` 持久行增加 `prep/pe` 字段。
+- 实机（boot `0x40a26751`，日志 `out/p21/persistent-logs/20261104T172200Z/`）：离屏清屏仍为 `rc=0 seq=8 words=491 ... match=4/4`；扫描线准备 `prep=-5`，`pe=1080/1920/4320/32`。
+- **根因（已确认）**：固件 GOP 扫描缓冲为 1080 像素、pitch **4320 字节**；A5xx 2D 的 `RB_2D_*_SIZE.PITCH` 以 64 字节为单位（`pitch>>6`），4320 不是 64 的整数倍，无法编码。因此 2D 引擎不能直接写这块扫描线；这不是 SMMU、映射或权限问题。
+- 同轮实现了 sagit `snapshot2D` 的 2D 拷贝（`Blit540::copySetup/copyTile/copyEnd`：`RB_2D_BLIT_CNTL=0x86000000`、`UNKNOWN_2184=9`、独立源/目标 pitch、R32_UINT、sourced `CP_BLIT`），宿主模型覆盖编码、边界和失败关闭；因该 pitch 约束，它尚未在扫描线上执行。
+
+### 二、Dunlin：GPU 全帧 + MDP 直接扫描尝试（安全跳过）
+- 新增显示驱动测试钩子 `native_legacy_scanout_flip(pa,stride,w,h,hold_ms,out)`：复用 `flippath` 的 `prepare/commit/restore`，把 MDP 管道的 SRC0 指向一块 64 字节对齐的 GPU 帧，扫描 5 s 后恢复 GOP 缓冲。
+- GPU 侧新增 `cheeseburger_gpu_scanout_flip_test()`：分配 1088x1920（pitch 4352）全帧，用 2D 引擎画四条 480 行色带并回读，然后请求显示管道扫描它。
+- 实机（boot `0x40a433bd`，日志 `out/p21/persistent-logs/20261104T174146Z/`）：
+  - 离屏清屏与用户提交链无回归：`match=4/4`、`GPSVC ... err=0`、`GBOD 1:adc0de1/feed0002/600d0003`。
+  - 全帧分配成功（`pa=0x111876000`、8,355,840 B、连续），但 **PA=4.58 GiB > 4 GiB**；MDP5 `PIPE_SRC0_ADDR` 是 32 位（显示驱动的 `present()` 也把 PA 截成 32 位），因此钩子未执行（`CB GPU flip: exit rc=-1`），未改显示状态、无黑屏。
+- 结论：可见 GPU 像素当前受两件事阻挡——2D/3D 引擎的 64B 目标 pitch，以及 MDP 直接扫描的 32 位物理地址。两条绕行路线：
+  1. **compute shader 的字节寻址 global store**（sagit 的 compute 回退路径）：直接按 `base + y*pitch + x*4` 写入 GOP 扫描缓冲，不受 pitch/4 GiB 限制（SMMU GPU VA 映射该缓冲）。这是下一轮主线。
+  2. 若坚持 MDP 直接扫描：需要在低 4 GiB 内拿到连续全帧（当前分配器返回高地址），或把 MDP 路径扩展到 IOMMU/64 位。
+- 新增/保留的代码：`NativeLegacyDisplay.cpp` 的 flip 钩子（验证失败安全）、`CheeseburgerGpuCp.cpp` 的全帧分配/绘制/flip 测试、`CheeseburgerGpuBlit540.h` 的 2D copy、`tests/gpu_blit540_model.cpp` 的 copy/全帧流用例。flip 失败路径会保留 8 MiB 缓冲到重启（可追踪，但下轮应在未映射/未提交时释放）。
+- 构建：内核 `61f75a9f…`（编译 `92556165…`）、payload `6814645e…`、固件 `0873c26c…`、镜像 `86fe2e9a…`、gate `20261104T173349Z` PASS、misc 回读 `8698abf4…`；`17:34:07Z` 单次 `fastboot boot`，400 s 自动回 Recovery。
+
+### 三、下一步（按 sagit 路线）
+1. 用 Mesa `src/freedreno/isa`/computerator 的 IR3 汇编器产出一个最小 compute shader（`stg` 写常量/渐变到绝对 GPU 地址，无 SSBO/常量窗口），按 sagit `dispatch()` 的 SP/HLSQ CS 状态与 NDRANGE 下发；目标是把四条色带直接写进 GOP 扫描缓冲（4320 pitch 也能写），CPU 回读与屏幕确认。
+2. 该 compute 路径通过后，把 2D 渲染结果作为源（sagit 的 compute copy）或接 IOSurface 导入，形成 CPU 不搬帧的显示交接。
+3. 3D 三角形仍走 sagit `PipelineEncoder` 的 VSC/RB + IR3；它与 compute 共享 shader 上传/常量与 flush 语义。
+4. 不要恢复逐行 `CP_MEM_WRITE`；本轮的 2D copy 保留为 GPU→GPU/对齐表面路径。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-04 | **P21-Curlew** | `e649c0c1…` | `17aaec73…` | 诊断：GOP pitch 4320 非 64B 对齐，2D 无法直接写扫描线；2D copy 编码落地 |
+  | 2026-11-04 | **P21-Dunlin** | `86fe2e9a…` | `61f75a9f…` | GPU 全帧 + MDP flip 尝试：帧落在 4 GiB 以上，MDP 32 位地址限制，安全跳过；清屏/提交链无回归 |
+
 ## 2026-11-04：P21-Bittern（A540 2D 图形路径实机：CP_BLIT 四象限清屏 match=4/4；服务期资源持有/隔离）
 
 ### 一、源码来源与复用边界

@@ -84,7 +84,10 @@ extern volatile uint32_t native_adreno_copy_test[8] __attribute__((weak_import))
 extern volatile uint32_t native_adreno_gate[22] __attribute__((weak_import));
 /* A540 2D clear: rc/seq/words, four quadrant pixels, edge sample, match, the
  * IB and target physical addresses, and the scanout band result. */
-extern volatile uint32_t native_adreno_clear[16] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_clear[24] __attribute__((weak_import));
+/* GPU frame on the panel: render rc, physical address, stride, four band
+ * pixels, and the display driver's flip result/pipe/control. */
+extern volatile uint32_t native_adreno_flip[10] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -646,14 +649,30 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
     * scanout band. `match` compares each quadrant with the value the stream
     * wrote; edge is a sample inside quadrant 0 near its right edge. */
    if (&native_adreno_clear[0] && native_adreno_clear[2]) {
-    char clr[200];
-    snprintf(clr,sizeof clr,"CLR rc=%d seq=%u w=%u px=%x/%x/%x/%x edge=%x match=%u/%u scan=%d/%u px=%x ib=%x tgt=%x bid=%llx",
+    char clr[320];
+    snprintf(clr,sizeof clr,"CLR rc=%d seq=%u w=%u px=%x/%x/%x/%x edge=%x match=%u/4 scan=%d/%u sm=%u/4 spx=%x/%x/%x/%x prep=%d pe=%u/%u/%u/%u ib=%x tgt=%x bid=%llx",
       (int)(int16_t)(uint16_t)native_adreno_clear[0],native_adreno_clear[1],native_adreno_clear[2],
       native_adreno_clear[3],native_adreno_clear[4],native_adreno_clear[5],native_adreno_clear[6],
-      native_adreno_clear[13],native_adreno_clear[7],4u,
-      (int)(int16_t)(uint16_t)native_adreno_clear[10],native_adreno_clear[11],
-      native_adreno_clear[12],native_adreno_clear[8],native_adreno_clear[9],cb_boot_id);
+      native_adreno_clear[13],native_adreno_clear[7],
+      (int)(int16_t)(uint16_t)native_adreno_clear[10],native_adreno_clear[11],native_adreno_clear[12],
+      native_adreno_clear[14],native_adreno_clear[15],native_adreno_clear[16],native_adreno_clear[17],
+      (int)(int16_t)(uint16_t)native_adreno_clear[18],
+      native_adreno_clear[20],native_adreno_clear[21],native_adreno_clear[22],native_adreno_clear[23],
+      native_adreno_clear[8],native_adreno_clear[9],cb_boot_id);
     at=put(out,at,cap,clr,sizeof clr);
+   }
+   /* GPU frame handed to the display pipe: the four bands were rendered by
+    * the 2D engine at stride 4352 (the firmware GOP's 4320 is not 64-byte
+    * aligned, so the engines cannot write it directly). drc is the display
+    * driver's flip return; pipe/ctl identify the MDP pipe it switched. */
+   if (&native_adreno_flip[0] && (native_adreno_flip[0] || native_adreno_flip[1])) {
+    char flip[200];
+    snprintf(flip,sizeof flip,"FLIP rc=%d pa=%x stride=%u px=%x/%x/%x/%x drc=%d pipe=%x ctl=%x bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_flip[0],native_adreno_flip[1],native_adreno_flip[2],
+      native_adreno_flip[3],native_adreno_flip[4],native_adreno_flip[5],native_adreno_flip[6],
+      (int)(int16_t)(uint16_t)native_adreno_flip[7],native_adreno_flip[8],native_adreno_flip[9],
+      cb_boot_id);
+    at=put(out,at,cap,flip,sizeof flip);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was

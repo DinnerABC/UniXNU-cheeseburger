@@ -108,6 +108,27 @@ static bool present(IOMemoryDescriptor *memory,uint64_t stride,uint32_t width,ui
  lastAddr=(uint32_t)pa;return true;
 }
 }
+// Kernel-only test hook for the GPU scanout handoff. The A5xx 2D/3D engines
+// need a 64-byte destination pitch, while the firmware GOP here scans 1080
+// pixels at 4320 bytes (not a multiple of 64). A GPU-rendered full frame with
+// an aligned stride (1088x1920 at 4352) can still be scanned by the same MDP
+// pipe, so this points the pipe at it for hold_ms and then puts the firmware
+// buffer back. Any failure leaves the pipe untouched or restores it via the
+// same validated commit/restore sequence the client path uses.
+extern "C" int native_legacy_scanout_flip(uint64_t pa,uint32_t stride,uint32_t width,
+    uint32_t height,uint32_t hold_ms,volatile uint64_t *out){
+ if(out)for(unsigned i=0;i<4;++i)out[i]=0;
+ PE_Video v={};
+ if(PE_current_console(&v)||!v.v_baseAddr||(v.v_baseAddr>>32))return -1;
+ if(!pa||(pa>>32)||!stride||!width||!height||stride<uint64_t(width)*4)return -2;
+ if(!flippath::prepare(uint32_t(v.v_baseAddr)))return -3;
+ if(out){out[0]=flippath::pipeOff;out[1]=flippath::gopAddr;out[2]=flippath::gopStride;
+  out[3]=flippath::ctl>=0?uint32_t(flippath::ctl):0xffffffffu;}
+ if(!flippath::commit(uint32_t(pa),stride))return -4;
+ IOSleep(hold_ms?hold_ms:1);
+ flippath::restore(flippath::gopAddr,flippath::gopStride);
+ return 0;
+}
 // Swaps retired when the GPU client took the frame (before its copy finished), and copies that then failed after such a retirement.
 extern "C" {volatile uint64_t native_legacy_early_retires,native_legacy_early_failures;}
 // Display refresh tick (boot-arg sheng-vsync=<Hz>, 0 or absent: off). The original family sends the compositor's vsync message (type 5)

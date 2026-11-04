@@ -38,6 +38,8 @@ int cheeseburger_gpu_smmu4k_faulted(void);
 int cheeseburger_gpu_service_publish(void);
 int cheeseburger_gpu_clear540_test(void);
 int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
+int cheeseburger_gpu_scanout_flip_test(void);
+int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
 // Kernel IB self-test in a page the CP already fetched: rc, stage and the three
@@ -58,8 +60,12 @@ volatile uint32_t native_adreno_gate[22];
 // Late kernel-page write control: rc, PA, target words, map rc and sequence.
 volatile uint32_t native_adreno_late_test[8];
 // A540 2D clear: rc, sequence, IB words, four quadrant pixels, edge sample,
-// match count, IB/target PAs and the scanout band result (rc/seq/pixel).
-volatile uint32_t native_adreno_clear[16];
+// match count, IB/target PAs, the scanout handoff (rc/seq/match/pixels), the
+// scanout prepare code and the PE console geometry it saw.
+volatile uint32_t native_adreno_clear[24];
+// GPU->panel handoff (P21-Curlew follow-up): rc, low physical address,
+// stride, four band pixels, the display-hook result and its pipe/ctl.
+volatile uint32_t native_adreno_flip[10];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
@@ -544,6 +550,10 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
      if(clear&&gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
       const int crc=cheeseburger_gpu_clear540_test();
       IOLog("CB GPU clear: exit rc=%d\n",crc);
+      if(crc==0&&gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
+       const int frc=cheeseburger_gpu_scanout_flip_test();
+       IOLog("CB GPU flip: exit rc=%d\n",frc);
+      }
      } }
    cb_cp[48]=m.read(CheeseburgerGpu::TrustControl);
    cb_cp[60]=m.read(CheeseburgerGpu::MEControl);cb_cp[61]=m.read(CheeseburgerGpu::VBIFHalted);
@@ -890,21 +900,60 @@ static int clearMap(IOBufferMemoryDescriptor *b,uint64_t iova,unsigned pages){
  }
  return 0;
 }
-// The firmware console is one contiguous physical range; map the rows this
-// test fills, not the whole 8-11 MiB frame.
+// Map a physical range page by page, grouping contiguous runs. The firmware
+// framebuffer is expected to be contiguous, but the RB only needs the IOVA to
+// be contiguous; a hole or split run must not be presented as one span.
+static int clearMapPhysical(uint64_t pa,uint64_t iova,unsigned pages){
+ IODeviceMemory *m=IODeviceMemory::withRange(pa,uint64_t(pages)*4096);
+ if(!m)return -1;
+ int rc=0;unsigned i=0;
+ while(i<pages&&!rc){
+  IOByteCount s=0;
+  const uint64_t p=m->getPhysicalSegment(uint64_t(i)*4096,&s,kIOMemoryMapperNone);
+  if(!p||(p&4095)||!s){rc=-2;break;}
+  unsigned run=1;uint64_t next=p+4096;
+  while(i+run<pages){
+   IOByteCount s2=0;
+   const uint64_t q=m->getPhysicalSegment(uint64_t(i+run)*4096,&s2,kIOMemoryMapperNone);
+   if(q!=next||!s2)break;
+   next+=4096;++run;
+  }
+  if(cheeseburger_gpu_smmu_map(iova+uint64_t(i)*4096,p,run)){rc=-3;break;}
+  i+=run;
+ }
+ m->release();
+ return rc;
+}
+// The firmware console is what the panel scans. Record every field that can
+// reject it; a silent skip in P21-Bittern is what this function must not do.
 static int clearPrepareScanout(void){
  PE_Video v={};
- if(PE_current_console(&v)||!v.v_baseAddr||v.v_depth!=32||!v.v_width||
-    v.v_height<ClearScanoutRows||v.v_rowBytes<v.v_width*4ull||(v.v_rowBytes&63))
-  return -1;
+ const int perr=PE_current_console(&v);
+ native_adreno_clear[20]=v.v_width;native_adreno_clear[21]=v.v_height;
+ native_adreno_clear[22]=uint32_t(v.v_rowBytes);native_adreno_clear[23]=v.v_depth;
  const uint64_t span=uint64_t(ClearScanoutRows)*v.v_rowBytes;
  const unsigned pages=unsigned((span+4095)/4096);
- if(pages>128||(v.v_baseAddr&4095))return -1;
- if(cheeseburger_gpu_smmu_map(0x2100000,v.v_baseAddr,pages))return -2;
- gClearScanoutIova=0x2100000;
- gClearScanoutPa=v.v_baseAddr;
- gClearScanoutW=uint32_t(v.v_width);gClearScanoutPitch=uint32_t(v.v_rowBytes);
- return 0;
+ int rc=0;
+ if(perr)rc=-1;
+ else if(!v.v_baseAddr)rc=-2;
+ else if(v.v_depth!=32)rc=-3;
+ else if(!v.v_width||v.v_height<ClearScanoutRows)rc=-4;
+ else if(v.v_rowBytes<uint64_t(v.v_width)*4||(v.v_rowBytes&63))rc=-5;
+ else if(v.v_baseAddr&4095)rc=-6;
+ else if(pages>160)rc=-7;
+ else {
+  rc=clearMapPhysical(v.v_baseAddr,0x2100000,pages);
+  if(!rc){
+   gClearScanoutIova=0x2100000;
+   gClearScanoutPa=v.v_baseAddr;
+   gClearScanoutW=uint32_t(v.v_width);gClearScanoutPitch=uint32_t(v.v_rowBytes);
+  }
+ }
+ native_adreno_clear[18]=uint32_t(rc);
+ IOLog("CB GPU clear: scanout prep rc=%d pe=%d base=%llx w=%u h=%u pitch=%llu depth=%u pages=%u\n",
+  rc,perr,(unsigned long long)v.v_baseAddr,v.v_width,v.v_height,
+  (unsigned long long)v.v_rowBytes,v.v_depth,pages);
+ return rc;
 }
 static int clearPrepare(void){
  gClearIbBuf=clearBuffer(8192);
@@ -940,16 +989,34 @@ static int clearEncodeOffscreen(uint32_t &words){
  words=e.size();
  return ok?0:-10;
 }
+// sagit snapshot2D handoff: tile the rendered 256x64 image 2x2 into a 512x128
+// band of the firmware scanout with CP_BLIT copies (no CPU pixel transfer).
 static int clearEncodeScanout(uint32_t &words){
  uint32_t *ib=(uint32_t*)gClearIbVA;
  memset(ib,0,8192);
  CheeseburgerGpu::Encoder540 e(ib,2048);
  CheeseburgerGpu::Blit540 b(e);
- const bool ok=b.restore()&&b.begin2D()&&
-  b.solidFill(gClearScanoutIova,gClearScanoutW,ClearScanoutRows,gClearScanoutPitch,
-   0xff00c0ffu,gClearScratchIova);
+ bool ok=b.restore()&&b.begin2D()&&b.copySetup();
+ for(unsigned t=0;t<4&&ok;++t){
+  const uint32_t tx=(t&1u)?ClearWidth:0u,ty=(t&2u)?ClearHeight:0u;
+  ok=b.copyTile(gClearTargetIova,ClearPitch,
+   gClearScanoutIova+uint64_t(ty)*gClearScanoutPitch+uint64_t(tx)*4u,
+   gClearScanoutPitch,ClearWidth,ClearHeight);
+ }
+ if(ok)ok=b.copyEnd(gClearScratchIova);
  words=e.size();
  return ok?0:-11;
+}
+static uint32_t clearReadScanout(uint32_t x,uint32_t y){
+ const uint64_t off=uint64_t(y)*gClearScanoutPitch+uint64_t(x)*4;
+ IODeviceMemory *m=IODeviceMemory::withRange(gClearScanoutPa+(off&~4095ull),4096);
+ if(!m)return 0xdeadbeefu;
+ IOMemoryMap *mp=m->map(kIOMapAnywhere|kIOMapInhibitCache);m->release();
+ if(!mp)return 0xdeadbeefu;
+ volatile uint32_t *v=(volatile uint32_t*)mp->getVirtualAddress();
+ const uint32_t px=v?v[(off&4095)/4]:0xdeadbeefu;
+ mp->release();
+ return px;
 }
 static int clearKick(uint32_t words,uint32_t &seq){
  memset((void*)gClearScratchVA,0,64);
@@ -1000,28 +1067,110 @@ extern "C" int cheeseburger_gpu_clear540_test(void){
   rc,seq,words,gClearPixels[0],gClearPixels[1],gClearPixels[2],gClearPixels[3],
   gClearPixels[4],match,4u);
  if(rc){gClearRc=rc;return rc;}
- // Second stream: the same engine writes the top band of the firmware scanout.
+ // Second stream: hand the rendered image to the panel with the same 2D
+ // engine. The four tiles land at (0,0),(256,0),(0,64),(256,64); each sample
+ // below is one quadrant of the source at a different destination.
  if(!clearPrepareScanout()){
   uint32_t sw=0,sseq=0;
   const int src=clearEncodeScanout(sw);
   const int rrc=src?src:clearKick(sw,sseq);
-  uint32_t px=0;
+  uint32_t px[4]={0xdeadbeefu,0xdeadbeefu,0xdeadbeefu,0xdeadbeefu};
+  unsigned smatch=0;
   if(!rrc){
-   // Read one pixel of the band (row 10, centre column) through a fresh
-   // uncached mapping of the page that holds it.
-   const uint64_t off=10ull*gClearScanoutPitch+uint64_t(gClearScanoutW/2)*4;
-   IODeviceMemory *m=IODeviceMemory::withRange(gClearScanoutPa+(off&~4095ull),4096);
-   if(m){IOMemoryMap *mp=m->map(kIOMapAnywhere|kIOMapInhibitCache);m->release();
-    if(mp){volatile uint32_t *v=(volatile uint32_t*)mp->getVirtualAddress();
-     if(v)px=v[(off&4095)/4];mp->release();}}
+   px[0]=clearReadScanout(64,16);                 // tile 0, quadrant 0
+   px[1]=clearReadScanout(ClearWidth+192,16);     // tile 1, quadrant 1
+   px[2]=clearReadScanout(64,ClearHeight+48);     // tile 2, quadrant 2
+   px[3]=clearReadScanout(ClearWidth+192,ClearHeight+48);  // tile 3, quadrant 3
+   for(unsigned q=0;q<4;++q)if(px[q]==gClearColors[q])++smatch;
   }
   native_adreno_clear[10]=uint32_t(rrc);native_adreno_clear[11]=sseq;
-  native_adreno_clear[12]=px;
-  IOLog("CB GPU clear: scanout rc=%d seq=%u w=%u pitch=%u px=%x\n",
-   rrc,sseq,gClearScanoutW,gClearScanoutPitch,px);
+  native_adreno_clear[12]=smatch;
+  for(unsigned q=0;q<4;++q)native_adreno_clear[14+q]=px[q];
+  IOLog("CB GPU clear: scanout rc=%d seq=%u w=%u pitch=%u px=%x/%x/%x/%x match=%u/4\n",
+   rrc,sseq,gClearScanoutW,gClearScanoutPitch,px[0],px[1],px[2],px[3],smatch);
  }
  gClearRc=0;
  return 0;
+}
+// ---------------------------------------------------------------------------
+// GPU frame on the panel without a CPU copy. The firmware GOP pitch (4320) is
+// not a multiple of 64, so the A5xx 2D engine cannot write it directly; this
+// renders a full 1088x1920 frame with the 2D engine at stride 4352 and asks
+// the display driver to scan that buffer through the same MDP pipe for a few
+// seconds. It is the board's variant of sagit's GpuScanoutPresenter handoff.
+enum {FlipWidth=1088,FlipHeight=1920,FlipPitch=FlipWidth*4,FlipBytes=FlipPitch*FlipHeight,
+      FlipHoldMs=5000};
+static IOBufferMemoryDescriptor *gFlipBuf=nullptr;
+static volatile uint32_t *gFlipVA=nullptr;
+static uint64_t gFlipPa=0,gFlipIova=0;
+static uint32_t gFlipPixels[4];
+static int gFlipRc=0xffff;
+extern "C" int cheeseburger_gpu_scanout_flip_test(void){
+ if(gFlipRc!=0xffff)return gFlipRc;
+ gFlipRc=-1;
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
+    !gClearIbVA||!gClearScratchIova)return gFlipRc;
+ // MDP5 SRC0_ADDR is 32-bit on this path and the pipe needs one contiguous
+ // span for the whole frame; a failed placement only skips the flip.
+ gFlipBuf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+  kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
+  (vm_size_t)FlipBytes,0xfffff000ull);
+ if(!gFlipBuf)
+  gFlipBuf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
+   (vm_size_t)FlipBytes,4096);
+ if(!gFlipBuf){IOLog("CB GPU flip: no 8 MiB contiguous frame\n");return gFlipRc;}
+ IOByteCount span=0;
+ const uint64_t pa=gFlipBuf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ gFlipVA=(volatile uint32_t*)gFlipBuf->getBytesNoCopy();
+ if(!pa||(pa&4095)||span<FlipBytes||pa+FlipBytes>(1ull<<32)||!gFlipVA){
+  IOLog("CB GPU flip: frame pa=%llx span=%llu va=%d\n",(unsigned long long)pa,
+   (unsigned long long)span,gFlipVA?1:0);
+  return gFlipRc;
+ }
+ if(cheeseburger_gpu_smmu_map(0x2200000,pa,unsigned(FlipBytes/4096))){
+  IOLog("CB GPU flip: map failed pa=%llx pages=%u\n",(unsigned long long)pa,
+   unsigned(FlipBytes/4096));
+  return gFlipRc;
+ }
+ gFlipPa=pa;gFlipIova=0x2200000;
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ CheeseburgerGpu::Blit540 b(e);
+ static const uint32_t bands[4]={0xff2040c0u,0xff20c040u,0xffc04020u,0xffc0c0c0u};
+ bool ok=b.restore()&&b.begin2D();
+ for(unsigned i=0;i<4&&ok;++i)
+  ok=b.solidFill(gFlipIova+uint64_t(i)*480*FlipPitch,FlipWidth,480,FlipPitch,
+   bands[i],gClearScratchIova);
+ const uint32_t words=e.size();
+ if(!ok){IOLog("CB GPU flip: encode failed\n");return gFlipRc;}
+ uint32_t seq=0;
+ const int rc=clearKick(words,seq);
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)gFlipVA,FlipBytes,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ unsigned match=0;
+ for(unsigned i=0;i<4;++i){
+  gFlipPixels[i]=gFlipVA[(uint64_t(i)*480+240)*(FlipPitch/4)+FlipWidth/2];
+  if(gFlipPixels[i]==bands[i])++match;
+ }
+ native_adreno_flip[0]=uint32_t(rc);native_adreno_flip[1]=uint32_t(pa);
+ native_adreno_flip[2]=FlipPitch;
+ for(unsigned i=0;i<4;++i)native_adreno_flip[3+i]=gFlipPixels[i];
+ IOLog("CB GPU flip: render rc=%d seq=%u words=%u pa=%llx px=%x/%x/%x/%x match=%u/4\n",
+  rc,seq,words,(unsigned long long)pa,gFlipPixels[0],gFlipPixels[1],
+  gFlipPixels[2],gFlipPixels[3],match);
+ if(rc){gFlipRc=rc;return rc;}
+ uint64_t dout[4]={0,0,0,0};
+ const int drc=native_legacy_scanout_flip(pa,FlipPitch,FlipWidth,FlipHeight,FlipHoldMs,dout);
+ native_adreno_flip[7]=uint32_t(drc);native_adreno_flip[8]=uint32_t(dout[2]);
+ native_adreno_flip[9]=uint32_t(dout[3]);
+ IOLog("CB GPU flip: display rc=%d pipe=%llx gop=%llx stride=%llu ctl=%llu\n",
+  drc,(unsigned long long)dout[0],(unsigned long long)dout[1],
+  (unsigned long long)dout[2],(unsigned long long)dout[3]);
+ gFlipRc=drc?drc:0;
+ return gFlipRc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
  unsigned count,uint32_t *seq){
