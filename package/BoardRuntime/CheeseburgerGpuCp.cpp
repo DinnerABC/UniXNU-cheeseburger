@@ -809,12 +809,11 @@ static int preflightUserPage(uint64_t userIova,uint32_t sequence,CheeseburgerGpu
  gFenceSeq=sequence++;
  // C: the CP reads the client's page. A translated page reads back the same
  // words the kernel maps; any other value is the page or its translation.
- { // 16 CP_MEM_TO_MEM packets are 96 words; the gate's IB page has room for
-   // 512, which is what a copy of this size needs.
-   CheeseburgerGpu::Encoder540 e((uint32_t*)ib,512);
-   // The A540 copy path: CP_MEM_TO_MEM copies sixteen dwords of the client's
-   // page into the kernel's scratch page, one GPU copy per dword.
-   if(!e.copy(gScratchGva+0x780,userIova,16))return -1;
+ { CheeseburgerGpu::Encoder540 e((uint32_t*)ib,64);
+   // The A540 copy path: CP_MEM_TO_MEM copies four dwords of the client's page
+   // into the kernel's scratch page, one GPU copy per dword. Sixteen copies
+   // stalled this CP after two (P21-Warbler/Zephyr), so a batch stays small.
+   if(!e.copy(gScratchGva+0x780,userIova,4))return -1;
    flush_dcache((vm_offset_t)ib,256,FALSE);
    rcc=gateSubmit(sequence,true,e.size(),nullptr,0,rec);
    __asm__ volatile("dsb sy":::"memory");

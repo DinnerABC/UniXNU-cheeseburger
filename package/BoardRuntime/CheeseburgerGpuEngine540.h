@@ -84,9 +84,10 @@ public:
     // A5xx bulk copy: one CP_MEM_TO_MEM per dword (the engine has no memcpy
     // packet), so a caller copies what fits in one IB. This is the A540 copy
     // path — data movement by the GPU, not a register or memory-fill write.
-    // This CP stops after a few CP_MEM_TO_MEM packets in one batch (P21-
-    // Warbler: two dwords copied, no fence), so a barrier pair separates every
-    // four copies. The limit is per batch, not per IB.
+    // This CP stops after a couple of CP_MEM_TO_MEM packets in one batch
+    // (P21-Warbler/Zephyr: two dwords copied, then no fence, with or without a
+    // barrier pair). Keep a batch to four and split larger copies across
+    // submissions; a barrier is still emitted between groups as a marker.
     bool copy(uint64_t destination, uint64_t source, uint32_t dwords) {
         if (!dwords || dwords > 512) return false;
         for (uint32_t i = 0; i < dwords; ++i) {
