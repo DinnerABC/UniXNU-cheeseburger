@@ -1,3 +1,13 @@
+## 2026-11-05：停止修改，回滚到可启动分支 p21-bootable（已登记）
+
+- 两次共享固件低位池的镜像（`07a20f5c…`、`f798d565…`）均在 230 s 后无 USB/无 fastboot；用户确认第二次仍无蓝/品红条。
+- 失败启动之后回收的持久窗口仍是**控制启动** `0x42238bf5`（`out/p21/persistent-logs/20261105T130600Z/`），说明失败镜像的内核日志 writer 从未运行——故障在 panic-screen/日志启动之前（kext 加载期的池映射/占用），不是 GPU/DPU 探针。
+- **停止后续功能修改**。可启动基线：
+  - 源码分支 `p21-bootable`（与已验证控制镜像同一份源码；只比 `c832bc6` 多本 HANDOFF 记录）。
+  - 已验证镜像 `out/p21/p21-zorzal/logs/control-cde78c8c.img`（固件 DarwinBoot 16 页池、内核 HEAD/halt-only、无池共享、无 SMMU 写入）；该镜像控制启动 clients=23、frames=2、230 s 自动回。
+- 固件 DarwinBoot 保持 `PoolPages = 16`（64 KiB）；不要扩大、不要在 kext 构造期触碰该池。
+- 设备当前在 Recovery。
+
 ## 2026-11-05：低位池共享两次尝试均黑屏/无 USB（已回退；停止早期取池）
 
 - 第一次：固件池 16→64 页（256 KiB）+ DPU kext 构造期取 8 页 → 230 s 后无 USB、蓝/品红条未出现，故障在 panic-screen 入口之前（固件/极早期）。
