@@ -258,6 +258,34 @@ static unsigned gScratchWords=0;
 static IOBufferMemoryDescriptor *gLowPage[64];
 static uint64_t gLowPagePa[64];
 static unsigned gLowPageCount=0;
+// Full-frame GPU scanout buffer, attempted early because MDP5 SRC0_ADDR is
+// 32-bit and an 8 MiB contiguous block is easier to obtain before the boot
+// allocates the rest of userland.
+enum {FlipWidth=1088,FlipHeight=1920,FlipPitch=FlipWidth*4,FlipBytes=FlipPitch*FlipHeight,
+      FlipHoldMs=5000};
+static IOBufferMemoryDescriptor *gFlipBuf=nullptr;
+static uint64_t gFlipPa=0;
+static int flipPreallocate(void){
+ if(gFlipBuf)return gFlipPa?0:-1;
+ for(unsigned t=0;t<8&&!gFlipBuf;++t){
+  IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
+   (vm_size_t)FlipBytes,0xfffff000ull);
+  if(!b)break;
+  IOByteCount span=0;
+  const uint64_t pa=b->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+  if(pa&&!(pa&4095)&&span>=FlipBytes&&pa+FlipBytes<=(1ull<<32)){
+   gFlipBuf=b;gFlipPa=pa;
+   IOLog("CB GPU flip: prealloc pa=%llx try=%u\n",(unsigned long long)pa,t);
+   return 0;
+  }
+  IOLog("CB GPU flip: reject pa=%llx span=%llu try=%u\n",
+   (unsigned long long)pa,(unsigned long long)span,t);
+  b->release();
+ }
+ IOLog("CB GPU flip: no low contiguous 8 MiB frame\n");
+ return -1;
+}
 static uint64_t gRingGva=0,gFenceGva=0;
 static uint32_t gRingWords=0,gFenceSeq=0;
 static IOLock *gSubmitLock=nullptr;
@@ -304,6 +332,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
     }
     pool.d->retain();
    }
+   flipPreallocate();
    native_adreno_low_pool[0]=gLowPageCount;
    if(gLowPageCount){native_adreno_low_pool[1]=uint32_t(gLowPagePa[0]);
      native_adreno_low_pool[2]=uint32_t(gLowPagePa[0]>>32);}
@@ -1115,11 +1144,8 @@ extern "C" int cheeseburger_gpu_clear540_test(void){
 // renders a full 1088x1920 frame with the 2D engine at stride 4352 and asks
 // the display driver to scan that buffer through the same MDP pipe for a few
 // seconds. It is the board's variant of sagit's GpuScanoutPresenter handoff.
-enum {FlipWidth=1088,FlipHeight=1920,FlipPitch=FlipWidth*4,FlipBytes=FlipPitch*FlipHeight,
-      FlipHoldMs=5000};
-static IOBufferMemoryDescriptor *gFlipBuf=nullptr;
 static volatile uint32_t *gFlipVA=nullptr;
-static uint64_t gFlipPa=0,gFlipIova=0;
+static uint64_t gFlipIova=0;
 static uint32_t gFlipPixels[4];
 static int gFlipRc=0xffff;
 extern "C" int cheeseburger_gpu_scanout_flip_test(void){
@@ -1128,23 +1154,13 @@ extern "C" int cheeseburger_gpu_scanout_flip_test(void){
  if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
     !gClearIbVA||!gClearScratchIova)return gFlipRc;
  // MDP5 SRC0_ADDR is 32-bit on this path and the pipe needs one contiguous
- // span for the whole frame; a failed placement only skips the flip.
- gFlipBuf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-  kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
-  (vm_size_t)FlipBytes,0xfffff000ull);
- if(!gFlipBuf)
-  gFlipBuf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
-   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
-   (vm_size_t)FlipBytes,4096);
- if(!gFlipBuf){IOLog("CB GPU flip: no 8 MiB contiguous frame\n");return gFlipRc;}
- IOByteCount span=0;
- const uint64_t pa=gFlipBuf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ // span for the whole frame; a failed placement only skips the flip. The
+ // probe tries the allocation early; retry here if that attempt lost the race.
+ if(!gFlipBuf)flipPreallocate();
+ if(!gFlipBuf||!gFlipPa){IOLog("CB GPU flip: frame unavailable\n");return gFlipRc;}
+ const uint64_t pa=gFlipPa;
  gFlipVA=(volatile uint32_t*)gFlipBuf->getBytesNoCopy();
- if(!pa||(pa&4095)||span<FlipBytes||pa+FlipBytes>(1ull<<32)||!gFlipVA){
-  IOLog("CB GPU flip: frame pa=%llx span=%llu va=%d\n",(unsigned long long)pa,
-   (unsigned long long)span,gFlipVA?1:0);
-  return gFlipRc;
- }
+ if(!gFlipVA){IOLog("CB GPU flip: frame has no view\n");return gFlipRc;}
  if(cheeseburger_gpu_smmu_map(0x2200000,pa,unsigned(FlipBytes/4096))){
   IOLog("CB GPU flip: map failed pa=%llx pages=%u\n",(unsigned long long)pa,
    unsigned(FlipBytes/4096));

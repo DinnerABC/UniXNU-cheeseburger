@@ -1,3 +1,20 @@
+## 2026-11-05：P21-Veery（提前+重试仍拿不到低 4 GiB 连续全帧；MDP flip 安全跳过）
+
+- 把 8 MiB 全帧（1088x1920，pitch 4352）的分配提前到探针早期（63.9 s）并最多重试 8 次；实机（boot `0x42402acc`，日志 `out/p21/persistent-logs/20261105T041045Z/`，镜像 `17975381…`，内核 `a0829194…`，固件 `044c8742…`）仍然 `CB GPU flip: no low contiguous 8 MiB frame`，flip 未执行（`CB GPU flip: exit rc=-1`），设备 400 s 自动回 Recovery。
+- 同轮 2D 路径无回归：`CB GPU clear ... match=4/4`；`CB GPU copy ... am=4/4 bm=4/4 pa=1024 pb=1088`。
+- 客户端本轮仍未打开服务（`GPSVC open=0 ... err=0`），ABI 用户链未执行，无失败信号。
+- 结论：在这台 2 GiB 设备上，低 4 GiB 的 8 MiB 连续块在 63 s 与 108 s 都不可得，MDP 直扫（32 位 SRC0）路线不能依赖该分配。可见 GPU 输出的下一选择：
+  1. 合成器的 IOSurface（显示驱动每帧收到并 CPU 拷贝/校验）——把 GPU 绘制结果写进该 surface，现有显示路径会呈现；需要 stride 64B 对齐，并记录 surface PA/stride；
+  2. 或等 shader 路线（compute 写 GOP 字节地址），但它被 ZAP 后 SP 域回落阻塞，且不能在实时 CP 上做停机/上电。
+
+### 下一步
+- 在 `NativeLegacyDisplay.cpp` 的 swap 校验之后、CPU 拷贝之前加一次性的 “GPU 绘制到合成器 surface” 测试：记录 surface 的 width/height/stride/format/首 PA，stride 为 64B 整数倍时用 2D 引擎在左上角画 256x64 四象限，fence 后由现有 CPU 拷贝呈现；CPU 回读同一 surface 像素作为证据；失败或无对齐则跳过，不改显示路径。
+- 保持一次构建一次启动，失败回退 P21-Starling/Veery 基线。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Veery** | `17975381…` | `a0829194…` | 提前+重试仍无低 4GiB 连续全帧；MDP flip 跳过；2D 清屏/拷贝正常 |
+
 ## 2026-11-05：P21-Starling（sagit snapshot2D 的 GPU→GPU 拷贝实机通过：同 pitch 4/4、1088 pitch 4/4）
 
 ### 一、验证内容
