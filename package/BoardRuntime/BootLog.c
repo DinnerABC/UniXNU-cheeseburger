@@ -106,8 +106,6 @@ extern volatile uint32_t native_adreno_highcp[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
-extern volatile uint32_t native_adreno_low_pool[4] __attribute__((weak_import));
-extern volatile uint64_t native_adreno_bo_low[2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_staged __attribute__((weak_import));
 extern volatile uint64_t native_adreno_submit_stage_gva __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pwr[14] __attribute__((weak_import));
@@ -801,20 +799,7 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    }
    /* Hardware translation of every mapped BO, including the write target that
     * is never part of the submission. */
-  if (&native_adreno_low_pool[0] && native_adreno_low_pool[0]) {
-   char lp[128];
-   snprintf(lp,sizeof lp,"GLOP pool=%u first=%llx low=%llu high=%llu bid=%llx",
-     native_adreno_low_pool[0],((uint64_t)native_adreno_low_pool[2]<<32)|native_adreno_low_pool[1],
-     native_adreno_bo_low?native_adreno_bo_low[0]:0,
-     native_adreno_bo_low?native_adreno_bo_low[1]:0,cb_boot_id);
-   at=put(out,at,cap,lp,sizeof lp);
-  }
-  if (&native_adreno_bo_low[0] && (native_adreno_bo_low[0]|native_adreno_bo_low[1])) {
-   char lowl[96];
-   snprintf(lowl,sizeof lowl,"GLOW low=%llu high=%llu bid=%llx",
-     native_adreno_bo_low[0],native_adreno_bo_low[1],cb_boot_id);
-   at=put(out,at,cap,lowl,sizeof lowl);
-  }
+
   if (&native_adreno_tunnel[0] && (native_adreno_tunnel[0]|native_adreno_tunnel[1])) {
    char tun[96];
    snprintf(tun,sizeof tun,"GTUN calls=%llu probes=%llu bid=%llx",

@@ -88,7 +88,6 @@ volatile uint32_t native_adreno_highpa[12];
 // rc, [5] seq, [6] value read from the high page, [7] the high page PA.
 volatile uint32_t native_adreno_highcp[8];
 // Low pool: count and first page, filled at probe time.
-volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
 // the ring instead of being fetched through CP_INDIRECT_BUFFER.
 volatile uint32_t *cb_inline_ib=nullptr;
@@ -263,9 +262,6 @@ static uint64_t gScratchGva=0;
 static unsigned gScratchWords=0;
 // 4 KiB pages reserved at probe time for GPU buffers. The CP reaches early
 // allocations (about 4.1-4.7 GB) but not pages allocated later (about 5+ GB).
-static IOBufferMemoryDescriptor *gLowPage[64];
-static uint64_t gLowPagePa[64];
-static unsigned gLowPageCount=0;
 // Full-frame GPU scanout buffer, attempted early because MDP5 SRC0_ADDR is
 // 32-bit and an 8 MiB contiguous block is easier to obtain before the boot
 // allocates the rest of userland.
@@ -329,23 +325,10 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  if(!fw.cpBytes(0)||!fw.cpBytes(1)||!fw.gpmuWords()){cb_cp[0]=2;return;}
  static Buf ring,pm4,pfp,gpmu,fence;
  if(!allocBuf(ring,8192*4)){cb_cp[0]=3;return;}
- // Reserve user-buffer pages in the same early allocation window as the ring:
- // the CP fetches its ring/IB from here, while single 4 KiB allocations land
- // near 0x127e/0x1286 where an IB fetch wedges the bus. A 32 KiB contiguous
- // block is the class the ring itself uses, so take one and hand out its pages.
- { static Buf pool;
-   if(allocBuf(pool,8192*4)){
-    for(unsigned p=0;p<8;++p){
-     gLowPage[gLowPageCount]=pool.d;gLowPagePa[gLowPageCount]=pool.pa+4096ull*p;++gLowPageCount;
-    }
-    pool.d->retain();
-   }
-   flipPreallocate();
-   native_adreno_low_pool[0]=gLowPageCount;
-   if(gLowPageCount){native_adreno_low_pool[1]=uint32_t(gLowPagePa[0]);
-     native_adreno_low_pool[2]=uint32_t(gLowPagePa[0]>>32);}
-   IOLog("CB GPU low pool: count=%u first=%llx\n",gLowPageCount,
-     (unsigned long long)(gLowPageCount?gLowPagePa[0]:0));}
+ // The high-address checks proved the CP reaches normal pages, so no low
+ // pool is reserved any more. The full-frame flip still asks early because
+ // MDP's 32-bit SRC0 needs a low contiguous frame, independent of the GPU.
+ flipPreallocate();
  if(!allocBuf(pm4,fw.cpBytes(0))||!allocBuf(pfp,fw.cpBytes(1))||
     !allocBuf(gpmu,fw.gpmuWords()*4)||!allocBuf(fence,4096)){cb_cp[0]=3;return;}
  if(!fw.copyCP(0,pm4.va,pm4.bytes)||!fw.copyCP(1,pfp.va,pfp.bytes)||
@@ -804,11 +787,6 @@ extern "C" int cheeseburger_gpu_engine_late_test(void){
  // page. The buffer and its mapping stay owned for the rest of the boot.
  if(rc==0){cheeseburger_gpu_smmu_unmap(gva,1);b->release();}
  return rc;
-}
-extern "C" int cheeseburger_gpu_low_take(uint64_t *pa,IOBufferMemoryDescriptor **buf){
- if(!pa||!buf||!gLowPageCount)return -1;
- --gLowPageCount;*pa=gLowPagePa[gLowPageCount];*buf=gLowPage[gLowPageCount];
- return 0;
 }
 // Staged gate before the first client IB, in the order sheng's probe proves
 // the path (GpuPowerProbe step 7: the first real command is a CP_MEM_WRITE in
@@ -1769,5 +1747,5 @@ extern "C" int cheeseburger_gpu_mapping_end(int token,int success){
 // inside the preallocated cap.
 extern "C" int cheeseburger_gpu_engine_window(uint64_t *start,uint64_t *bytes){
  if(!start||!bytes||!gEngine||!gRing)return -1;
- *start=0x4000000ULL;*bytes=0x1000000ULL;return 0;
+ *start=0x4000000ULL;*bytes=0x8000000ULL;return 0;
 }

@@ -115,11 +115,12 @@ static ArmSmmu4KLiveVisibility gVis{};
 static unsigned gPoll=1024;
 static bool gActive=false;
 static bool gPoisoned=false;
-static ArmSmmu4KRange gRanges[128];
+static ArmSmmu4KRange gRanges[4096];
 static size_t gRangeCount=0;
-// The aperture covers the kernel window (0x2000000..0x201ffff) and the client
-// window at the ABI's va_start (0x4000000..0x4ffffff) in one lower region.
-static const uint64_t ApertureBytes=0x8000000ULL;
+// The aperture covers the kernel window (0x2000000..) and the client window at
+// the ABI's va_start (0x4000000..0xbffffff) in one lower region, matching
+// sagit's 256 MiB IOVA scale. The client bytes are reported by DeviceInfo.
+static const uint64_t ApertureBytes=0x10000000ULL;
 static const size_t LeafBudget=ApertureBytes/4096;
 // The official 32-bit lower-region layout needs 66 pages for 128 MiB.
 static const size_t TablePages=128;

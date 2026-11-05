@@ -1,3 +1,26 @@
+## 2026-11-05：P21-Siskin（删除低池；客户端窗口 128 MiB / aperture 256 MiB，sagit 量级）
+
+### 一、改动
+- 删除低池与全部低地址分支：`gLowPage*`、探针期 8 页预留、`cheeseburger_gpu_low_take()`、`native_adreno_low_pool`/`native_adreno_bo_low` 统计与 BootLog 行。
+- 客户端 IOVA 窗口从 16 MiB 扩到 **128 MiB @0x4000000**（`cheeseburger_gpu_engine_window`）。
+- SMMU kit aperture 从 128 MiB 扩到 **256 MiB**（sagit 的 `iova_bytes` 量级），leaf 预算 65536，range ledger 128→4096；表页仍 128 页（当前实际映射的点缀 <128 个 L3 表）。
+- 服务 BO 仍是普通分散页 + 逐 run 映射；descriptor 使用 buffer 本身。
+
+### 二、实机（boot `0x4224fdfd`，日志 `out/p21/persistent-logs/20261105T052337Z/`，镜像 `8d1bfaf1…`，内核 `c83cca58…`，固件 `87e419ef…`）
+- 2D 清屏 `match=4/4`；GPU→GPU 拷贝 `am=4/4 bm=4/4`。
+- 高地址：32 MiB 全部位于 5.14–5.32 GiB（`high=8192/8192`），2D 写入 `match=4/4`；CP 从高页取 IB（`sent=5a5a0001/2`）、高页 MEM_TO_MEM（`val=1234abcd`）均通过。
+- 客户端：`GPSVC open=2 bo=2 map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`；服务在 ~137 s 打开，观察窗口内正常。
+- 400 s 自动回 Recovery。
+
+### 三、下一步
+1. 用一个接近真实表面的 **大 BO（如 8 MiB/1080p BGRA）** 走 ABI（BoAlloc/BoMap/Submit）验证 128 MiB 窗口与 4096 range ledger 的实际容量；必要时把映射调用合并为每 BO 一次多 range 更新。
+2. IOSurface/合成器 surface 交接（GPU 写入显示驱动每帧收到的 surface），以及 Metal 前端；compute 仍等待安全 SP 域方案。
+3. 保持低池删除后的基线；任何回归整体回退 P21-Siskin。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Siskin** | `8d1bfaf1…` | `c83cca58…` | 删除低池；128 MiB 窗口/256 MiB aperture；2D/高地址/客户端链全部正常 |
+
 ## 2026-11-05：P21-Redpoll（CP 从 5.33 GiB 高页取 IB / MEM_TO_MEM 读高页全部通过；内存模型结论收口）
 
 ### 一、实机（boot `0x425fbcb5`，日志 `out/p21/persistent-logs/20261105T050543Z/`，镜像 `bc233ef6…`，内核 `68a31c1c…`，固件 `3f6c3405…`）

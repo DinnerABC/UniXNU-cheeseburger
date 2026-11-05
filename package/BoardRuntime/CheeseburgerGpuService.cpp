@@ -43,7 +43,6 @@ volatile uint32_t native_adreno_ib_head[8];
 // submission: the user IB's memory writes land here even without a fence.
 volatile uint32_t native_adreno_bo_dump[16];
 // BO allocations below 4 GiB (index 0) and fallbacks to the normal pool (1).
-volatile uint64_t native_adreno_bo_low[2];
 // Up to two (iova, pa, pte, par, rc) rows plus the row count at index 16.
 // Hardware translation of every mapped BO: iova, physical page, leaf PTE, raw
 // PAR and ATOS result. The write target is never in the submit list, so its
@@ -70,7 +69,6 @@ extern volatile uint32_t *cb_inline_ib;
 extern unsigned cb_inline_dwords;
 int cheeseburger_gpu_engine_copy_test(uint64_t);
 int cheeseburger_gpu_engine_late_test(void);
-int cheeseburger_gpu_low_take(uint64_t *,IOBufferMemoryDescriptor **);
 
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 void pmap_set_cache_attributes(ppnum_t,unsigned int);
@@ -238,10 +236,7 @@ class AGXDeviceUserClient : public IOUserClient {
     struct Bo {
         uint64_t handle=0,bytes=0,iova=0,physical=0;
         IOBufferMemoryDescriptor *buf=nullptr;
-        // Kernel view of THIS object's first byte. A buffer taken from the
-        // low pool is one page of a shared block, so getBytesNoCopy() alone
-        // points at the block base and made every readback (and the empty-IB
-        // check) look at the wrong page.
+        // Kernel view of the buffer (page runs are walked separately).
         void *cpu=nullptr;
         IOMemoryDescriptor *desc=nullptr;
         uint32_t token=0;
@@ -645,7 +640,6 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     if(!pa||(pa&4095)||(a.contiguous&&span<a.bytes)){buf->release();return kIOReturnNoMemory;}
     void *cpu=buf->getBytesNoCopy();
     if(!cpu){buf->release();return kIOReturnNoMemory;}
-    native_adreno_bo_low[1]=native_adreno_bo_low[1]+1;
     // Publish initialized cache lines before the pages are GPU-visible. The
     // WCOMB attribute from b9f698f was removed in boot 0x4a508e1d and changed
     // nothing: the failure follows the physical page, not its cache attribute.
