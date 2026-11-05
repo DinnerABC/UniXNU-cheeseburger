@@ -8,6 +8,7 @@
 
 ### 二、自动重启时间调整
 - `cheeseburger-auto-reset` 从 400 改为 **230 s**（用户确认约 150 s 已进入系统界面）。实现无硬编码，主线程 230 s、guard 240 s。
+- **P21-Tattler 实测**（boot `0x432b2f8b`，日志 `out/p21/persistent-logs/20261105T101239Z/`）：`CB auto reset: requested=230 s main=1 guard=1`（56.7 s），启动后约 262 s 回 Recovery；显示 frames=2、SWAP transfer=2、GPSVC err=0、捕获正常。
 - 时间分析：GPU 探针/捕获约 84–87 s、首次合成器 swap 约 194–211 s；230 s 对“系统界面/GPU 探针”有约 80 s 余量，但对“首个 surface paint 证据”只剩约 19–36 s 余量。若某轮专门观察首个 GPU 画面，建议临时用 260–300 s。
 
 ### 三、下一步（安全顺序）
