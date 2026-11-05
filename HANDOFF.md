@@ -1,3 +1,26 @@
+## 2026-11-05：P21-Godwit（display-bank SMMU 直扫全量实现，默认仍为只读探测；实机未完成验证）
+
+### 一、实现（按 sheng `sheng-dpu-scanout`，源码已提交）
+- `CheeseburgerDpuScanout.cpp` 重写为完整路径：读取 MMSS SMMU ID/流表 → 选择 ≥ID1.S2 且 `CB_SCTLR=0` 的空闲 context bank（不动 bootloader 的 CB0）→ 用自己的物理连续表池建 4K 页表 → GOP 同 PA 身份映射 → 写 CB（TCR/TCR2 SEP 7、TTBR0、MAIR 0x44、ACTLR 0x70000000、CB SCTLR 0x1027）→ `S2CR0.CBNDX=bank`、保留 `SMR0` → latch。
+- 逐帧：同尺寸 BGRA surface 物理页映射到两个固定 16 MiB IOVA 窗口之一（base+32/48 MiB），`native_legacy_mdp_commit` 把管道 flip 到窗口并等 latch；失败或缩放帧回退 GOP（再走 CPU 拷贝）。
+- `NativeLegacyDisplay.cpp` 增加 `native_legacy_mdp_commit()`；kickOnce 在 GPU paint 之后先尝试直扫，成功即 retire，不再 CPU 拷贝。
+- **默认门控**：未设置 `cheeseburger-dpu-scanout=1` 时只读 SCTLR/SMR0/S2CR0 并返回（与已验证的 Shelduck 探测相同），不写任何寄存器。
+
+### 二、实机（两次，均未验证直扫成功）
+- 第一次（boot `0x40a57ca8`，镜像 `8b8d0585…`）：`CB DISP dpu setup rc=-1`——GOP stride 4320 被代码误按 64B 对齐拒绝；MDP 只需 8 字节对齐，64B 是 GPU 2D 限制。已修。
+- 第二次（boot `0x409f4449`，镜像 `f210a4ee…`，日志 `out/p21/persistent-logs/20261105T090049Z/`）：约 433 s 自动回 Recovery，但持久日志停在 ~192 s，`DISPLAY clients=11 frames=0`、无 `CB DISP surface paint`/`DPU` 行——首个被验证的 swap 从未出现，takeover 未执行。不能据此宣称直扫可用，也不能归因于本实现（日志在首帧前停止）。
+- 两次都未观察到 panic；Shelduck（只读探测）仍是最后已验证基线。
+
+### 三、下一步
+1. 用 `cheeseburger-dpu-scanout=1` 启动同源镜像，确认首个 swap 出现，并把 takeover 提前到 GPU 探针期（~110 s）而不是首个 swap，避开用户态时序与日志停止窗口。
+2. 若接管成功：验证 `S2CR0=bank`、`SMR0`、CB SCTLR、GOP latch、无 CB/GFSR fault；再验证窗口 flip 与回退。
+3. 失败时保留 Shelduck 探测行为；不把未验证路径设为默认。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | P21-Godwit | `f210a4ee…` | `80e668ee…` | display-bank SMMU 全量实现（默认只读）；两次启动均未验证直扫（stride 误拒已修；第二次日志 192 s 停止、frames=0） |
+  | 2026-11-05 | **P21-Shelduck** | `c4f1e253…` | `5fe3dc19…` | 迁移 display-bank SMMU：读明固件已预置 SID0 路由（M=0），守卫拒写；其余正常，434 s 自动回 |
+
 ## 2026-11-05：P21-Shelduck（迁移 sheng 的 display-bank SMMU 直扫：第一步探明固件已预置 MDP 流路由）
 
 ### 一、对照结论（sheng vs 我们）
