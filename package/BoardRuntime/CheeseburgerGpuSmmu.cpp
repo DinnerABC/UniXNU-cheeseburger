@@ -13,6 +13,7 @@
 #include <string.h>
 #include "CheeseburgerGpuWalk.h"
 #include "CheeseburgerSmmuMicro.h"
+#include "CheeseburgerGpuMapRange.h"
 #include "CheeseburgerSmmuId.h"
 extern "C" {
 int cheeseburger_gpu_smmu4k_setup(void);
@@ -20,7 +21,10 @@ int cheeseburger_gpu_smmu4k_active(void);
 void cheeseburger_gpu_smmu4k_abort(void);
 int cheeseburger_gpu_smmu4k_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu4k_map(uint64_t,uint64_t,unsigned);
+int cheeseburger_gpu_smmu4k_map_batch(const CheeseburgerGpu::MapRange *,unsigned);
+int cheeseburger_gpu_smmu4k_unmap_batch(const CheeseburgerGpu::MapRange *,unsigned);
 int cheeseburger_gpu_smmu4k_unmap(uint64_t,unsigned);
+int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
 volatile uint64_t cb_smmu[24];
 volatile uint64_t cb_map[4];
 volatile uint64_t cb_mapdiag[4];
@@ -226,6 +230,25 @@ static bool unmapPage(uint64_t iova){
 // Tear down a mapped BO range. The caller must have stopped using the range
 // on the GPU (every submit waits for its fence), so clearing and one TLB sync
 // cannot race an in-flight fetch.
+// Batch entry points used by scattered BO mappings. With the 4K kit active the
+// whole list is one or a few transactions; the legacy table path loops the
+// per-page helper and keeps the same ordering.
+extern "C" int cheeseburger_gpu_smmu_map_batch(const CheeseburgerGpu::MapRange *list,unsigned count){
+ if(cheeseburger_gpu_smmu4k_active())return cheeseburger_gpu_smmu4k_map_batch(list,count);
+ if(!list||!count)return -1;
+ for(unsigned i=0;i<count;++i){
+  if(cheeseburger_gpu_smmu_map(list[i].iova,list[i].pa,list[i].pages))return -2;
+ }
+ return 0;
+}
+extern "C" int cheeseburger_gpu_smmu_unmap_batch(const CheeseburgerGpu::MapRange *list,unsigned count){
+ if(cheeseburger_gpu_smmu4k_active())return cheeseburger_gpu_smmu4k_unmap_batch(list,count);
+ if(!list||!count)return -1;
+ for(unsigned i=0;i<count;++i){
+  if(cheeseburger_gpu_smmu_unmap(list[i].iova,list[i].pages))return -2;
+ }
+ return 0;
+}
 extern "C" int cheeseburger_gpu_smmu_unmap(uint64_t iova,unsigned pages){
  if(cheeseburger_gpu_smmu4k_active())return cheeseburger_gpu_smmu4k_unmap(iova,pages);
  if(!gRootVA||!pages||(iova&4095)||iova<0x1000000ULL||

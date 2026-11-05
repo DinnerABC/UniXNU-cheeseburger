@@ -1,3 +1,24 @@
+## 2026-11-05：P21-Twite（sagit batch 映射：8 MiB/1080p 表面 2040 个分散 run 一次事务，2D 填充 4/4）
+
+### 一、改动
+- 接入 4K kit 的 `ArmSmmu4KLiveUpdateContextBatch`：新增 `CheeseburgerGpu::MapRange` 与 `cheeseburger_gpu_smmu_map_batch/unmap_batch`；4K 路径按 256 个 run 分块、每块一次 publish/ASID 同步/审计，ledger 仍保留完整 range 列表；旧表路径回退为逐页循环。
+- 新增内核 `bigbo` 测试：普通 8 MiB 分配（1088x1920 BGRA，pitch 4352），按物理 run 收集后在 `0x5000000` 批量映射，2D 引擎填四条 1088x480 色带并回读。
+
+### 二、实机（boot `0x409fdf8d`，日志 `out/p21/persistent-logs/20261105T054735Z/`，镜像 `f76febba…`，内核 `dd344991…`，固件 `171cca3b…`）
+- `BIG rc=0 seq=13 w=491 runs=2040 min=0x1507a8000 max=0x1536f5000 px=ff102030/ff405060/ff8090a0/ffb0c0d0 match=4/4`（5.26–5.31 GiB，2040 个 run 全部经 batch 映射）。
+- 其余测试无回归：`CLR match=4/4`、`CPY am/bm=4/4`、`HPA high=8192/8192 match=4/4`、`HCP ib/src=0 val=1234abcd`。
+- 客户端：`GPSVC open=2 bo=2 map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`；400 s 自动回 Recovery。
+- 说明：服务端的 `boMap/freeBo` 仍逐 run 调用，batch API 目前由内核测试使用；客户端 BO 很小，不受影响。
+
+### 三、下一步
+1. 把服务端 `boMap/freeBo` 切换到 batch API（每次提交所有 run，减少 live-update 次数），并加 sagit 配额：单 BO 16 MiB、每 client 128 MiB、全局 192 MiB。
+2. 把内核测试 IOVA 从客户端窗口内（0x5000000）移到窗口外（如 0xC000000..0xC7F7FFF），避免未来客户端映射冲突。
+3. 继续 IOSurface/合成器 surface 交接与 Metal 前端；compute 仍等待安全 SP 域方案。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Twite** | `f76febba…` | `dd344991…` | batch 映射 8 MiB/1080p 表面（2040 run）2D 填充 4/4；其余测试与客户端链正常 |
+
 ## 2026-11-05：P21-Siskin（删除低池；客户端窗口 128 MiB / aperture 256 MiB，sagit 量级）
 
 ### 一、改动

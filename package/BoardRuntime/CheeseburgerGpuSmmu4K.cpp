@@ -14,6 +14,7 @@
 #include "sheng/kits/ArmSmmu4K/ArmSmmu4K.h"
 #include "CheeseburgerSmmuMicro.h"
 #include "CheeseburgerGpuQuiesce.h"
+#include "CheeseburgerGpuMapRange.h"
 
 extern "C" {
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
@@ -291,6 +292,58 @@ extern "C" void cheeseburger_gpu_smmu4k_abort(void){
  __atomic_store_n(&gFaulted,0,__ATOMIC_RELEASE);
 }
 
+// Batch mapping for a scattered buffer: the kit's UpdateContextBatch maps
+// every run in one transaction (one publish, one ASID sync, one audit), which
+// is what a normal 4 KiB-page BO needs. Chunks bound the stack/BSS working set
+// while the range ledger keeps the full picture.
+static ArmSmmu4KRange gBatch[256];
+static int mapBatchChunk(const CheeseburgerGpu::MapRange *list,unsigned count,bool map){
+ if(!gActive||gPoisoned||cheeseburger_gpu_smmu4k_faulted()||!list||!count||count>256)return -1;
+ for(unsigned i=0;i<count;++i){
+  const auto &r=list[i];
+  if(!r.pages||(r.iova&4095)||(r.pa&4095)||r.pa+uint64_t(r.pages)*4096>(1ull<<36))return -1;
+  if(i&&r.iova<=list[i-1].iova+uint64_t(list[i-1].pages)*4096-1)return -1;
+  gBatch[i]={r.iova,r.pa,uint64_t(r.pages)*4096,ArmSmmu4KRead|ArmSmmu4KWrite,0,2};
+ }
+ int token=cheeseburger_gpu_mapping_begin();if(token<0)return -3;
+ if(map&&gRangeCount+count>sizeof(gRanges)/sizeof(gRanges[0])){cheeseburger_gpu_mapping_end(token,1);return -1;}
+ ArmSmmu4KLiveRegion lower{gCtx->arenaHandle(),gCtx->stateHandle(),gRanges,gRangeCount};
+ ArmSmmu4KLiveResult res{};
+ const auto status=ArmSmmu4KLiveUpdateContextBatch(&gIo,0,gCtx->configHandle(),&lower,nullptr,0,
+  &gVis,gBatch,count,map?1u:0u,gPoll,&res);
+ if(status!=ArmSmmu4KSuccess){gPoisoned=true;cb_smmu[20]=uint32_t(status);cheeseburger_gpu_mapping_end(token,0);return -2;}
+ for(unsigned i=0;i<count;++i){
+  if(map){
+   size_t at=0;while(at<gRangeCount&&gRanges[at].iova<gBatch[i].iova)++at;
+   for(size_t k=gRangeCount;k>at;--k)gRanges[k]=gRanges[k-1];gRanges[at]=gBatch[i];++gRangeCount;
+  } else {
+   size_t at=0;
+   while(at<gRangeCount&&(gRanges[at].iova!=gBatch[i].iova||gRanges[at].bytes!=gBatch[i].bytes))++at;
+   if(at==gRangeCount){gPoisoned=true;cheeseburger_gpu_mapping_end(token,0);return -1;}
+   for(size_t k=at+1;k<gRangeCount;++k)gRanges[k-1]=gRanges[k];--gRangeCount;
+  }
+ }
+ if(cheeseburger_gpu_mapping_end(token,1)){gPoisoned=true;return -3;}
+ return 0;
+}
+extern "C" int cheeseburger_gpu_smmu4k_map_batch(const CheeseburgerGpu::MapRange *list,unsigned count){
+ while(count){
+  const unsigned n=count>256?256:count;
+  const int rc=mapBatchChunk(list,n,true);
+  if(rc)return rc;
+  list+=n;count-=n;
+ }
+ return 0;
+}
+extern "C" int cheeseburger_gpu_smmu4k_unmap_batch(const CheeseburgerGpu::MapRange *list,unsigned count){
+ while(count){
+  const unsigned n=count>256?256:count;
+  const int rc=mapBatchChunk(list,n,false);
+  if(rc)return rc;
+  list+=n;count-=n;
+ }
+ return 0;
+}
 extern "C" int cheeseburger_gpu_smmu4k_map(uint64_t iova,uint64_t pa,unsigned pages){
  if(!gActive||gPoisoned||cheeseburger_gpu_smmu4k_faulted()||!pages||(iova&4095)||(pa&4095))return -1;
  int token=cheeseburger_gpu_mapping_begin();if(token<0)return -3;

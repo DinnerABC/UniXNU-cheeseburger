@@ -26,6 +26,7 @@ static const unsigned gpu_firmware_size=0;
 #endif
 #include "CheeseburgerGpuBlit540.h"
 #include "CheeseburgerGpuCompute540.h"
+#include "CheeseburgerGpuMapRange.h"
 extern "C" {
 volatile uint64_t cb_cp[128];
 extern volatile uint64_t cb_smmu[24];
@@ -34,6 +35,8 @@ extern volatile uint64_t cb_gpu[64];
 void flush_dcache(vm_offset_t,unsigned,boolean_t);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
+int cheeseburger_gpu_smmu_map_batch(const CheeseburgerGpu::MapRange *,unsigned);
+int cheeseburger_gpu_smmu_unmap_batch(const CheeseburgerGpu::MapRange *,unsigned);
 int cheeseburger_gpu_smmu4k_active(void);
 int cheeseburger_gpu_smmu4k_faulted(void);
 int cheeseburger_gpu_service_publish(void);
@@ -44,6 +47,7 @@ int cheeseburger_gpu_compute_band_test(void);
 int cheeseburger_gpu_copy540_test(void);
 int cheeseburger_gpu_highpa_test(void);
 int cheeseburger_gpu_highcp_test(void);
+int cheeseburger_gpu_bigbo_test(void);
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -87,6 +91,9 @@ volatile uint32_t native_adreno_highpa[12];
 // High-address CP: [0] IB-fetch rc, [1] seq, [2..3] sentinels, [4] source-read
 // rc, [5] seq, [6] value read from the high page, [7] the high page PA.
 volatile uint32_t native_adreno_highcp[8];
+// 8 MiB (1088x1920 BGRA) surface mapped through the batch API: rc, seq, words,
+// runs, min/max PA and four band samples.
+volatile uint32_t native_adreno_bigbo[13];
 // Low pool: count and first page, filled at probe time.
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
 // the ring instead of being fetched through CP_INDIRECT_BUFFER.
@@ -590,6 +597,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
        IOLog("CB GPU highpa: exit rc=%d\n",hprc);
        const int hcrc=cheeseburger_gpu_highcp_test();
        IOLog("CB GPU highcp: exit rc=%d\n",hcrc);
+       const int bbrc=cheeseburger_gpu_bigbo_test();
+       IOLog("CB GPU bigbo: exit rc=%d\n",bbrc);
        const int frc=cheeseburger_gpu_scanout_flip_test();
        IOLog("CB GPU flip: exit rc=%d\n",frc);
        const int crc2=cheeseburger_gpu_compute_band_test();
@@ -1424,6 +1433,72 @@ extern "C" int cheeseburger_gpu_highcp_test(void){
   rc,seq,gHighCpVals[0],gHighCpVals[1],rc2,seq2,gHighCpVals[2],(unsigned long long)pa0);
  gHighCpRc=rc?rc:(rc2?rc2:0);
  return gHighCpRc;
+}
+// ---------------------------------------------------------------------------
+// 1080p-scale surface through the scattered batch mapper. One 8 MiB normal
+// buffer is walked into physical runs and mapped at 0x5000000 (inside the
+// 128 MiB client window) in batched SMMU transactions, then the 2D engine
+// fills four 1088x480 bands and the CPU reads the centres back.
+enum {BigBoWidth=1088,BigBoHeight=1920,BigBoPitch=BigBoWidth*4,BigBoRows=480,
+      BigBoBytes=BigBoPitch*BigBoHeight};
+static IOBufferMemoryDescriptor *gBigBoBuf=nullptr;
+static CheeseburgerGpu::MapRange gBigRuns[4096];
+static uint32_t gBigSamples[4];
+static int gBigRc=0xffff;
+extern "C" int cheeseburger_gpu_bigbo_test(void){
+ if(gBigRc!=0xffff)return gBigRc;
+ gBigRc=-1;
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
+    !gClearIbVA||!gClearScratchIova)return gBigRc;
+ gBigBoBuf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+  kIODirectionInOut|kIOMemoryMapperNone,(vm_size_t)BigBoBytes,4096);
+ if(!gBigBoBuf){IOLog("CB GPU bigbo: alloc failed\n");return gBigRc;}
+ unsigned runs=0;uint64_t minPa=~0ull,maxPa=0;
+ for(IOByteCount off=0;off<BigBoBytes&&runs<4096;){
+  IOByteCount seg=0;
+  const uint64_t pa=gBigBoBuf->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+  if(!pa||(pa&4095)||!seg)break;
+  if(seg>BigBoBytes-off)seg=BigBoBytes-off;
+  const unsigned pages=unsigned((seg+4095)/4096);
+  gBigRuns[runs++]={0x5000000+off,pa,pages};
+  if(pa<minPa)minPa=pa;if(pa>maxPa)maxPa=pa;
+  off+=uint64_t(pages)*4096;
+ }
+ if(runs>=4096){IOLog("CB GPU bigbo: too many runs\n");return gBigRc;}
+ const int mrc=cheeseburger_gpu_smmu_map_batch(gBigRuns,runs);
+ if(mrc){IOLog("CB GPU bigbo: map rc=%d runs=%u\n",mrc,runs);return gBigRc;}
+ volatile uint32_t *base=(volatile uint32_t*)gBigBoBuf->getBytesNoCopy();
+ if(!base){IOLog("CB GPU bigbo: no view\n");return gBigRc;}
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ CheeseburgerGpu::Blit540 b(e);
+ bool ok=b.restore()&&b.begin2D();
+ static const uint32_t bands[4]={0xff102030u,0xff405060u,0xff8090a0u,0xffb0c0d0u};
+ for(unsigned i=0;i<4&&ok;++i)
+  ok=b.solidFill(0x5000000+uint64_t(i)*BigBoRows*BigBoPitch,BigBoWidth,BigBoRows,
+   BigBoPitch,bands[i],gClearScratchIova);
+ const uint32_t words=e.size();
+ uint32_t seq=0;
+ const int rc=ok?clearKick(words,seq):-10;
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)base,BigBoBytes,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ unsigned match=0;
+ if(!rc)for(unsigned i=0;i<4;++i){
+  gBigSamples[i]=base[(uint64_t(i)*BigBoRows+BigBoRows/2)*(BigBoPitch/4)+BigBoWidth/2];
+  if(gBigSamples[i]==bands[i])++match;
+ }
+ native_adreno_bigbo[0]=uint32_t(rc);native_adreno_bigbo[1]=seq;native_adreno_bigbo[2]=words;
+ native_adreno_bigbo[3]=runs;native_adreno_bigbo[4]=uint32_t(minPa);native_adreno_bigbo[5]=uint32_t(minPa>>32);
+ native_adreno_bigbo[6]=uint32_t(maxPa);native_adreno_bigbo[7]=uint32_t(maxPa>>32);
+ native_adreno_bigbo[8]=match;
+ for(unsigned i=0;i<4;++i)native_adreno_bigbo[9+i]=gBigSamples[i];
+ IOLog("CB GPU bigbo: rc=%d seq=%u words=%u runs=%u min=%llx max=%llx px=%x/%x/%x/%x match=%u/4\n",
+  rc,seq,words,runs,(unsigned long long)minPa,(unsigned long long)maxPa,
+  gBigSamples[0],gBigSamples[1],gBigSamples[2],gBigSamples[3],match);
+ gBigRc=rc;
+ return rc;
 }
 // ---------------------------------------------------------------------------
 // IR3 compute band on the firmware scanout. The GOP pitch (4320 bytes) blocks

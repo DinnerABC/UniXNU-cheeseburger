@@ -103,6 +103,9 @@ extern volatile uint32_t native_adreno_highpa[12] __attribute__((weak_import));
 /* High-address CP: IB fetch from a high page, then CP_MEM_TO_MEM read of a
  * high page, with the four returned words. */
 extern volatile uint32_t native_adreno_highcp[8] __attribute__((weak_import));
+/* 8 MiB surface through the batch mapper: rc/seq/words, runs, min/max PA,
+ * four band samples and the match count. */
+extern volatile uint32_t native_adreno_bigbo[13] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -747,6 +750,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       (int)(int16_t)(uint16_t)native_adreno_highcp[4],native_adreno_highcp[5],
       native_adreno_highcp[6],native_adreno_highcp[7],cb_boot_id);
     at=put(out,at,cap,hcp,sizeof hcp);
+   }
+   if (&native_adreno_bigbo[0] && (native_adreno_bigbo[0]|native_adreno_bigbo[1]|native_adreno_bigbo[2])) {
+    char big[200];
+    snprintf(big,sizeof big,"BIG rc=%d seq=%u w=%u runs=%u min=%x%08x max=%x%08x px=%x/%x/%x/%x match=%u/4 bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_bigbo[0],native_adreno_bigbo[1],native_adreno_bigbo[2],
+      native_adreno_bigbo[3],native_adreno_bigbo[5],native_adreno_bigbo[4],
+      native_adreno_bigbo[7],native_adreno_bigbo[6],
+      native_adreno_bigbo[9],native_adreno_bigbo[10],native_adreno_bigbo[11],
+      native_adreno_bigbo[12],native_adreno_bigbo[8],cb_boot_id);
+    at=put(out,at,cap,big,sizeof big);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was
