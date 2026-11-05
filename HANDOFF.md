@@ -1,3 +1,13 @@
+## 2026-11-05：P21-Yellowthroat（首次按 sagit 顺序 halt + CB0 身份映射；halt/编程成功、映射失败，已回退）
+
+- 在 GPU reset 前按 sagit `DisplayDMAHalt` 的顺序执行：VBIF AXI halt（`0xc9b0208/0xc9b020c`）→ 编程 CB0（GOP 同址身份映射）→ 2 s → 关闭 CB0/恢复全局/恢复 VBIF。
+- 实机（boot `0x442d94d8`，日志 `out/p21/persistent-logs/20261105T104406Z/`）：
+  `CB GPU dpu identity halted rc=-10 st=3 pipe=5000 size=7800438 stride=10e0 ack=0 prog=1 map=0 fault=400 restore=1 sctlr=200626/200626 smr=80000000/80000000 s2cr=0/0`。
+  即 AXI halt 已 ack、CB0 编程成功、恢复完成；但 **kit 的 LiveUpdateContextBatch 映射失败（map=0）**，测试按失败路径退出并恢复。
+  该次启动 `DISPLAY clients=0 frames=0`、GPSVC open=0，用户态显示未起来，不能判定 halt/resume 安全。
+- 源码已回退到 Tattler/HEAD（只读捕获 + 230 s）；halt 实现补丁保存在 `out/p21/p21-yellowthroat/logs/halt-identity.patch`。
+- 下一步：保留 AXI halt，改用已验证的 4K 页表构造（6dad936 的 `mapPage`/表池）替换 kit live 映射；先验证 halt→映射→恢复不改画面，再让身份映射跨越 resume，最后才 flip 到窗口。
+
 ## 2026-11-05：P21-Scaup（只读捕获：固件未编程 MDP 上下文；自动重启改 230 s）
 
 ### 一、只读捕获结果（boot `0x43ca5a9a`，日志 `out/p21/persistent-logs/20261105T100257Z/`）
