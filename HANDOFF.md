@@ -1,3 +1,25 @@
+## 2026-11-05：P21-Wryneck（GPU 写入合成器 IOSurface：stride 5120、80 个 run、2D 四象限回读 4/4）
+
+### 一、改动
+- 新增 `cheeseburger_gpu_paint_surface(memory,stride,w,h,format)`：在显示驱动 `kickOnce` 校验完合成器 IOSurface 后、任何缩放/拷贝/呈现之前，一次性把该 surface 的前 64 行映射到 `0xD000000`（窗口与内核测试区之外），用 2D 引擎画 256x64 四象限；要求 stride 为 64B 整数倍、BGRA 格式，失败只跳过、不改显示路径。
+- 支持 8 个 attempt（首个 surface swap 可能早于 GPU 引擎就绪），成功后停止；对 surface 的 CPU 回读作为证据，随后由现有 CPU 拷贝/MDP 呈现同一 surface。
+- BootLog 增加 `SURF` 行。
+
+### 二、实机（boot `0x40a41cbb`，日志 `out/p21/persistent-logs/20261105T061947Z/`，镜像 `88de3944…`，内核 `458cc731…`，固件 `b2d0ba9a…`）
+- **合成器 surface**：`CB DISP surface paint rc=0 stride=5120 w=1080 h=1920 fmt=42475241`（205.0 s，第一个晚到的 surface swap）。
+- `CB GPU surf: rc=0 seq=23 w=491 runs=80 ... px=ff102030/ff405060/ff8090a0/ffb0c0d0 match=4/4 min=0x112d44000 max=0x17eba9000`——surface 的 80 个物理 run 混合在 4.3–5.98 GiB，GPU 写入并由 CPU 回读一致。
+- 其余无回归：2D 清屏/拷贝/高地址 CP/8 MiB batch 表面全部通过；客户端 `GPSVC open=2 sub=1 fence=1 err=0`；`GBOD adc0de1/feed0002/600d0003`；400 s 自动回 Recovery。
+- 说明：这是 **GPU→合成器 surface** 的写入与回读证据；呈现仍由现有 CPU 拷贝/MDP 完成，尚未由 GPU 合成整套 UI，也尚未接 Metal。
+
+### 三、下一步
+1. 把这套 surface 交接从一次性测试扩展为按帧写入（GPU 渲染结果进入每个合成器 surface），并保持 fence/资源生命周期。
+2. Metal 前端：把插件/命令提交接到现有 ABI；compute 仍等待安全的 SP 域方案。
+3. 保持 P21-Wryneck 为基线，回归整体回退。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Wryneck** | `88de3944…` | `458cc731…` | GPU 写入合成器 IOSurface（stride 5120/80 run）回读 4/4；客户端链正常 |
+
 ## 2026-11-05：P21-Wheatear（服务端 BO 切 batch 映射；sagit 配额 16 MiB/BO、128 MiB/client；大 BO 测试移出客户端窗口）
 
 ### 一、改动

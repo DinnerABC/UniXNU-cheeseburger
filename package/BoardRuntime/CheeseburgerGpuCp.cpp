@@ -48,6 +48,7 @@ int cheeseburger_gpu_copy540_test(void);
 int cheeseburger_gpu_highpa_test(void);
 int cheeseburger_gpu_highcp_test(void);
 int cheeseburger_gpu_bigbo_test(void);
+int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *,uint64_t,uint32_t,uint32_t,uint32_t);
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -94,6 +95,9 @@ volatile uint32_t native_adreno_highcp[8];
 // 8 MiB (1088x1920 BGRA) surface mapped through the batch API: rc, seq, words,
 // runs, min/max PA and four band samples.
 volatile uint32_t native_adreno_bigbo[13];
+// GPU->compositor surface paint: rc, seq, words, runs, stride, format, match
+// and four quadrant samples.
+volatile uint32_t native_adreno_surface[12];
 // Low pool: count and first page, filled at probe time.
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
 // the ring instead of being fetched through CP_INDIRECT_BUFFER.
@@ -1500,6 +1504,76 @@ extern "C" int cheeseburger_gpu_bigbo_test(void){
   rc,seq,words,runs,(unsigned long long)minPa,(unsigned long long)maxPa,
   gBigSamples[0],gBigSamples[1],gBigSamples[2],gBigSamples[3],match);
  gBigRc=rc;
+ return rc;
+}
+// ---------------------------------------------------------------------------
+// GPU write into the compositor IOSurface the display is about to present.
+// The surface is BGRA with a 64-byte-aligned stride (the 2D engine requires
+// that); its first 64 rows are mapped at 0xD000000 and four 128x32 quadrants
+// are drawn before the display's own copy/flip. One shot per boot; any
+// precondition failure only skips the paint and leaves the display path alone.
+enum {SurfaceBandRows=64,SurfacePaintWidth=256,SurfacePaintHeight=64};
+static CheeseburgerGpu::MapRange gSurfaceRuns[512];
+static uint32_t gSurfaceSamples[4];
+extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_t stride,
+    uint32_t width,uint32_t height,uint32_t format){
+ if(!memory||!stride||(stride&63)||width<64||height<SurfaceBandRows||
+    uint64_t(width)*4>stride||(format!=0x42475241u&&format!=0x26424741u)){
+  IOLog("CB GPU surf: skip stride=%llu w=%u h=%u fmt=%x\n",
+   (unsigned long long)stride,width,height,format);
+  return -1;
+ }
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
+    !gClearIbVA||!gClearScratchIova){IOLog("CB GPU surf: engine not ready\n");return -2;}
+ const uint64_t bandBytes=stride*SurfaceBandRows;
+ unsigned runs=0;uint64_t off=0,minPa=~0ull,maxPa=0;
+ while(off<bandBytes&&runs<512){
+  IOByteCount seg=0;
+  const uint64_t pa=memory->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+  if(!pa||(pa&4095)||!seg)break;
+  if(seg>bandBytes-off)seg=bandBytes-off;
+  const unsigned pages=unsigned((seg+4095)/4096);
+  gSurfaceRuns[runs++]={0xD000000+off,pa,pages};
+  if(pa<minPa)minPa=pa;if(pa>maxPa)maxPa=pa;
+  off+=uint64_t(pages)*4096;
+ }
+ if(off<bandBytes||!runs){IOLog("CB GPU surf: runs=%u off=%llu\n",runs,(unsigned long long)off);return -3;}
+ const int mrc=cheeseburger_gpu_smmu_map_batch(gSurfaceRuns,runs);
+ if(mrc){IOLog("CB GPU surf: map rc=%d runs=%u\n",mrc,runs);return -4;}
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ CheeseburgerGpu::Blit540 b(e);
+ bool ok=b.restore()&&b.begin2D();
+ for(unsigned q=0;q<4&&ok;++q){
+  const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
+  ok=b.solidFill(0xD000000+uint64_t(qy)*stride+qx*4u,128,32,uint32_t(stride),
+   gClearColors[q],gClearScratchIova);
+ }
+ const uint32_t words=e.size();
+ uint32_t seq=0;
+ const int rc=ok?clearKick(words,seq):-10;
+ unsigned match=0;
+ if(!rc){
+  IOMemoryMap *mp=memory->map(kIOMapAnywhere|kIOMapInhibitCache);
+  if(mp){
+   volatile uint8_t *va=(volatile uint8_t*)mp->getVirtualAddress();
+   if(va)for(unsigned q=0;q<4;++q){
+    const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
+    const uint64_t o=uint64_t(qy+16)*stride+(qx+64)*4u;
+    gSurfaceSamples[q]=*reinterpret_cast<volatile uint32_t*>(va+o);
+    if(gSurfaceSamples[q]==gClearColors[q])++match;
+   }
+   mp->release();
+  }
+ }
+ native_adreno_surface[0]=uint32_t(rc);native_adreno_surface[1]=seq;native_adreno_surface[2]=words;
+ native_adreno_surface[3]=runs;native_adreno_surface[4]=uint32_t(stride);native_adreno_surface[5]=uint32_t(stride>>32);
+ native_adreno_surface[6]=format;native_adreno_surface[7]=match;
+ for(unsigned q=0;q<4;++q)native_adreno_surface[8+q]=gSurfaceSamples[q];
+ IOLog("CB GPU surf: rc=%d seq=%u w=%u runs=%u stride=%llu fmt=%x px=%x/%x/%x/%x match=%u/4 min=%llx max=%llx\n",
+  rc,seq,words,runs,(unsigned long long)stride,format,gSurfaceSamples[0],gSurfaceSamples[1],
+  gSurfaceSamples[2],gSurfaceSamples[3],match,(unsigned long long)minPa,(unsigned long long)maxPa);
  return rc;
 }
 // ---------------------------------------------------------------------------

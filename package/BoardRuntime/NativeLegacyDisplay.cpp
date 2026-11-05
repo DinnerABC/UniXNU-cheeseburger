@@ -21,6 +21,7 @@ extern "C" void native_legacy_client_enter(task_t,uint32_t);
 extern "C" void native_legacy_client_observed(IOReturn,IOUserClient *);
 extern "C" void native_legacy_pm_observed(unsigned,IOReturn,unsigned long);
 extern "C" IOMemoryDescriptor *native_legacy_surface_descriptor(OSObject *);
+extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *,uint64_t,uint32_t,uint32_t,uint32_t);
 extern "C" uint64_t native_legacy_surface_width(OSObject *),native_legacy_surface_height(OSObject *);
 extern "C" uint64_t native_legacy_surface_stride(OSObject *),native_legacy_surface_allocation(OSObject *);
 extern "C" uint32_t native_legacy_surface_format(OSObject *),native_legacy_surface_planes(OSObject *);
@@ -385,6 +386,18 @@ public:
            !native_legacy_surface_bounds(width,height,video.v_rowBytes,bootMapping->getLength(),bootMapping->getLength())) {
             native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;
         }
+        // GPU->compositor handoff (P21-Wryneck): draw once into the frame the
+        // display is about to copy/scan, before any presentation. The helper
+        // rejects a non-64-byte pitch and fails closed without touching the
+        // display path.
+        { static unsigned attempts=0;
+          if(attempts<8){++attempts;
+            const int prc=cheeseburger_gpu_paint_surface(memory,sourceStride,width,height,
+                native_legacy_surface_format(surface));
+            IOLog("CB DISP surface paint rc=%d stride=%llu w=%u h=%u fmt=%x\n",prc,
+                (unsigned long long)sourceStride,width,height,native_legacy_surface_format(surface));
+            if(prc==0)attempts=8;
+          } }
         uint32_t sourceWidth=0,sourceHeight=0;
         if(!p21_scale_geometry(reinterpret_cast<const unsigned char *>(request),width,height,&sourceWidth,&sourceHeight)) {
             native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
