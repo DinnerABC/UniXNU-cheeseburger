@@ -51,6 +51,7 @@ int cheeseburger_gpu_highcp_test(void);
 int cheeseburger_gpu_bigbo_test(void);
 int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *,uint64_t,uint32_t,uint32_t,uint32_t);
 extern "C" int cheeseburger_dpu_capture(uint64_t);
+extern "C" int cheeseburger_dpu_halt_handoff(uint64_t,uint32_t,uint32_t,uint32_t);
 extern "C" volatile uint32_t native_adreno_dpu[16];
 extern "C" volatile uint32_t native_adreno_dpu_ext[16];
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
@@ -418,7 +419,20 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
            native_adreno_dpu[8],native_adreno_dpu[9],native_adreno_dpu_ext[1],
            native_adreno_dpu_ext[0],native_adreno_dpu_ext[2],native_adreno_dpu_ext[3],
            (unsigned long long)v.v_baseAddr,(unsigned long long)native_adreno_dpu_ext[7],
-           native_adreno_dpu_ext[9]); } } }
+           native_adreno_dpu_ext[9]);
+       unsigned hhOn=1;PE_parse_boot_argn("cheeseburger-dpu-handoff",&hhOn,sizeof hhOn);
+       if(hhOn){
+         const int hrc=cheeseburger_dpu_halt_handoff(uint64_t(v.v_baseAddr),
+             uint32_t(v.v_rowBytes),uint32_t(v.v_width),uint32_t(v.v_height));
+         IOLog("CB GPU dpu halt handoff rc=%d st=%u pipe=%x size=%x stride=%x xin=%u ok=%u tables=%u bytes=%u resumed=%u sctlr=%x clock=%x halt=%x first=%x/%x pa=%x da=%x table=%x ctx=%x/%x/%x\n",
+             hrc,native_adreno_dpu[1],native_adreno_dpu[5],native_adreno_dpu[6],
+             native_adreno_dpu[7],native_adreno_dpu[8],native_adreno_dpu[9],
+             native_adreno_dpu[10],native_adreno_dpu[11],native_adreno_dpu[12],
+             native_adreno_dpu[13],native_adreno_dpu[14],native_adreno_dpu[15],
+             native_adreno_dpu_ext[5],native_adreno_dpu_ext[6],native_adreno_dpu_ext[7],
+             native_adreno_dpu_ext[8],native_adreno_dpu_ext[9],native_adreno_dpu_ext[10],
+             native_adreno_dpu_ext[11],native_adreno_dpu_ext[12],native_adreno_dpu_ext[13]);
+       } } } }
  // CP reset/configure/start is a separate opt-in: it writes GPU registers and
  // starts real firmware DMA, unlike the read-only mapping probe above.
  // 1 = full start; 2 = log-only long line (no GPU writes); 3 = log-only short

@@ -14,8 +14,13 @@
 // qcom,smmu_mdp_sec_cb (SID 1).
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <kern/task.h>
+#include <string.h>
 #include <pexpert/pexpert.h>
 #include "NativeAdrenoSmmuContext.h"
+#include "CheeseburgerSmmuId.h"
 
 extern "C" {
 volatile uint32_t native_adreno_dpu[16];
@@ -228,4 +233,249 @@ extern "C" int cheeseburger_dpu_capture(uint64_t address){
  x[7]=pa;x[8]=uint32_t(pa>>32);x[9]=result;
  d[1]=3;d[0]=result==0?0:0xfffffff7u;
  return result==0?0:-8;
+}
+
+// sagit DisplayDMAHalt port for MSM8998 MDP5. Offsets are relative to MDSS
+// (0xc900000): MDP at 0x1000, VIG0 at 0x5000, CTL0 at 0x2000, VBIF XIN halt
+// at 0xb0200/0xb0204 and the MDP clock control at 0x12ac. The validation and
+// halt/resume order are copied from drivers/display/QcomDisplay/DisplayDMAHalt.h.
+namespace dpu_halt {
+constexpr uint64_t Mdss=0xc900000;
+constexpr uint32_t Span=0xb2000;
+IOMemoryMap *map=nullptr;
+volatile uint32_t *v=nullptr;
+uint32_t rd(uint32_t off){uint32_t x=v[off/4];__asm__ volatile("dmb sy":::"memory");return x;}
+bool write(uint32_t off,uint32_t value,uint32_t mask){
+ __asm__ volatile("dsb sy":::"memory");v[off/4]=value;__asm__ volatile("dsb sy":::"memory");
+ const uint32_t after=rd(off);
+ return after!=0xffffffffu&&(after&mask)==(value&mask);
+}
+struct Halt {
+ uint32_t source=0,xin=0,clockBit=0,clockBefore=0,haltBefore=0;
+ uint32_t framebuffer=0,size=0,layer=0,top=0,stride=0;
+ bool configured=false,touched=false,held=false;
+ bool solePipeline(){
+  if(v==nullptr||(rd(0)&0xffff0000u)!=0x30000000u)return false;
+  static const uint32_t pipes[8]={0x4000,0x6000,0x8000,0xa000,0x24000,0x26000,0x28000,0x2a000};
+  for(auto pipe:pipes){
+   const uint32_t at=0x1000u+pipe;
+   if(pipe!=source){if(rd(at))return false;continue;}
+   if(rd(at)!=size||rd(at+0xc)!=size||rd(at+8)||rd(at+0x10)||
+      rd(at+0x14)!=framebuffer||rd(at+0x24)!=stride)return false;
+  }
+  static const unsigned mixers[4]={0,1,2,5};
+  for(unsigned ctl=0;ctl<5;++ctl){
+   const uint32_t at=0x2000u+ctl*0x200u;
+   for(auto lm:mixers){
+    const uint32_t mix=rd(at+(lm==5?0x24u:4u*lm));
+    if(!ctl&&!lm){if(mix!=layer)return false;}
+    else if(mix&~(1u<<24))return false;
+    if(rd(at+0x40+4*lm)||rd(at+0x70+4*lm))return false;
+   }
+   const uint32_t mode=rd(at+0x14);
+   if(!ctl){if(mode!=top||(rd(at+0x18)&1u))return false;}
+   else if((mode&&mode!=0x1f00u)||rd(at+0x18))return false;
+  }
+  const unsigned output=((top>>4)&7)-1;
+  for(unsigned n=0;n<4;++n)if(n!=output&&rd(0x1000u+0x6a000u+n*0x800u))return false;
+  return true;
+ }
+ bool prepare(uint32_t address,uint32_t width,uint32_t height){
+  if(configured||v==nullptr||!address||!width||width>4096||!height||height>4096)return false;
+  framebuffer=address;size=width|(height<<16);
+  unsigned matches=0;
+  static const uint32_t sources[2]={0x4000,0x24000};
+  for(auto pipe:sources)if(rd(0x1000u+pipe)==size&&rd(0x1000u+pipe+0x14)==framebuffer){source=pipe;++matches;}
+  if(matches!=1)return false;
+  xin=source==0x4000?0:1;clockBit=source==0x4000?1u:1u<<8;
+  stride=rd(0x1000u+source+0x24);layer=rd(0x2000);top=rd(0x2014);
+  const uint32_t mask=7u<<(source==0x4000?0:18),output=((top>>4)&7)-1;
+  if(!(layer&mask)||(layer&~(mask|(1u<<24)))||!(top&(1u<<17))||
+     (top&~0x20070u)||output<1||output>2||!solePipeline())return false;
+  clockBefore=rd(0x12ac);haltBefore=rd(0xb0200);
+  if(clockBefore==0xffffffffu||haltBefore==0xffffffffu||(haltBefore&(1u<<xin)))return false;
+  configured=true;return true;
+ }
+ bool halt(){
+  if(!configured||touched||!solePipeline())return false;
+  const uint32_t clock=rd(0x12ac);
+  if(clock==0xffffffffu||(clock&clockBit)!=(clockBefore&clockBit)||rd(0xb0200)!=haltBefore)return false;
+  touched=true;
+  if(!write(0x12ac,clock|clockBit,clockBit)||!write(0xb0200,haltBefore|(1u<<xin),0xffffffffu))return false;
+  for(unsigned n=0;n<2000;++n){
+   const uint32_t ack=rd(0xb0204);
+   if(ack==0xffffffffu)return false;
+   if(ack&(1u<<xin)){held=true;return solePipeline();}
+   IODelay(10);
+  }
+  return false;
+ }
+ bool resume(){
+  if(!touched)return configured;
+  if(!write(0xb0200,haltBefore,0xffffffffu))return false;
+  for(unsigned n=0;n<2000;++n){
+   if(!(rd(0xb0204)&(1u<<xin)))break;
+   IODelay(10);
+  }
+  const uint32_t clock=rd(0x12ac);
+  if(clock==0xffffffffu||!write(0x12ac,(clock&~clockBit)|(clockBefore&clockBit),clockBit))return false;
+  held=false;touched=false;return solePipeline();
+ }
+};
+bool open(){
+ if(v)return true;
+ IODeviceMemory *m=IODeviceMemory::withRange(Mdss,Span);
+ map=m?m->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+ OSSafeReleaseNULL(m);
+ v=map?(volatile uint32_t*)map->getVirtualAddress():nullptr;
+ return v!=nullptr;
+}
+}
+
+// Kernel-side equivalent of sagit's qcom,display-smmu-handoff: a disabled
+// context bank, a published root table, a 32 MiB reserved window below 4 GiB
+// and the framebuffer's physical address identity-mapped inside it. This round
+// only builds and validates the contract while the display DMA is halted; the
+// context is not written, so the visible picture cannot change.
+namespace dpu_handoff {
+struct Handoff {
+ uint32_t version=1,bytes=0,flags=0,tableCount=0,cachePolicy=1,reserved=0;
+ uint64_t first=0,end=0,framebuffer=0,deviceAddress=0,framebufferBytes=0;
+ uint64_t table=0;
+ uint32_t smmu=0x0cd00000,controller=0x0c901000,stream=0,inputBits=32,outputBits=36;
+ uint32_t sctlr=0x1027,tcr=0,tcr2=0,ttbr0Lo=0,ttbr0Hi=0,mair0=0x44,bank=0,slot=0,smr=0,s2cr=0;
+};
+bool overlap(uint64_t a,uint64_t n,uint64_t b,uint64_t m){
+ return n&&m&&a<=UINT64_MAX-n&&b<=UINT64_MAX-m&&a<b+m&&b<a+n;
+}
+bool valid(const Handoff &h){
+ if(h.version!=1||h.bytes!=sizeof(Handoff)||h.flags!=31||!h.tableCount||h.tableCount>4||
+    h.cachePolicy!=1||h.reserved)return false;
+ if(h.first<0x1000000||(h.first&4095)||(h.end&4095)||h.end<=h.first||h.end>0x100000000ull||
+    h.end-h.first<0x2000000||h.end-h.first>0x20000000)return false;
+ if(!h.framebuffer||(h.framebuffer&4095)||!h.framebufferBytes||(h.framebufferBytes&4095))return false;
+ if(h.framebuffer>=(1ull<<h.outputBits)||h.framebufferBytes>(1ull<<h.outputBits)-h.framebuffer)return false;
+ if(!h.deviceAddress||(h.deviceAddress&4095)||h.deviceAddress>=0x100000000ull||
+    h.framebufferBytes>0x100000000ull-h.deviceAddress)return false;
+ if(overlap(h.first,h.end-h.first,h.deviceAddress,h.framebufferBytes))return false;
+ if(!h.table||(h.table&4095)||h.table>=(1ull<<h.outputBits)||
+    overlap(h.table&~0x3fffull,16384,h.framebuffer,h.framebufferBytes))return false;
+ if((h.sctlr&0x1027)!=0x1027||(h.sctlr&~0x1167u)||(h.mair0&255)!=0x44)return false;
+ const uint32_t tcr2=(7u<<15)|(1u<<4)|(h.outputBits==40?2u:h.outputBits==36?1u:0u);
+ if(h.tcr2!=tcr2||(h.tcr&~0x3f00u)!=((1u<<23)|(64-h.inputBits))||
+    ((h.tcr>>8)&3)>1||((h.tcr>>10)&3)>1||(((h.tcr>>12)&3)!=2&&((h.tcr>>12)&3)!=3))return false;
+ if((h.ttbr0Lo&4095)||h.ttbr0Lo!=uint32_t(h.table))return false;
+ return true;
+}
+}
+
+namespace dpu_handoff {
+// The same 4 KiB table construction used by the GPU SMMU path; memory only.
+IOBufferMemoryDescriptor *pool=nullptr;
+volatile uint64_t *poolVA=nullptr;
+uint64_t poolPA=0;
+unsigned tabCount=0;
+struct T {uint64_t pa;volatile uint64_t *va;};
+T tabs[32];
+volatile uint64_t *root=nullptr;
+unsigned startLevel=1;
+void clean(volatile uint64_t *t){flush_dcache((vm_offset_t)t,4096,FALSE);__asm__ volatile("dsb sy":::"memory");}
+volatile uint64_t *find(uint64_t pa){
+ for(unsigned i=0;i<tabCount;++i)if(tabs[i].pa==pa)return tabs[i].va;
+ return nullptr;
+}
+volatile uint64_t *alloc(){
+ if(tabCount>=32)return nullptr;
+ const unsigned i=tabCount++;
+ tabs[i]={poolPA+uint64_t(i)*4096,poolVA+uint64_t(i)*512};
+ memset((void*)tabs[i].va,0,4096);clean(tabs[i].va);
+ return tabs[i].va;
+}
+bool mapPage(uint64_t iova,uint64_t pa){
+ if(!root||(iova&4095)||(pa&4095)||pa>=(1ull<<36))return false;
+ volatile uint64_t *t=root;
+ for(unsigned level=startLevel;level<3;++level){
+  const unsigned shift=39-9*level,idx=unsigned((iova>>shift)&511);
+  uint64_t e=t[idx];
+  if(!e){
+   volatile uint64_t *n=alloc();
+   if(!n)return false;
+   t[idx]=tabs[tabCount-1].pa|3;clean(t);t=n;
+  }else{
+   if((e&0xfffull)!=3)return false;
+   t=find(e&~0xfffull);
+   if(!t)return false;
+  }
+ }
+ const uint64_t attrs=3ULL|(1ULL<<6)|(2ULL<<8)|(1ULL<<10)|(1ULL<<11)|(3ULL<<53);
+ t[(iova>>12)&511]=pa|attrs;clean(t);return true;
+}
+}
+extern "C" int cheeseburger_dpu_halt_handoff(uint64_t pa,uint32_t stride,uint32_t width,uint32_t height){
+ auto &d=native_adreno_dpu;auto &x=native_adreno_dpu_ext;
+ static bool done=false;
+ if(done)return -101;
+ done=true;
+ if(!pa||!stride||!width||!height||(pa&4095)||pa+uint64_t(stride)*height>0x100000000ull){
+  d[0]=0xffffffffu;return -1;
+ }
+ if(!dpu_halt::open()){d[0]=0xfffffffdu;return -2;}
+ dpu_halt::Halt h;
+ if(!h.prepare(uint32_t(pa),width,height)){d[1]=1;d[0]=0xfffffffcu;return -3;}
+ d[5]=h.source;d[6]=h.size;d[7]=h.stride;d[8]=h.xin;
+ if(!h.halt()){
+  d[1]=2;d[0]=0xfffffffbu;
+  h.resume();
+  return -4;
+ }
+ d[1]=3;
+ // Build the identity tables and a handoff with sagit's attributes while the
+ // display DMA is really halted. No SMMU register is written in this step.
+ using namespace dpu_handoff;
+ bool ok=true;
+ if(!pool){
+  pool=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
+   (vm_size_t)32*4096,4096);
+  IOByteCount span=0;
+  poolPA=pool?pool->getPhysicalSegment(0,&span,kIOMemoryMapperNone):0;
+  poolVA=pool?(volatile uint64_t*)pool->getBytesNoCopy():nullptr;
+  if(!pool||!poolPA||span<(IOByteCount)32*4096||!poolVA||(poolPA>>36))ok=false;
+  if(ok){memset((void*)poolVA,0,32*4096);flush_dcache((vm_offset_t)poolVA,32*4096,FALSE);
+   __asm__ volatile("dsb sy":::"memory");}
+ }
+ const uint32_t id2=dpu_halt::rd(0x28);
+ CheeseburgerGpu::IdWidths iw;
+ const bool widths=ok&&CheeseburgerGpu::decodeIdWidths(id2,iw);
+ unsigned ias=widths?(iw.ias>40?40:iw.ias):32,oas=widths?(iw.oas>40?40:iw.oas):36;
+ if(ias<32||oas<32)ok=false;
+ startLevel=ias>39?0:1;
+ if(ok){tabCount=0;root=alloc();if(!root)ok=false;}
+ const uint64_t bytes=uint64_t(stride)*height;
+ if(ok)for(uint64_t off=0;off<bytes;off+=4096)
+  if(!mapPage(pa+off,pa+off)){ok=false;break;}
+ Handoff hd;
+ if(ok){
+  hd.bytes=sizeof(hd);hd.flags=31;hd.tableCount=1;hd.table=tabs[0].pa;
+  hd.first=(pa&~0x1fffffull)+0x2000000ull;hd.end=hd.first+0x2000000ull;
+  hd.framebuffer=pa;hd.deviceAddress=pa;
+  hd.framebufferBytes=(bytes+4095)&~4095ull;
+  hd.inputBits=ias;hd.outputBits=oas;
+  hd.sctlr=0x1027;hd.tcr=(1u<<23)|(2u<<12)|(64-ias);
+  hd.tcr2=(7u<<15)|(1u<<4)|(oas==40?2u:oas==36?1u:0u);
+  hd.ttbr0Lo=uint32_t(tabs[0].pa);hd.ttbr0Hi=uint32_t(tabs[0].pa>>32);
+  hd.bank=dpu_halt::rd(0xc00)&0xffu;hd.slot=0;
+  hd.smr=dpu_halt::rd(0x800);hd.s2cr=dpu_halt::rd(0xc00);
+  if(!hd.first||hd.end>0x100000000ull||hd.end-hd.first<0x2000000)ok=false;
+  if(ok&&!dpu_handoff::valid(hd))ok=false;
+  x[5]=uint32_t(hd.first);x[6]=uint32_t(hd.end);x[7]=uint32_t(hd.framebuffer);
+  x[8]=uint32_t(hd.deviceAddress);x[9]=uint32_t(hd.table);
+  x[10]=hd.inputBits|(hd.outputBits<<8);x[11]=hd.sctlr;x[12]=hd.tcr;x[13]=hd.tcr2;
+ }
+ d[9]=ok?1u:0u;d[10]=uint32_t(tabCount);d[11]=uint32_t(bytes);
+ const bool resumed=h.resume();
+ d[12]=resumed?1u:0u;
+ d[13]=dpu_halt::rd(0x0);d[14]=dpu_halt::rd(0x12ac);d[15]=dpu_halt::rd(0xb0200);
+ d[1]=ok?4u:3u;d[0]=ok?0u:0xfffffffau;
+ return ok?0:-10;
 }

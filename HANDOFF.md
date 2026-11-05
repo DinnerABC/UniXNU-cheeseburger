@@ -1,3 +1,13 @@
+## 2026-11-05：P21-Zitting（按 sagit 移植 XIN halt/DMAHalt 成功；handoff 校验失败，未写 SMMU）
+
+- 按 `upstream/ios_sagit/drivers/display/QcomDisplay/DisplayDMAHalt.h` 逐字移植 MSM8998 版本：MDP 版本 `0x30000000`、VIG0 `0x5000`、CTL0 `0x2000`，**XIN halt `0xb0200/0xb0204`**、Clock `0x12ac`，并执行 `solePipeline`/CTL/LM 全量校验；不再使用上一轮的 AXI halt 变体。
+- 同时在内核中实现 sagit 同属性的 handoff 契约（禁用 CB、已发布根表、32 MiB 预留窗口 <4 GiB、framebuffer PA/DA、WB 表、上下文格式校验），本轮只构建/校验，不写 SMMU。
+- 实机（boot `0x412ee552`，日志 `out/p21/persistent-logs/20261105T112718Z/`）：
+  `CB GPU dpu halt handoff rc=-10 st=3 pipe=4000 size=7800438 stride=10e0 xin=0 ok=0 tables=6 bytes=8294400 resumed=1 sctlr=30000001 clock=c0000ccc halt=0 first=9f400000/a1400000 pa=9d400000 da=9d400000 table=a88a000 ctx=2020/1027/802020`。
+  **XIN halt 与 resume 成功**，显示正常：`DISPLAY clients=25 frames=2`、SWAP transfer=2、`GPSVC err=0`、`SURF f=2`；230 s 自动回。
+  handoff 的软件校验 `ok=0`（所有字段值已记录，未写任何 SMMU 寄存器，因此无黑屏风险）。
+- 结论：sagit 的 halt/resume 顺序在本机可用；下一步给 handoff 校验加逐项位掩码，定位 `ok=0` 的具体条件，修正后即可在 halt 窗口内写 CB0。
+
 ## 2026-11-05：P21-Zosterops（halt + 自建 4K 表身份映射仍失败；连续两次 halt 后 clients=0，停止该路径）
 
 - 在 Yellowthroat 的基础上，保留 VBIF AXI halt，改用本机已验证的 4K 表构造（6dad936 的 mapPage/表池）替代 kit live 映射。
