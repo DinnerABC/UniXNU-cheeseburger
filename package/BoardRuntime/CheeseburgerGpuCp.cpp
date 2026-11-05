@@ -43,6 +43,7 @@ int cheeseburger_gpu_scanout_flip_test(void);
 int cheeseburger_gpu_compute_band_test(void);
 int cheeseburger_gpu_copy540_test(void);
 int cheeseburger_gpu_highpa_test(void);
+int cheeseburger_gpu_highcp_test(void);
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -83,6 +84,9 @@ volatile uint32_t native_adreno_copy2d[16];
 // High physical address self-test: rc, seq, min/max page PA, pages above
 // 4 GiB, match count and four quadrant samples.
 volatile uint32_t native_adreno_highpa[12];
+// High-address CP: [0] IB-fetch rc, [1] seq, [2..3] sentinels, [4] source-read
+// rc, [5] seq, [6] value read from the high page, [7] the high page PA.
+volatile uint32_t native_adreno_highcp[8];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
@@ -601,6 +605,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
        IOLog("CB GPU copy: exit rc=%d\n",copyrc);
        const int hprc=cheeseburger_gpu_highpa_test();
        IOLog("CB GPU highpa: exit rc=%d\n",hprc);
+       const int hcrc=cheeseburger_gpu_highcp_test();
+       IOLog("CB GPU highcp: exit rc=%d\n",hcrc);
        const int frc=cheeseburger_gpu_scanout_flip_test();
        IOLog("CB GPU flip: exit rc=%d\n",frc);
        const int crc2=cheeseburger_gpu_compute_band_test();
@@ -1362,6 +1368,84 @@ extern "C" int cheeseburger_gpu_highpa_test(void){
   gHighPaSamples[0],gHighPaSamples[1],gHighPaSamples[2],gHighPaSamples[3],match);
  gHighPaRc=rc;
  return rc;
+}
+// ---------------------------------------------------------------------------
+// CP fetch/read from a high physical page. The highpa test let the low kernel
+// IB command the RB to write a high page; this one puts the IB itself in a
+// high page (CP instruction fetch) and then has a low IB read a high source
+// with CP_MEM_TO_MEM. Both pages come from the 32 MiB normal buffer that the
+// highpa test allocated, so their PAs are recorded.
+static int gHighCpRc=0xffff;
+static uint32_t gHighCpVals[4];
+static uint64_t gHighCpPa=0;
+extern "C" int cheeseburger_gpu_highcp_test(void){
+ if(gHighCpRc!=0xffff)return gHighCpRc;
+ gHighCpRc=-1;
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
+    !gClearIbVA||!gScratchVA||!gScratchGva||!gHighPaBuf)return gHighCpRc;
+ uint8_t *base=(uint8_t*)gHighPaBuf->getBytesNoCopy();
+ if(!base){IOLog("CB GPU highcp: no view\n");return gHighCpRc;}
+ uint32_t *ib=(uint32_t*)base,*src=(uint32_t*)(base+4096);
+ IOByteCount seg0=0,seg1=0;
+ const uint64_t pa0=gHighPaBuf->getPhysicalSegment(0,&seg0,kIOMemoryMapperNone);
+ const uint64_t pa1=gHighPaBuf->getPhysicalSegment(4096,&seg1,kIOMemoryMapperNone);
+ if(!pa0||!pa1||(pa0&4095)||(pa1&4095)||!seg0||!seg1){
+  IOLog("CB GPU highcp: pages unavailable\n");return gHighCpRc;
+ }
+ gHighCpPa=pa0;
+ if(cheeseburger_gpu_smmu_map(0x2700000,pa0,1)||cheeseburger_gpu_smmu_map(0x2701000,pa1,1)){
+  IOLog("CB GPU highcp: map failed pa=%llx/%llx\n",(unsigned long long)pa0,(unsigned long long)pa1);
+  return gHighCpRc;
+ }
+ // (a) The CP fetches its IB from the high page 0 and writes two sentinels.
+ CheeseburgerGpu::Encoder540 e(ib,1024);
+ const uint32_t sent[2]={0x5a5a0001u,0x5a5a0002u};
+ const bool ok=e.memWrite(gScratchGva+0x7e0,sent,2);
+ const uint32_t ibWords=e.size();
+ volatile uint32_t *t=(volatile uint32_t*)((uint8_t*)gScratchVA+0x7e0);
+ t[0]=0;t[1]=0;
+ flush_dcache((vm_offset_t)t,8,FALSE);
+ flush_dcache((vm_offset_t)ib,ibWords*4,FALSE);
+ uint32_t seq=0;uint64_t va=0x2700000;uint32_t dw=ibWords;
+ const int rc=ok?cheeseburger_gpu_engine_submit(&va,&dw,1,&seq):-10;
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)t,8,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ gHighCpVals[0]=t[0];gHighCpVals[1]=t[1];
+ // (b) A low IB has the CP read page 1 at the high address.
+ src[0]=0x1234abcdu;
+ flush_dcache((vm_offset_t)src,4,FALSE);
+ volatile uint32_t *v=(volatile uint32_t*)((uint8_t*)gScratchVA+0x7e8);
+ v[0]=0;
+ uint32_t *low=(uint32_t*)((uint8_t*)gScratchVA+0x200);
+ CheeseburgerGpu::Encoder540 e2(low,64);
+ const bool ok2=e2.memToMem(gScratchGva+0x7e8,0x2701000);
+ const uint32_t lowWords=e2.size();
+ flush_dcache((vm_offset_t)low,lowWords*4,FALSE);
+ flush_dcache((vm_offset_t)v,4,FALSE);
+ CheeseburgerGpu::Ib540 one={gScratchGva+0x200,lowWords};
+ CheeseburgerGpu::SubmitRecord rec;
+ uint32_t seq2=0;
+ int rc2=-11;
+ if(ok2){
+  uint32_t s2=gFenceSeq+1;if(!s2)s2=1;
+  IOLockLock(gSubmitLock);
+  rc2=gEngine540->submit(&one,1,s2,1000000,rec);
+  if(rc2==0){gFenceSeq=s2;seq2=s2;}else gEngineSubmitFailed=true;
+  IOLockUnlock(gSubmitLock);
+ }
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)v,4,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ gHighCpVals[2]=v[0];
+ native_adreno_highcp[0]=uint32_t(rc);native_adreno_highcp[1]=seq;
+ native_adreno_highcp[2]=gHighCpVals[0];native_adreno_highcp[3]=gHighCpVals[1];
+ native_adreno_highcp[4]=uint32_t(rc2);native_adreno_highcp[5]=seq2;
+ native_adreno_highcp[6]=gHighCpVals[2];native_adreno_highcp[7]=uint32_t(pa0);
+ IOLog("CB GPU highcp: ib rc=%d seq=%u sent=%x/%x src rc=%d seq=%u val=%x pa=%llx\n",
+  rc,seq,gHighCpVals[0],gHighCpVals[1],rc2,seq2,gHighCpVals[2],(unsigned long long)pa0);
+ gHighCpRc=rc?rc:(rc2?rc2:0);
+ return gHighCpRc;
 }
 // ---------------------------------------------------------------------------
 // IR3 compute band on the firmware scanout. The GOP pitch (4320 bytes) blocks

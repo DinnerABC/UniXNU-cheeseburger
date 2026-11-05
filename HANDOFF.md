@@ -1,3 +1,26 @@
+## 2026-11-05：P21-Redpoll（CP 从 5.33 GiB 高页取 IB / MEM_TO_MEM 读高页全部通过；内存模型结论收口）
+
+### 一、实机（boot `0x425fbcb5`，日志 `out/p21/persistent-logs/20261105T050543Z/`，镜像 `bc233ef6…`，内核 `68a31c1c…`，固件 `3f6c3405…`）
+- 普通分散页 32 MiB 分配：`min=0x1518bc000 max=0x153d49000`（5.27–5.33 GiB），`high=8192/8192`；2D 引擎在其尾部 64 KiB 画四象限 `match=4/4`。
+- **CP 取指**：把 IB 放在高页 `pa=0x153d49000`（5.33 GiB），`ib rc=0 seq=11 sent=5a5a0001/5a5a0002`。
+- **CP 读高页**：低地址 IB 用 `CP_MEM_TO_MEM` 读高页，`src rc=0 seq=12 val=1234abcd`。
+- 用户链：`GPSVC open=2 bo=2 map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`。
+- 2D 清屏/GPU→GPU 拷贝仍 `match=4/4`。
+
+### 二、结论（内存模型收口）
+- **GPU 不依赖低物理内存**：RB 写、CP 取 IB、CP_MEM_TO_MEM 读在 5.27–5.33 GiB 页上全部成功；旧的“CP 不能访问 >5 GB”是移植期错误归因（copy 越界 fault + 单段映射假设），低池/`<4 GiB` mask 不是硬件要求。
+- 服务 BO 已使用 sagit 风格普通分散页 + 逐 run 映射；低池仅剩探针期预留，不再服务任何 BO，可在下一轮删除。
+- 唯一真实的低地址约束仍是 **MDP 直扫的 32 位 SRC0**（显示路径），与 GPU BO 无关。
+
+### 三、下一步
+1. 删除低池与所有低地址分支（`cheeseburger_gpu_low_take`、`native_adreno_bo_low`、相关启动预留），保持一次构建一次启动。
+2. 把客户端窗口从 16 MiB 扩到 sagit 量级（128 MiB/client、256 MiB aperture），并相应扩 leaf 预算/表页/gRanges；为 1080p IOSurface（8.29 MiB/张）和 Metal 前端留空间。
+3. 继续 IOSurface/合成器 surface 交接；compute 仍等待安全的 SP 域方案。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Redpoll** | `bc233ef6…` | `68a31c1c…` | CP 高页取 IB + 高页 MEM_TO_MEM 均通过；普通分散页策略与客户端链正常 |
+
 ## 2026-11-05：P21-Serin（修正 copy 越界；普通分散页策略；高物理地址实机通过——推翻“CP 不能访问 >5 GB”）
 
 ### 一、关键修正：copy 测试越界导致的 SMMU fault

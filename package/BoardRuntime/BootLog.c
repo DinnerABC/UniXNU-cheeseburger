@@ -100,6 +100,9 @@ extern volatile uint32_t native_adreno_copy2d[16] __attribute__((weak_import));
 /* High physical address self-test: rc/seq, min/max page PA, pages above
  * 4 GiB and the four quadrant samples. */
 extern volatile uint32_t native_adreno_highpa[12] __attribute__((weak_import));
+/* High-address CP: IB fetch from a high page, then CP_MEM_TO_MEM read of a
+ * high page, with the four returned words. */
+extern volatile uint32_t native_adreno_highcp[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -737,6 +740,15 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_highpa[8],native_adreno_highpa[9],native_adreno_highpa[10],
       native_adreno_highpa[11],native_adreno_highpa[7],cb_boot_id);
     at=put(out,at,cap,hpa,sizeof hpa);
+   }
+   if (&native_adreno_highcp[0] && (native_adreno_highcp[0]|native_adreno_highcp[1]|native_adreno_highcp[4])) {
+    char hcp[160];
+    snprintf(hcp,sizeof hcp,"HCP ib=%d/%u sent=%x/%x src=%d/%u val=%x pa=%x bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_highcp[0],native_adreno_highcp[1],
+      native_adreno_highcp[2],native_adreno_highcp[3],
+      (int)(int16_t)(uint16_t)native_adreno_highcp[4],native_adreno_highcp[5],
+      native_adreno_highcp[6],native_adreno_highcp[7],cb_boot_id);
+    at=put(out,at,cap,hcp,sizeof hcp);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was
