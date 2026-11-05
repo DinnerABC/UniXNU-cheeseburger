@@ -1505,20 +1505,22 @@ extern "C" int cheeseburger_gpu_bigbo_test(void){
  return rc;
 }
 // ---------------------------------------------------------------------------
-// GPU write into the compositor IOSurface the display is about to present.
-// Per frame: the surface's first 64 rows are mapped at 0xD000000, a 256x64
-// block moves horizontally with rotating colours, the stream is fenced and the
-// mapping is retired again so the range ledger only ever holds this frame.
-// The surface is BGRA with a 64-byte-aligned stride; any precondition failure
-// only skips this frame and leaves the display path alone.
-enum {SurfaceBandRows=64,SurfacePaintWidth=256,SurfacePaintHeight=64};
+// GPU rendering over the compositor IOSurface the display is about to present.
+// Per frame the surface's first 64 rows are mapped at 0xD000000 and the 2D
+// engine copies a 512x64 window of the surface's OWN pixels into the 8 MiB GPU
+// surface proven at 0xC000000, then draws a colour marker on the live surface.
+// The copy reads real UI content, not a synthetic image; the readback compares
+// the GPU surface against the source pixels. Only a proven fence retires the
+// frame mapping; a failure retains it and stops painting (fail-closed).
+enum {SurfaceBandRows=64,SurfaceCopyWidth=512,SurfaceCopyHeight=64,SurfaceCopyX=64,
+      SurfaceMarkerX=1008,SurfaceMarkerWidth=64,SurfaceMarkerHeight=8};
 static CheeseburgerGpu::MapRange gSurfaceRuns[512];
 static uint32_t gSurfaceSamples[4];
 static uint32_t gSurfaceFrame=0,gSurfaceStuck=0;
 extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_t stride,
     uint32_t width,uint32_t height,uint32_t format){
  if(gSurfaceStuck)return -6;
- if(!memory||!stride||(stride&63)||width<SurfacePaintWidth||height<SurfaceBandRows||
+ if(!memory||!stride||(stride&63)||width<SurfaceCopyX+SurfaceCopyWidth||height<SurfaceBandRows||
     uint64_t(width)*4>stride||(format!=0x42475241u&&format!=0x26424741u)){
   if(gSurfaceFrame<4)IOLog("CB GPU surf: skip stride=%llu w=%u h=%u fmt=%x\n",
    (unsigned long long)stride,width,height,format);
@@ -1526,6 +1528,11 @@ extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_
  }
  if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
     !gClearIbVA||!gClearScratchIova){if(gSurfaceFrame<4)IOLog("CB GPU surf: engine not ready\n");return -2;}
+ // The destination is the bigbo surface only if its test allocated and mapped
+ // it; otherwise this frame is skipped rather than pushed into unknown memory.
+ if(!gBigBoBuf||gBigRc){if(gSurfaceFrame<4)IOLog("CB GPU surf: no gpu surface rc=%d\n",gBigRc);return -7;}
+ volatile uint32_t *dstBase=(volatile uint32_t*)gBigBoBuf->getBytesNoCopy();
+ if(!dstBase){if(gSurfaceFrame<4)IOLog("CB GPU surf: no gpu view\n");return -7;}
  const uint64_t bandBytes=stride*SurfaceBandRows;
  unsigned runs=0;uint64_t off=0,minPa=~0ull,maxPa=0;
  while(off<bandBytes&&runs<512){
@@ -1545,40 +1552,50 @@ extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_
  const int mrc=cheeseburger_gpu_smmu_map_batch(gSurfaceRuns,runs);
  if(mrc){IOLog("CB GPU surf: map rc=%d runs=%u\n",mrc,runs);return -4;}
  ++gSurfaceFrame;
- const uint32_t span=(width-SurfacePaintWidth)&~15u;
- const uint32_t x=span?uint32_t((uint64_t(gSurfaceFrame)*16u)%span)&~15u:0;
+ const uint64_t src=0xD000000+uint64_t(SurfaceCopyX)*4u;
+ const uint64_t dst=0xC000000;
+ const bool marker=width>=SurfaceMarkerX+SurfaceMarkerWidth;
  uint32_t *ib=(uint32_t*)gClearIbVA;
  memset(ib,0,8192);
  CheeseburgerGpu::Encoder540 e(ib,2048);
  CheeseburgerGpu::Blit540 b(e);
- bool ok=b.restore()&&b.begin2D();
- for(unsigned q=0;q<4&&ok;++q){
-  const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
-  const uint32_t color=gClearColors[(q+gSurfaceFrame)&3u];
-  ok=b.solidFill(0xD000000+uint64_t(qy)*stride+uint64_t(x+qx)*4u,128,32,uint32_t(stride),
-   color,gClearScratchIova);
- }
+ bool ok=b.restore()&&b.begin2D()&&b.copySetup()&&
+  b.copyTile(src,uint32_t(stride),dst,uint32_t(stride),SurfaceCopyWidth,SurfaceCopyHeight)&&
+  b.copyEnd(gClearScratchIova);
+ if(ok&&marker)
+  ok=b.solidFill(0xD000000+uint64_t(SurfaceMarkerX)*4u,SurfaceMarkerWidth,SurfaceMarkerHeight,
+   uint32_t(stride),gClearColors[gSurfaceFrame&3u],gClearScratchIova);
  const uint32_t words=e.size();
  uint32_t seq=0;
  const int rc=ok?clearKick(words,seq):-10;
- unsigned match=0;
+ unsigned match=0,srcSamples[4]={0,0,0,0};
  if(!rc&&(gSurfaceFrame%30u)==1u){
   IOMemoryMap *mp=memory->map(kIOMapAnywhere|kIOMapInhibitCache);
   if(mp){
    volatile uint8_t *va=(volatile uint8_t*)mp->getVirtualAddress();
+   __asm__ volatile("dsb sy":::"memory");
+   flush_dcache((vm_offset_t)dstBase,SurfaceCopyHeight*uint32_t(stride),FALSE);
+   __asm__ volatile("dsb sy":::"memory");
    if(va)for(unsigned q=0;q<4;++q){
-    const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
-    const uint64_t o=uint64_t(qy+16)*stride+uint64_t(x+qx+64)*4u;
-    gSurfaceSamples[q]=*reinterpret_cast<volatile uint32_t*>(va+o);
-    if(gSurfaceSamples[q]==gClearColors[(q+gSurfaceFrame)&3u])++match;
+    const uint32_t qx=(q&1u)?256u:64u,qy=(q&2u)?48u:16u;
+    const uint64_t o=uint64_t(qy)*stride+uint64_t(SurfaceCopyX+qx)*4u;
+    srcSamples[q]=*reinterpret_cast<volatile uint32_t*>(va+o);
+    gSurfaceSamples[q]=dstBase[(uint64_t(qy)*(stride/4))+SurfaceCopyX/4+qx];
+    if(gSurfaceSamples[q]==srcSamples[q])++match;
    }
    mp->release();
   }
  }
- // Retire this frame's mapping now that its fence completed; the next frame
- // can reuse 0xD000000 without growing the ledger.
- if(runs&&cheeseburger_gpu_smmu_unmap_batch(gSurfaceRuns,runs)){
-  gSurfaceStuck=1;IOLog("CB GPU surf: frame retire failed runs=%u\n",runs);
+ // Only a proven fence may retire this frame's mapping. On failure the CP may
+ // still hold the translation, so the range stays mapped and painting stops.
+ if(runs){
+  if(!rc){
+   if(cheeseburger_gpu_smmu_unmap_batch(gSurfaceRuns,runs)){
+    gSurfaceStuck=1;IOLog("CB GPU surf: frame retire failed runs=%u\n",runs);
+   }
+  } else {
+   gSurfaceStuck=1;IOLog("CB GPU surf: fence failed rc=%d; mapping retained runs=%u\n",rc,runs);
+  }
  }
  native_adreno_surface[0]=uint32_t(rc);native_adreno_surface[1]=seq;native_adreno_surface[2]=words;
  native_adreno_surface[3]=runs;native_adreno_surface[4]=uint32_t(stride);native_adreno_surface[5]=uint32_t(stride>>32);
@@ -1586,9 +1603,10 @@ extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_
  for(unsigned q=0;q<4;++q)native_adreno_surface[8+q]=gSurfaceSamples[q];
  native_adreno_surface[12]=gSurfaceFrame;
  if((gSurfaceFrame%30u)==1u||rc)
-  IOLog("CB GPU surf: f=%u rc=%d seq=%u w=%u runs=%u stride=%llu x=%u px=%x/%x/%x/%x match=%u/4 min=%llx max=%llx\n",
-   gSurfaceFrame,rc,seq,words,runs,(unsigned long long)stride,x,gSurfaceSamples[0],gSurfaceSamples[1],
-   gSurfaceSamples[2],gSurfaceSamples[3],match,(unsigned long long)minPa,(unsigned long long)maxPa);
+  IOLog("CB GPU surf: f=%u rc=%d seq=%u w=%u runs=%u stride=%llu src=%x/%x/%x/%x dst=%x/%x/%x/%x match=%u/4 min=%llx max=%llx\n",
+   gSurfaceFrame,rc,seq,words,runs,(unsigned long long)stride,srcSamples[0],srcSamples[1],
+   srcSamples[2],srcSamples[3],gSurfaceSamples[0],gSurfaceSamples[1],gSurfaceSamples[2],gSurfaceSamples[3],
+   match,(unsigned long long)minPa,(unsigned long long)maxPa);
  return rc;
 }
 // ---------------------------------------------------------------------------

@@ -841,33 +841,6 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // A failed kick abandons the engine inside the helper (gEngineSubmitFailed),
     // so nothing touches the bus or rings a doorbell afterwards.
     uint32_t seq=0;
-    // Record the first IB from the kernel's own view. The submit itself uses
-    // the client's mapping again: the staging copy has served its purpose and
-    // the user path must run unmodified.
-    for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=0;
-    native_adreno_submit_staged=0;
-    { Bo *ib=find(s.buffers[0].handle);
-      const uint32_t *src=ib&&ib->cpu?(const uint32_t*)ib->cpu:nullptr;
-      __asm__ volatile("dsb sy":::"memory");
-      if(src)for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=src[i];
-    }
-    // Publish all mapped objects, not just IBs: an IB can reference another
-    // BO as data or as its GPU writeback destination.
-    __asm__ volatile("dsb sy":::"memory");
-    // sheng's submit maintains the IB cache lines before the doorbell: an IB
-    // that is still in a CPU cache makes the CP read stale or zero commands and
-    // stop at the first packet. Clean+invalidate every submitted buffer through
-    // the kernel view of the same physical pages.
-    // Publish every object this client has mapped, not just the submitted IBs:
-    // an IB can reference another BO as data or as its GPU write destination,
-    // and the kernel's view of a page must reach DRAM before the CP fetches.
-    for(unsigned i=0;i<MaxBo;++i){
-        Bo &b=bos_[i];
-        if(!b.handle||!b.buf)continue;
-        void *p=b.cpu;
-        if(p)flush_dcache((vm_offset_t)p,(unsigned)b.bytes,FALSE);
-    }
-    __asm__ volatile("dsb sy":::"memory");
     // Every mapped object is held until this job's fence: the ABI names only
     // the submitted buffers, while an IB may use any mapped object as data,
     // texture or write target. Reserve the slot first so a submission can
@@ -888,6 +861,25 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         native_adreno_retire[3]=native_adreno_retire[3]+1;
         return kIOReturnBusy;
     }
+    // The kernel view of a BO is only read while its job holds exist: a
+    // concurrent BoFree would otherwise unmap it under this submit. The head
+    // copy is a diagnostic, but it dereferences the same pointer as the kick.
+    // sheng also maintains every mapped object's cache lines before the
+    // doorbell so the CP cannot read stale or zero commands.
+    for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=0;
+    native_adreno_submit_staged=0;
+    { Bo *ib=find(s.buffers[0].handle);
+      const uint32_t *src=ib&&ib->cpu?(const uint32_t*)ib->cpu:nullptr;
+      __asm__ volatile("dsb sy":::"memory");
+      if(src)for(unsigned i=0;i<8;++i)native_adreno_ib_head[i]=src[i];
+    }
+    for(unsigned i=0;i<MaxBo;++i){
+        Bo &b=bos_[i];
+        if(!b.handle||!b.buf)continue;
+        void *p=b.cpu;
+        if(p)flush_dcache((vm_offset_t)p,(unsigned)b.bytes,FALSE);
+    }
+    __asm__ volatile("dsb sy":::"memory");
     // The first IB's kernel view lives only for this call, and only after the
     // job's holds exist: a boot-global copy outlived the client BO and Xenops
     // faulted reading it once the client freed that buffer.

@@ -1,3 +1,36 @@
+## 2026-11-05：P21-Zenaida（GPU 读取并重绘真实 UI 像素到独立 GPU 画布；日志洪泛修复）
+
+### 一、P21-Yellowhammer 的失败尝试（已被 Zenaida 取代）
+- 把逐帧绘制改成“在同一 surface 内把 512x64 的真实 UI 像素拷到另一位置”。设备正常启动、无 panic、427 s 自动回，但：
+  - 每帧映射 256 行产生 319 个单页 run，旧版 `cheeseburger_gpu_smmu_map` 每个 run 打 3 行日志，25 帧就把持久日志窗口从 ~200 s 压缩到 ~233 s，f=1 的回读证据被冲掉；
+  - 同 buffer 内 2D 拷贝的 4/4 无法确认（BootLog 快照为 0/4，且 `match` 每帧重置为 0，快照值不可作为当帧结论）。
+- 结论：该轮不作为基线，不回退安全修复，只改单变量：拷贝目标换成独立 GPU BO，并删除高频映射日志。
+
+### 二、改动
+- `cheeseburger_gpu_paint_surface`：映射 surface 前 64 行（80 个 run，0xD000000），2D 引擎把 `(64,0)` 起的 512x64 真实像素拷到 bigbo 的 8 MiB GPU 面（0xC000000，GOP 之外、客户端窗口之外），随后在 surface 上画 64x8 颜色标记；fence 后从 GPU 面回读 4 点与源像素比较。
+- fail-closed：只有 fence 成功才 `unmap_batch`；失败保留映射并置 `gSurfaceStuck` 停止后续帧。
+- 删除 `cheeseburger_gpu_smmu_map` 每次成功的 3 行日志（仅保留 reject/fail），避免高频映射冲掉持久日志。
+- 服务提交：IB head 拷贝与全 BO `flush_dcache` 移到 job holds 建立之后，与上一轮的按次传入 IB 视图一致。
+
+### 三、构建（同轮）
+- 内核 `fdc85273…`（本地树）→ prelink `4738453f…` → panic-screen 后 `f56ffe15…`；payload 展开 `12d9d501…`；固件 `8edaa65d…`（同一 overlay）；镜像 `out/p21/p21-zenaida/uefi/boot-p21-up1.img` `9c5e601c…`（82,492,672 B）；preboot-gate PASS；BCB 回读 `boot-recovery`（`8698abf4…`）。
+
+### 四、实机（boot `0x40972449`，日志 `out/p21/persistent-logs/20261105T073955Z/`，07:32:03Z 启动）
+- **GPU 读取真实 UI 像素并重绘**：202.3 s `CB GPU surf: f=1 rc=0 seq=23 w=353 runs=80 stride=5120 src=ff010000/ff010000/ff010000/ff010000 dst=ff010000/ff010000/ff010000/ff010000 match=4/4 min=0x114c8a000 max=0x14438a000`——源是当前合成器 surface 的像素，目标是独立 8 MiB GPU 面，四点回读一致（采样区为纯色 ff010000，只证明拷贝通路与几何，不证明任意内容）。
+- `CB DISP surface paint rc=0` 共 6 次（202.3–345.4 s），`SURF f=11`（338 s 快照），逐帧继续。
+- 日志窗口恢复到 54 s 起完整保留；无 panic、无 SMMU fault；`GPSVC open=2 sub=1 fence=1 err=0`；`CLR/CPY/HPA/BIG` 全绿（BIG 仍是 2040 run、4/4）；`CMPT` 仍 0/4。
+- 设备在 07:39:15Z（约 432 s）自动回 Recovery。
+
+### 五、结论与下一步
+1. **2D 引擎的 GPU 渲染通路已打通**：读取实时 surface → 2D 拷贝 → 独立 GPU 画布 → CPU 回读一致；下一步把采样点移到 UI 有内容变化的区域（状态栏/文字），并把结果画回可见 surface 或作为呈现源。
+2. **着色器/3D/Metal 仍不可用**：compute 至今 fence 完成但无写入；sagit 的 3D/Metal 需要其自有 Metal→NIR→A5xx 编译链，且 SP 域在 ZAP 后仍为未解前提。近期“GPU 渲染”仍以 2D 合成路径为主。
+3. 保持 P21-Zenaida 为基线；回归整体回退。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Zenaida** | `9c5e601c…` | `f56ffe15…` | GPU 拷贝真实 UI 像素到独立 GPU 画布，四点 4/4；日志洪泛修复；432 s 自动回 |
+  | 2026-11-05 | P21-Yellowhammer | `71f68af6…` | `651116f6…` | 同 surface 内 UI 拷贝；映射日志冲掉证据、回读未确认；不作为基线 |
+
 ## 2026-11-05：P21-Yellowlegs（逐帧 GPU 写入合成器 surface；修复 Xenops 空 IB 悬空全局导致的 data abort）
 
 ### 一、P21-Xenops 失败与根因（已回退）
