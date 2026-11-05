@@ -1,4 +1,13 @@
-## 2026-11-05：P21-Zitting（按 sagit 移植 XIN halt/DMAHalt 成功；handoff 校验失败，未写 SMMU）
+## 2026-11-05：P21-Zitting（XIN halt/DMAHalt 移植成功；handoff 仅剩低 4 GiB 表页分配阻塞）
+
+- **XIN halt/DMAHalt 已验证**：按 sagit 的 `solePipeline`/CTL/LM 校验、`0xc9b0200/0xc9b0204` halt/ack、`0x12ac` clock；多次启动均为 `resumed=1`、`halt=0`，显示正常（clients=19–25、frames=2–3、GPSVC err=0、230 s 自动回）。
+- **handoff 校验器已定位并修正**：`why=7` 对应“表 PA 超出输出位宽”；MMSS SMMU 的 ID2 OAS=32，所有页表必须低于 4 GiB。日志里的 `table=a90f000` 只是低 32 位，原表池在高位。
+- **当前阻塞**：低 4 GiB 的 32 KiB 连续池、以及逐页 4 KiB `inTaskWithPhysicalMask(...,0xffffffff)` 在 ~85 s 全部返回失败（`tables=0`），说明此时低位内存已耗尽/不可分配。halt 与 resume 仍安全，未写任何 SMMU 寄存器。
+- 下一步：在更早的时间点（显示驱动 start 或早期内核线程，约 20–40 s）预留 6 页低位表页；或在固件/引导阶段预留。拿到低位表页后，即可在已验证的 halt 窗口内写 CB0 身份映射并 resume。
+
+### 旧记录
+- 首版 handoff 的 `ok=0` 已由 `why` 位掩码定位为表 PA > 4 GiB（OAS=32）。
+
 
 - 按 `upstream/ios_sagit/drivers/display/QcomDisplay/DisplayDMAHalt.h` 逐字移植 MSM8998 版本：MDP 版本 `0x30000000`、VIG0 `0x5000`、CTL0 `0x2000`，**XIN halt `0xb0200/0xb0204`**、Clock `0x12ac`，并执行 `solePipeline`/CTL/LM 全量校验；不再使用上一轮的 AXI halt 变体。
 - 同时在内核中实现 sagit 同属性的 handoff 契约（禁用 CB、已发布根表、32 MiB 预留窗口 <4 GiB、framebuffer PA/DA、WB 表、上下文格式校验），本轮只构建/校验，不写 SMMU。

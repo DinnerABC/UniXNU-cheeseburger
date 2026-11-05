@@ -432,6 +432,7 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
              native_adreno_dpu_ext[5],native_adreno_dpu_ext[6],native_adreno_dpu_ext[7],
              native_adreno_dpu_ext[8],native_adreno_dpu_ext[9],native_adreno_dpu_ext[10],
              native_adreno_dpu_ext[11],native_adreno_dpu_ext[12],native_adreno_dpu_ext[13]);
+         IOLog("CB GPU dpu handoff why=%u hdr=%x\n",native_adreno_dpu_ext[14],native_adreno_dpu_ext[15]);
        } } } }
  // CP reset/configure/start is a separate opt-in: it writes GPU registers and
  // starts real firmware DMA, unlike the read-only mapping probe above.

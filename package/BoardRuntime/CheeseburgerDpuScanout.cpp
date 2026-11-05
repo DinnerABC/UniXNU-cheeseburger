@@ -348,37 +348,36 @@ struct Handoff {
 bool overlap(uint64_t a,uint64_t n,uint64_t b,uint64_t m){
  return n&&m&&a<=UINT64_MAX-n&&b<=UINT64_MAX-m&&a<b+m&&b<a+n;
 }
-bool valid(const Handoff &h){
+uint32_t validWhy(const Handoff &h){
  if(h.version!=1||h.bytes!=sizeof(Handoff)||h.flags!=31||!h.tableCount||h.tableCount>4||
-    h.cachePolicy!=1||h.reserved)return false;
+    h.cachePolicy!=1||h.reserved)return 1;
  if(h.first<0x1000000||(h.first&4095)||(h.end&4095)||h.end<=h.first||h.end>0x100000000ull||
-    h.end-h.first<0x2000000||h.end-h.first>0x20000000)return false;
- if(!h.framebuffer||(h.framebuffer&4095)||!h.framebufferBytes||(h.framebufferBytes&4095))return false;
- if(h.framebuffer>=(1ull<<h.outputBits)||h.framebufferBytes>(1ull<<h.outputBits)-h.framebuffer)return false;
+    h.end-h.first<0x2000000||h.end-h.first>0x20000000)return 2;
+ if(!h.framebuffer||(h.framebuffer&4095)||!h.framebufferBytes||(h.framebufferBytes&4095))return 3;
+ if(h.framebuffer>=(1ull<<h.outputBits)||h.framebufferBytes>(1ull<<h.outputBits)-h.framebuffer)return 4;
  if(!h.deviceAddress||(h.deviceAddress&4095)||h.deviceAddress>=0x100000000ull||
-    h.framebufferBytes>0x100000000ull-h.deviceAddress)return false;
- if(overlap(h.first,h.end-h.first,h.deviceAddress,h.framebufferBytes))return false;
+    h.framebufferBytes>0x100000000ull-h.deviceAddress)return 5;
+ if(overlap(h.first,h.end-h.first,h.deviceAddress,h.framebufferBytes))return 6;
  if(!h.table||(h.table&4095)||h.table>=(1ull<<h.outputBits)||
-    overlap(h.table&~0x3fffull,16384,h.framebuffer,h.framebufferBytes))return false;
- if((h.sctlr&0x1027)!=0x1027||(h.sctlr&~0x1167u)||(h.mair0&255)!=0x44)return false;
+    overlap(h.table&~0x3fffull,16384,h.framebuffer,h.framebufferBytes))return 7;
+ if((h.sctlr&0x1027)!=0x1027||(h.sctlr&~0x1167u)||(h.mair0&255)!=0x44)return 8;
  const uint32_t tcr2=(7u<<15)|(1u<<4)|(h.outputBits==40?2u:h.outputBits==36?1u:0u);
  if(h.tcr2!=tcr2||(h.tcr&~0x3f00u)!=((1u<<23)|(64-h.inputBits))||
-    ((h.tcr>>8)&3)>1||((h.tcr>>10)&3)>1||(((h.tcr>>12)&3)!=2&&((h.tcr>>12)&3)!=3))return false;
- if((h.ttbr0Lo&4095)||h.ttbr0Lo!=uint32_t(h.table))return false;
- return true;
+    ((h.tcr>>8)&3)>1||((h.tcr>>10)&3)>1||(((h.tcr>>12)&3)!=2&&((h.tcr>>12)&3)!=3))return 9;
+ if((h.ttbr0Lo&4095)||h.ttbr0Lo!=uint32_t(h.table))return 10;
+ return 0;
 }
+bool valid(const Handoff &h){return validWhy(h)==0;}
 }
 
 namespace dpu_handoff {
 // The same 4 KiB table construction used by the GPU SMMU path; memory only.
-IOBufferMemoryDescriptor *pool=nullptr;
-volatile uint64_t *poolVA=nullptr;
-uint64_t poolPA=0;
 unsigned tabCount=0;
-struct T {uint64_t pa;volatile uint64_t *va;};
+struct T {uint64_t pa;volatile uint64_t *va;IOBufferMemoryDescriptor *buf;};
 T tabs[32];
 volatile uint64_t *root=nullptr;
 unsigned startLevel=1;
+uint32_t oas=36;
 void clean(volatile uint64_t *t){flush_dcache((vm_offset_t)t,4096,FALSE);__asm__ volatile("dsb sy":::"memory");}
 volatile uint64_t *find(uint64_t pa){
  for(unsigned i=0;i<tabCount;++i)if(tabs[i].pa==pa)return tabs[i].va;
@@ -386,10 +385,15 @@ volatile uint64_t *find(uint64_t pa){
 }
 volatile uint64_t *alloc(){
  if(tabCount>=32)return nullptr;
- const unsigned i=tabCount++;
- tabs[i]={poolPA+uint64_t(i)*4096,poolVA+uint64_t(i)*512};
- memset((void*)tabs[i].va,0,4096);clean(tabs[i].va);
- return tabs[i].va;
+ IOBufferMemoryDescriptor *b=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+  kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,4096,0x00000000ffffffffull);
+ if(!b)return nullptr;
+ IOByteCount span=0;
+ const uint64_t pa=b->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+ void *va=b->getBytesNoCopy();
+ if(!pa||span<4096||!va||(pa>>oas)){b->release();return nullptr;}
+ T &t=tabs[tabCount++];t={pa,(volatile uint64_t*)va,b};
+ memset(va,0,4096);clean(t.va);return t.va;
 }
 bool mapPage(uint64_t iova,uint64_t pa){
  if(!root||(iova&4095)||(pa&4095)||pa>=(1ull<<36))return false;
@@ -433,23 +437,13 @@ extern "C" int cheeseburger_dpu_halt_handoff(uint64_t pa,uint32_t stride,uint32_
  // display DMA is really halted. No SMMU register is written in this step.
  using namespace dpu_handoff;
  bool ok=true;
- if(!pool){
-  pool=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
-   kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
-   (vm_size_t)32*4096,4096);
-  IOByteCount span=0;
-  poolPA=pool?pool->getPhysicalSegment(0,&span,kIOMemoryMapperNone):0;
-  poolVA=pool?(volatile uint64_t*)pool->getBytesNoCopy():nullptr;
-  if(!pool||!poolPA||span<(IOByteCount)32*4096||!poolVA||(poolPA>>36))ok=false;
-  if(ok){memset((void*)poolVA,0,32*4096);flush_dcache((vm_offset_t)poolVA,32*4096,FALSE);
-   __asm__ volatile("dsb sy":::"memory");}
- }
  const uint32_t id2=dpu_halt::rd(0x28);
  CheeseburgerGpu::IdWidths iw;
  const bool widths=ok&&CheeseburgerGpu::decodeIdWidths(id2,iw);
- unsigned ias=widths?(iw.ias>40?40:iw.ias):32,oas=widths?(iw.oas>40?40:iw.oas):36;
+ unsigned ias=widths?(iw.ias>40?40:iw.ias):32;oas=widths?(iw.oas>40?40:iw.oas):36;
  if(ias<32||oas<32)ok=false;
  startLevel=ias>39?0:1;
+
  if(ok){tabCount=0;root=alloc();if(!root)ok=false;}
  const uint64_t bytes=uint64_t(stride)*height;
  if(ok)for(uint64_t off=0;off<bytes;off+=4096)
@@ -467,10 +461,12 @@ extern "C" int cheeseburger_dpu_halt_handoff(uint64_t pa,uint32_t stride,uint32_
   hd.bank=dpu_halt::rd(0xc00)&0xffu;hd.slot=0;
   hd.smr=dpu_halt::rd(0x800);hd.s2cr=dpu_halt::rd(0xc00);
   if(!hd.first||hd.end>0x100000000ull||hd.end-hd.first<0x2000000)ok=false;
-  if(ok&&!dpu_handoff::valid(hd))ok=false;
+  const uint32_t why=dpu_handoff::validWhy(hd);
+  if(why)ok=false;
   x[5]=uint32_t(hd.first);x[6]=uint32_t(hd.end);x[7]=uint32_t(hd.framebuffer);
   x[8]=uint32_t(hd.deviceAddress);x[9]=uint32_t(hd.table);
   x[10]=hd.inputBits|(hd.outputBits<<8);x[11]=hd.sctlr;x[12]=hd.tcr;x[13]=hd.tcr2;
+  x[14]=why;x[15]=(hd.flags&0xffu)|((hd.tableCount&0xffu)<<8)|((hd.bytes&0xffu)<<16)|((hd.cachePolicy&0xffu)<<24);
  }
  d[9]=ok?1u:0u;d[10]=uint32_t(tabCount);d[11]=uint32_t(bytes);
  const bool resumed=h.resume();
