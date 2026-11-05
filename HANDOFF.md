@@ -1,3 +1,12 @@
+## 2026-11-05：低位池共享两次尝试均黑屏/无 USB（已回退；停止早期取池）
+
+- 第一次：固件池 16→64 页（256 KiB）+ DPU kext 构造期取 8 页 → 230 s 后无 USB、蓝/品红条未出现，故障在 panic-screen 入口之前（固件/极早期）。
+- 第二次：固件池保持 16 页（`0xfff40000/65536`，已由 GPU SMMU 正常使用），仅 DPU 在 kext 构造期从同一池取 8 页 → 同样在 230 s 后无 USB/无 fastboot。
+- 结论：**在 kext 构造期映射/占用固件低位池会破坏启动**，与池大小无关；两条路都已回退。内核源码回到 `0496374`（halt-only、无池共享、无 SMMU 写入）；固件 DarwinBoot 保持 16 页。
+- 已验证的控制镜像：`out/p21/p21-zorzal/logs/control-cde78c8c.img`（固件 16 页、内核 HEAD）；控制启动显示正常、clients=23、230 s 自动回。
+- 设备两次均需手动切回 Recovery。
+- 下一步（如果继续）：不要在 boot/构造期碰池；把“取池页”放到 GPU 探针之后（约 85 s，GPU SMMU 已映射并记录 gPoolUsed），或由 GPU SMMU 在完成自身表分配后显式转交剩余页；每次只做单变量并先控制启动。
+
 ## 2026-11-05：固件 64 页共享低位池尝试失败（黑屏/无 USB，已回退）
 
 - 固件 DarwinBoot 原本已在 ExitBootServices 前预留 **16×4 KiB（64 KiB）** `EfiReservedMemoryType` 低位池，并通过 `cheeseburger-smmu-pool=<pa>` 交给内核（GPU SMMU 消费）。
