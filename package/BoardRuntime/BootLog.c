@@ -109,6 +109,8 @@ extern volatile uint32_t native_adreno_bigbo[13] __attribute__((weak_import));
 /* GPU->compositor surface paint: rc/seq/words, runs, stride, format, match and
  * four quadrant samples. */
 extern volatile uint32_t native_adreno_surface[13] __attribute__((weak_import));
+/* Display-bank SMMU identity step: rc/stage, SCTLR/SMR/S2CR before and after, latch times. */
+extern volatile uint32_t native_adreno_dpu[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -773,6 +775,15 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_surface[8],native_adreno_surface[9],native_adreno_surface[10],native_adreno_surface[11],
       native_adreno_surface[7],cb_boot_id);
     at=put(out,at,cap,srf,sizeof srf);
+   }
+   if (&native_adreno_dpu[0] && (native_adreno_dpu[0]|native_adreno_dpu[1]|native_adreno_dpu[2])) {
+    char dpu[220];
+    snprintf(dpu,sizeof dpu,"DPU rc=%d st=%u sctlr=%x/%x smr=%x/%x s2cr=%x/%x latch=%u/%uus flt=%x rest=%u latched=%x/%uus bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_dpu[0],native_adreno_dpu[1],
+      native_adreno_dpu[2],native_adreno_dpu[13],native_adreno_dpu[3],native_adreno_dpu[14],
+      native_adreno_dpu[4],native_adreno_dpu[15],native_adreno_dpu[7],native_adreno_dpu[8],
+      native_adreno_dpu[9],native_adreno_dpu[12],native_adreno_dpu[5],native_adreno_dpu[6],cb_boot_id);
+    at=put(out,at,cap,dpu,sizeof dpu);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was

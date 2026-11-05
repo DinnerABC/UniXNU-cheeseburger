@@ -1,3 +1,28 @@
+## 2026-11-05：P21-Shelduck（迁移 sheng 的 display-bank SMMU 直扫：第一步探明固件已预置 MDP 流路由）
+
+### 一、对照结论（sheng vs 我们）
+- sheng 的正式显示配置走 `sheng-dpu-scanout=2`：显示管道通过 display bank 的 stage-1 SMMU 窗口取合成器 surface（TCR2 SEP 7 让 bit31 IOVA 可翻译），flip 前等待该帧 GPU fence；映射/latch 失败回退 CPU 拷贝。其显示 bank 窗口由 `ShengUfs` 持有。
+- 我们此前只有 `cheeseburger-fb-flip=1` 的物理地址直扫：要求单段连续且 32 位 PA，80-run/4.3–6.0 GiB 的合成器 surface 无法直扫，只能 CPU 逐行缩放/拷贝。
+- 本机 DTB 确认同一机制可用：`arm,smmu-mmss@cd00000` 下有 `qcom,smmu_mdp_unsec_cb`（SID 0）与 `qcom,smmu_mdp_sec_cb`（SID 1）；GPU 用的是独立的 `arm,smmu-kgsl@5040000`。
+
+### 二、本轮迁移（第一步：只做同页身份接管，画面不变）
+- 新增 `CheeseburgerDpuScanout.cpp`：复用已 vendor 的 ArmSmmu4K kit，规划为“预路由 SID0→自建 context、GOP 同 PA 身份映射、保持管道地址不变、失败完整回滚”。
+- `NativeLegacyDisplay.cpp` 增加 `native_legacy_mdp_flush_latch()`（复提交当前管道并测 latch）与 kickOnce 的一次性调用；同时修掉 `flippath::present` 未检查 `pa>>32` 的截断风险。
+- **实机（boot `0x3b6fa866`，日志 `out/p21/persistent-logs/20261105T082512Z/`）**：191.6 s 读出
+  `CB DISP dpu smmu rc=-4 stage=1 sctlr=200626/0 smr=80000000/0 s2cr=0/0 latch=0us restore=0`。
+  即 MMSS SMMU：`SCTLR=0x200626`（M=0，未启用）、`SMR0=0x80000000`（SID0 已登记）、`S2CR0=0`（指向 CB0 translation）。守卫判定“已有路由”并**拒绝写入**，未改任何 SMMU/管道寄存器。
+- 其余正常：`CB GPU surf f=1 rc=0 ... match=4/4`（真实 UI 像素→独立 GPU 画布）、`GPSVC sub=1 fence=1 err=0`、帧计数 10、无 panic；434 s 自动回 Recovery。
+
+### 三、结论与下一步
+1. 固件已把 MDP 的 SID0 流表预置好但**全局未使能**；当前 GOP 取数是物理地址。不能覆盖 CB0，应改用空闲 context bank（≥ID1.S2 且 CB_SCTLR=0），保留 SMR0，只改 `S2CR0.CBNDX` 指向自建 bank。
+2. 自建 bank 先身份映射 GOP（保持画面不变），再映射一块 1080x1920 GPU surface 并 flip；flip 前等 GPU fence，latch/映射失败立即恢复 `S2CR0.CBNDX=0`、`SCTLR` 与管道。
+3. 成功后再把合成器 surface 接入；1242x2208 缩放帧仍需 VIG 缩放或 CPU 回退。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Shelduck** | `c4f1e253…` | `5fe3dc19…` | 迁移 display-bank SMMU：读明固件已预置 SID0 路由（M=0），守卫拒写；其余正常，434 s 自动回 |
+  | 2026-11-05 | P21-Zenaida | `9c5e601c…` | `f56ffe15…` | GPU 拷贝真实 UI 像素到独立 GPU 画布，四点 4/4；432 s 自动回 |
+
 ## 2026-11-05：P21-Zenaida（GPU 读取并重绘真实 UI 像素到独立 GPU 画布；日志洪泛修复）
 
 ### 一、P21-Yellowhammer 的失败尝试（已被 Zenaida 取代）

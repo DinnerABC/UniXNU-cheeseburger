@@ -34,6 +34,10 @@ extern "C" bool native_legacy_prepare_scanout(void);
 extern "C" void native_legacy_transfer_observed(IOReturn,const void *,uint64_t);
 extern "C" void native_legacy_copy_timing_observed(uint64_t ticks,uint64_t bytes);
 extern "C" void native_legacy_retirement_observed(IOService *);
+// Display-bank SMMU migration step (CheeseburgerDpuScanout.cpp): identity-map
+// the firmware buffer through the MMSS SMMU's MDP context, then restore.
+extern "C" int cheeseburger_dpu_smmu_identity(uint64_t,uint32_t);
+extern volatile uint32_t native_adreno_dpu[16];
 // Scanout writes go through a cacheable mapping and are cleaned once per frame:
 // the write-combining mapping costs about 0.9 s per 1080x1920 frame on this
 // board because every 64-bit store is a separate uncached transaction.
@@ -97,17 +101,49 @@ static bool commit(uint32_t addr,uint32_t stride){
  for(unsigned i=0;i<20;++i){IODelay(1000);if(rd(pipeOff+0xa4)==addr)return true;}
  restore(gopAddr,gopStride);return false;
 }
+// Same commit with the latch time in microseconds. The display-bank SMMU
+// hand-off needs to know that the pipe actually fetched through the new
+// translation, not only that the register write returned.
+static bool commitTimed(uint32_t addr,uint32_t stride,uint32_t *latchUs){
+ if(latchUs)*latchUs=0xffffffffu;
+ uint32_t mask=pipeBit|0x40u;
+ if(ctl<0){
+  for(int c=0;c<5;++c){uint32_t b=0x2000+0x200u*unsigned(c);
+   wr(pipeOff+0x14,addr);wr(pipeOff+0x24,stride);wr(b+0x18,mask);wr(b+0x1c,1);
+   for(unsigned i=0;i<2000;++i){if(rd(pipeOff+0xa4)==addr){ctl=c;if(latchUs)*latchUs=i*50;return true;}IODelay(50);}
+  }
+  restore(gopAddr,gopStride);return false;
+ }
+ uint32_t b=0x2000+0x200u*unsigned(ctl);
+ wr(pipeOff+0x14,addr);wr(pipeOff+0x24,stride);wr(b+0x18,mask);wr(b+0x1c,1);
+ for(unsigned i=0;i<2000;++i){if(rd(pipeOff+0xa4)==addr){if(latchUs)*latchUs=i*50;return true;}IODelay(50);}
+ restore(gopAddr,gopStride);return false;
+}
 // Present a contiguous surface without copying; false means "use the copy".
 static bool present(IOMemoryDescriptor *memory,uint64_t stride,uint32_t width,uint32_t height,uint32_t gop){
  if(!memory||!stride||!width||!height)return false;
  if(!prepare(gop))return false;
  if(stride*height>(uint64_t)memory->getLength()||stride>0xffffu)return false;
  IOByteCount len=0;IOPhysicalAddress pa=memory->getPhysicalSegment(0,&len,kIOMemoryMapperNone);
- if(!pa||len<stride*(uint64_t)height)return false;
+ // MDP SRC0 is 32-bit; a truncated physical address would scan unrelated memory.
+ if(!pa||(pa>>32)||len<stride*(uint64_t)height)return false;
  if((uint32_t)pa==lastAddr)return true;             // same buffer as last frame
  if(!commit((uint32_t)pa,(uint32_t)stride))return false;
  lastAddr=(uint32_t)pa;return true;
 }
+}
+// Display-bank SMMU hand-off hook: re-commit the pipe that already scans the
+// firmware buffer and report the latched address plus the latch time. The
+// caller changes only the SMMU context, never the pipe address, so a failure
+// leaves the same pixels on the panel.
+extern "C" int native_legacy_mdp_flush_latch(uint32_t *addr,uint32_t *latchUs){
+ if(!addr||!latchUs)return -1;
+ PE_Video v={};
+ if(PE_current_console(&v)||!v.v_baseAddr||(v.v_baseAddr>>32))return -2;
+ if(!flippath::prepare(uint32_t(v.v_baseAddr)))return -3;
+ const bool ok=flippath::commitTimed(uint32_t(v.v_baseAddr),flippath::gopStride,latchUs);
+ *addr=flippath::rd(flippath::pipeOff+0xa4);
+ return ok?0:-4;
 }
 // Kernel-only test hook for the GPU scanout handoff. The A5xx 2D/3D engines
 // need a 64-byte destination pitch, while the firmware GOP here scans 1080
@@ -386,6 +422,22 @@ public:
            !native_legacy_surface_bounds(width,height,video.v_rowBytes,bootMapping->getLength(),bootMapping->getLength())) {
             native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;
         }
+        // Display-bank SMMU migration, step 1 (sheng sheng-dpu-scanout): take
+        // over the MMSS SMMU's MDP context, identity-map the firmware buffer
+        // and re-commit the pipe through that translation, then restore. The
+        // pipe address never changes, so a failure cannot alter the picture.
+        { static bool dpuTried=false;
+          if(!dpuTried){dpuTried=true;
+            unsigned on=1;PE_parse_boot_argn("cheeseburger-dpu-smmu",&on,sizeof on);
+            if(on){
+              const int drc=cheeseburger_dpu_smmu_identity(uint32_t(video.v_baseAddr),
+                  uint32_t(uint64_t(video.v_rowBytes)*video.v_height));
+              IOLog("CB DISP dpu smmu rc=%d stage=%u sctlr=%x/%x smr=%x/%x s2cr=%x/%x latch=%uus restore=%u\n",
+                  drc,native_adreno_dpu[1],native_adreno_dpu[2],native_adreno_dpu[13],
+                  native_adreno_dpu[3],native_adreno_dpu[14],native_adreno_dpu[4],native_adreno_dpu[15],
+                  native_adreno_dpu[6],native_adreno_dpu[12]);
+            }
+          } }
         // GPU->compositor handoff: draw into the frame the display is about
         // to copy/scan, before any presentation. The helper rejects a
         // non-64-byte pitch and fails closed without touching the display path.
