@@ -50,6 +50,7 @@
 | 固件 FD | `a8a146a8a70bd35cd5ab588fb06690f76d0c3081ff03bc9052257266263fe3c7`（6,291,456 B，overlay `unixnu-up1-gpu-smmu-irq-drain`） |
 | 镜像 | `out/p21/p21-wagtail/uefi/boot-p21-up1.img` `c7387f79732fd49c6af7848fca83f86d207cf8e15f033f3dbc4b84c7b3073126`（82,800,640 B） |
 | gate | `20261105T135206Z` PASS，`args_bytes=697`，kernel/payload/ADT 三项 pin 命中（`FVMAIN.Fv` 等） |
+| 构建冻结 | `out/p21/gpu-cp/rounds/20261105T135645Z-20261105T135206Z-p21-wagtail-unbooted/`（无 boot，boot/retrieval 为空） |
 
 唯一相对基线的启动参数变化：`cheeseburger-gpu-compute=1`（加在 args 串第二位）。默认不设该参数
 时，本轮内核与基线的运行行为一致（compute 不再默认执行）。
