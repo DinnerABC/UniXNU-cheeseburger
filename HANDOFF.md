@@ -1,6 +1,13 @@
-## 2026-11-05：P21-Godwit（display-bank SMMU 直扫全量实现，默认仍为只读探测；实机未完成验证）
+## 2026-11-05：display-bank SMMU 直扫失败与回退（Godwit / Willet；已退回 P21-Shelduck 只读探测）
 
-### 一、实现（按 sheng `sheng-dpu-scanout`，源码已提交）
+### 一、黑屏与回退结论
+- 用户确认 Godwit 第二次启动的镜像（`f210a4ee…`，全量直扫默认开启）**黑屏**；持久日志在 ~192 s 停止、`DISPLAY frames=0`。黑屏路径是“首个 swap 时接管 SMMU 并把管道 flip 到窗口 IOVA”，已在源码中整体回退，不再默认启用。
+- 回退后重新修改为“早期 + 仅 GOP 身份映射 + 2 s 后完整恢复”的非侵入式验证（Willet）：
+  - 第一次（`cd523e57…`）：110 s `CB GPU dpu identity rc=-6 stage=3`——表池分配失败（`NativeAdrenoMemory` 搜索预算 64 KiB < 512 KiB 请求；GPU SMMU 用 1 MiB）。显示正常（frames=13、SWAP transfer=13、GPSVC err=0），432 s 自动回。
+  - 第二次（`173a5da1…`，表池预算改 1 MiB）：GPU reset 后 ~100 s 日志停止，`DISPLAY clients=0 frames=0`、无身份映射行；设备约 432 s 自动回，用户可见黑屏。该次未到测试代码（与预算改动无直接时序关系，但结果不可用）。
+- **最终源码退回 `850a4ec`（P21-Shelduck 只读探测，零 SMMU 写入）**；全量实现保留在 git 历史 `6dad936`，Willet 源码与镜像在 `out/p21/p21-willet/`，不再作为默认。
+
+### 二、Godwit 实现（历史记录，已回退；按 sheng `sheng-dpu-scanout`）
 - `CheeseburgerDpuScanout.cpp` 重写为完整路径：读取 MMSS SMMU ID/流表 → 选择 ≥ID1.S2 且 `CB_SCTLR=0` 的空闲 context bank（不动 bootloader 的 CB0）→ 用自己的物理连续表池建 4K 页表 → GOP 同 PA 身份映射 → 写 CB（TCR/TCR2 SEP 7、TTBR0、MAIR 0x44、ACTLR 0x70000000、CB SCTLR 0x1027）→ `S2CR0.CBNDX=bank`、保留 `SMR0` → latch。
 - 逐帧：同尺寸 BGRA surface 物理页映射到两个固定 16 MiB IOVA 窗口之一（base+32/48 MiB），`native_legacy_mdp_commit` 把管道 flip 到窗口并等 latch；失败或缩放帧回退 GOP（再走 CPU 拷贝）。
 - `NativeLegacyDisplay.cpp` 增加 `native_legacy_mdp_commit()`；kickOnce 在 GPU paint 之后先尝试直扫，成功即 retire，不再 CPU 拷贝。
@@ -18,7 +25,9 @@
 
   | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
   |---|---|---|---|---|
-  | 2026-11-05 | P21-Godwit | `f210a4ee…` | `80e668ee…` | display-bank SMMU 全量实现（默认只读）；两次启动均未验证直扫（stride 误拒已修；第二次日志 192 s 停止、frames=0） |
+  | 2026-11-05 | P21-Willet | `173a5da1…` | `f92645f8…` | 早期身份映射测试；表池预算修正后启动在 GPU reset 后 ~100 s 停止、clients=0（黑屏），未到测试；自动回 |
+  | 2026-11-05 | P21-Willet | `cd523e57…` | `f92645f8…` | 早期身份映射测试首跑：表池分配失败 rc=-6；显示正常（frames=13）、432 s 自动回 |
+  | 2026-11-05 | P21-Godwit | `f210a4ee…` | `80e668ee…` | display-bank SMMU 全量实现；用户确认第二次启动黑屏（日志 192 s 停止、frames=0）；源码已回退 |
   | 2026-11-05 | **P21-Shelduck** | `c4f1e253…` | `5fe3dc19…` | 迁移 display-bank SMMU：读明固件已预置 SID0 路由（M=0），守卫拒写；其余正常，434 s 自动回 |
 
 ## 2026-11-05：P21-Shelduck（迁移 sheng 的 display-bank SMMU 直扫：第一步探明固件已预置 MDP 流路由）

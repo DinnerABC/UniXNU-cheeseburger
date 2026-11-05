@@ -36,11 +36,8 @@ extern "C" void native_legacy_copy_timing_observed(uint64_t ticks,uint64_t bytes
 extern "C" void native_legacy_retirement_observed(IOService *);
 // Display-bank SMMU migration step (CheeseburgerDpuScanout.cpp): identity-map
 // the firmware buffer through the MMSS SMMU's MDP context, then restore.
-extern "C" int cheeseburger_dpu_setup(uint32_t,uint32_t,uint32_t,uint32_t);
-extern "C" int cheeseburger_dpu_present(IOMemoryDescriptor *,uint64_t,uint32_t,uint32_t,uint32_t);
-extern "C" int cheeseburger_dpu_fallback(void);
+extern "C" int cheeseburger_dpu_smmu_identity(uint64_t,uint32_t);
 extern volatile uint32_t native_adreno_dpu[16];
-extern "C" int native_legacy_mdp_commit(uint32_t,uint32_t,uint32_t *);
 // Scanout writes go through a cacheable mapping and are cleaned once per frame:
 // the write-combining mapping costs about 0.9 s per 1080x1920 frame on this
 // board because every 64-bit store is a separate uncached transaction.
@@ -147,16 +144,6 @@ extern "C" int native_legacy_mdp_flush_latch(uint32_t *addr,uint32_t *latchUs){
  const bool ok=flippath::commitTimed(uint32_t(v.v_baseAddr),flippath::gopStride,latchUs);
  *addr=flippath::rd(flippath::pipeOff+0xa4);
  return ok?0:-4;
-}
-// Display-bank SMMU present: point the scanning pipe at an arbitrary 32-bit
-// address/stride and report the latch. Success means the pipe fetched that
-// address; the caller owns the translation it names.
-extern "C" int native_legacy_mdp_commit(uint32_t addr,uint32_t stride,uint32_t *latchUs){
- if(!addr||!stride||(stride&7))return -1;
- PE_Video v={};
- if(PE_current_console(&v)||!v.v_baseAddr||(v.v_baseAddr>>32))return -2;
- if(!flippath::prepare(uint32_t(v.v_baseAddr)))return -3;
- return flippath::commitTimed(addr,stride,latchUs)?0:-4;
 }
 // Kernel-only test hook for the GPU scanout handoff. The A5xx 2D/3D engines
 // need a 64-byte destination pitch, while the firmware GOP here scans 1080
@@ -435,21 +422,22 @@ public:
            !native_legacy_surface_bounds(width,height,video.v_rowBytes,bootMapping->getLength(),bootMapping->getLength())) {
             native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;
         }
-        // Display-bank SMMU hand-off (sheng sheng-dpu-scanout): take over a
-        // free MMSS SMMU context bank, identity-map the firmware buffer and
-        // route the MDP's SID 0 through it. The GOP identity mapping keeps the
-        // current picture; each validated surface is then presented through
-        // fixed IOVA windows instead of the CPU copy.
-        static int dpuReady=-1;
-        static bool dpuTried=false;
-        if(!dpuTried){dpuTried=true;
-          unsigned on=1;PE_parse_boot_argn("cheeseburger-dpu-smmu",&on,sizeof on);
-          dpuReady=on?cheeseburger_dpu_setup(uint32_t(video.v_baseAddr),uint32_t(video.v_rowBytes),
-              uint32_t(width),uint32_t(height)):-100;
-          IOLog("CB DISP dpu setup rc=%d st=%u bank=%u ctx=%x sctlr=%x s2cr=%x/%x latch=%uus\n",
-              dpuReady,native_adreno_dpu[1],native_adreno_dpu[5],native_adreno_dpu[6],
-              native_adreno_dpu[2],native_adreno_dpu[4],native_adreno_dpu[15],native_adreno_dpu[8]);
-        }
+        // Display-bank SMMU migration, step 1 (sheng sheng-dpu-scanout): take
+        // over the MMSS SMMU's MDP context, identity-map the firmware buffer
+        // and re-commit the pipe through that translation, then restore. The
+        // pipe address never changes, so a failure cannot alter the picture.
+        { static bool dpuTried=false;
+          if(!dpuTried){dpuTried=true;
+            unsigned on=1;PE_parse_boot_argn("cheeseburger-dpu-smmu",&on,sizeof on);
+            if(on){
+              const int drc=cheeseburger_dpu_smmu_identity(uint32_t(video.v_baseAddr),
+                  uint32_t(uint64_t(video.v_rowBytes)*video.v_height));
+              IOLog("CB DISP dpu smmu rc=%d stage=%u sctlr=%x/%x smr=%x/%x s2cr=%x/%x latch=%uus restore=%u\n",
+                  drc,native_adreno_dpu[1],native_adreno_dpu[2],native_adreno_dpu[13],
+                  native_adreno_dpu[3],native_adreno_dpu[14],native_adreno_dpu[4],native_adreno_dpu[15],
+                  native_adreno_dpu[6],native_adreno_dpu[12]);
+            }
+          } }
         // GPU->compositor handoff: draw into the frame the display is about
         // to copy/scan, before any presentation. The helper rejects a
         // non-64-byte pitch and fails closed without touching the display path.
@@ -460,19 +448,6 @@ public:
             IOLog("CB DISP surface paint rc=%d stride=%llu w=%u h=%u fmt=%x\n",prc,
                 (unsigned long long)sourceStride,width,height,native_legacy_surface_format(surface));
           } }
-        // Same-size BGRA frames are fetched by the display pipe through the
-        // display bank SMMU; a scaling frame keeps the CPU copy, so the pipe is
-        // put back on the firmware buffer first.
-        if(dpuReady==0 && native_legacy_surface_width(surface)==width &&
-           native_legacy_surface_height(surface)==height) {
-            const int drc=cheeseburger_dpu_present(memory,sourceStride,width,height,
-                native_legacy_surface_format(surface));
-            if(drc==0) {
-                transferred=true;native_legacy_transfer_observed(kIOReturnSuccess,request,length);
-                finishTransfer(request);return;
-            }
-            cheeseburger_dpu_fallback();
-        } else if(dpuReady==0) cheeseburger_dpu_fallback();
         uint32_t sourceWidth=0,sourceHeight=0;
         if(!p21_scale_geometry(reinterpret_cast<const unsigned char *>(request),width,height,&sourceWidth,&sourceHeight)) {
             native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
