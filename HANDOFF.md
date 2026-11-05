@@ -1,3 +1,11 @@
+## 2026-11-05：固件 64 页共享低位池尝试失败（黑屏/无 USB，已回退）
+
+- 固件 DarwinBoot 原本已在 ExitBootServices 前预留 **16×4 KiB（64 KiB）** `EfiReservedMemoryType` 低位池，并通过 `cheeseburger-smmu-pool=<pa>` 交给内核（GPU SMMU 消费）。
+- 本轮把固件池扩到 **64 页（256 KiB）**，并让 DPU 在 kext 构造期先从池中取 8 页；内核 GPU SMMU 的池大小同步改为 262144。
+- 实机（镜像 `07a20f5c…`，12:23:34Z 启动）在 230 s 后**没有回到 Recovery，也没有 fastboot/ADB，USB 上完全不可见**（黑屏/挂死）。无法取日志；判定该共享池改动不安全。
+- 已回退：固件 DarwinBoot `PoolPages` 恢复 16；内核 `CheeseburgerGpuSmmu`/`CheeseburgerDpuScanout` 恢复 HEAD（halt-only、无池共享、无 SMMU 写入）。源码回到 `0496374` 的安全状态。
+- 设备需要手动切回 Recovery；下一轮先确认设备可用，再考虑更保守的低位池方案（例如固件池只扩到 32 页并让 DPU 只取 2 页，或完全由 GPU SMMU 统一分配后转交），且必须先做控制启动。
+
 ## 2026-11-05：P21-Zitting（XIN halt/DMAHalt 移植成功；handoff 仅剩低 4 GiB 表页分配阻塞）
 
 - **XIN halt/DMAHalt 已验证**：按 sagit 的 `solePipeline`/CTL/LM 校验、`0xc9b0200/0xc9b0204` halt/ack、`0x12ac` clock；多次启动均为 `resumed=1`、`halt=0`，显示正常（clients=19–25、frames=2–3、GPSVC err=0、230 s 自动回）。
