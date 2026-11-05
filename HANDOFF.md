@@ -1,3 +1,13 @@
+## 2026-11-05：P21-Zosterops（halt + 自建 4K 表身份映射仍失败；连续两次 halt 后 clients=0，停止该路径）
+
+- 在 Yellowthroat 的基础上，保留 VBIF AXI halt，改用本机已验证的 4K 表构造（6dad936 的 mapPage/表池）替代 kit live 映射。
+- 实机（boot `0x4226c8db`，日志 `out/p21/persistent-logs/20261105T110531Z/`）：
+  `CB GPU dpu identity halted rc=-10 st=3 pipe=5000 size=7800438 stride=10e0 ack=0 bank=0 fsr=400 restore=0x20000 released=1 sctlr=200626/200626 smr=80000000/80000000 s2cr=0/0`。
+  AXI halt 与恢复读回正常、FSR 无 fault，但测试仍以失败退出（映射/编程链路未全通）；该次启动仍 `DISPLAY clients=0 frames=0`、GPSVC open=0。
+- 与 Yellowthroat 相同的现象连续出现两次：只要对活动显示通路执行 halt/resume，后续用户态显示客户端就不再起来。即使寄存器回读恢复，显示路径的实际状态不安全。
+- **决定停止 display-bank SMMU 直扫尝试**：源码回到 Tattler/HEAD（只读捕获 + 230 s）；halt 补丁保存在 `out/p21/p21-zosterops/logs/halt-legacy-identity.patch`，不再默认执行。
+- 渲染下一步改走不触碰显示通路的路径：GPU 2D 内容继续写入合成器 surface（现有 CPU 呈现已验证可见），或先提升 CPU 呈现/合成；display 零拷贝需要更完整的 MDP5 halt/恢复模型（含 CTL/frame 重启）后再评估。
+
 ## 2026-11-05：P21-Yellowthroat（首次按 sagit 顺序 halt + CB0 身份映射；halt/编程成功、映射失败，已回退）
 
 - 在 GPU reset 前按 sagit `DisplayDMAHalt` 的顺序执行：VBIF AXI halt（`0xc9b0208/0xc9b020c`）→ 编程 CB0（GOP 同址身份映射）→ 2 s → 关闭 CB0/恢复全局/恢复 VBIF。
