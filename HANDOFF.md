@@ -1,3 +1,19 @@
+## 2026-11-05：P21-Scaup（只读捕获：固件未编程 MDP 上下文；自动重启改 230 s）
+
+### 一、只读捕获结果（boot `0x43ca5a9a`，日志 `out/p21/persistent-logs/20261105T100257Z/`）
+- 87.3 s：`CB GPU dpu capture rc=-7 st=3 bank=0 cb=20000 sctlr=0 smr=80000000 s2cr=0 tcr=0 tcr2=0 ttbr=0 mair=0 fsr=400 addr=9d400000 -> pa=0 walk=0`。
+- 即：SID0 已登记（`SMR0=0x80000000`）并指向 CB0（`S2CR0=0`），但 **CB0 SCTLR/TCR/TCR2/TTBR0/MAIR 全为 0**——固件把显示 SMMU 上下文留成未编程/禁用；GOP 地址 `0x9d400000` 是物理地址，当前无翻译。
+- 这正是黑屏根因：sagit 的 `DisplaySMMU.h` 明确要求“禁用的 stage-1 bank 只能在真实 DPU DMA halt 之后初始化”；我们之前是在管道持续取数时使能翻译/改 S2CR0，等于在活动显示通路上换页表。
+- 本轮显示正常：frames=5、SWAP transfer=5、GPSVC err=0；400 s 自动回。
+
+### 二、自动重启时间调整
+- `cheeseburger-auto-reset` 从 400 改为 **230 s**（用户确认约 150 s 已进入系统界面）。实现无硬编码，主线程 230 s、guard 240 s。
+- 时间分析：GPU 探针/捕获约 84–87 s、首次合成器 swap 约 194–211 s；230 s 对“系统界面/GPU 探针”有约 80 s 余量，但对“首个 surface paint 证据”只剩约 19–36 s 余量。若某轮专门观察首个 GPU 画面，建议临时用 260–300 s。
+
+### 三、下一步（安全顺序）
+1. 按 sagit `DisplayDMAHalt.h` 先 halt VIG/CTL 取数，再初始化 CB0/表（GOP 同址身份映射 + 预留窗口），恢复管道；绝不在活动管道上改 SMMU。
+2. 身份映射成功后再 flip 到窗口；失败立即恢复物理取数。
+
 ## 2026-11-05：display-bank SMMU 直扫失败与回退（Godwit / Willet；已退回 P21-Shelduck 只读探测）
 
 ### 一、黑屏与回退结论

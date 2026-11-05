@@ -50,6 +50,9 @@ int cheeseburger_gpu_highpa_test(void);
 int cheeseburger_gpu_highcp_test(void);
 int cheeseburger_gpu_bigbo_test(void);
 int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *,uint64_t,uint32_t,uint32_t,uint32_t);
+extern "C" int cheeseburger_dpu_capture(uint64_t);
+extern "C" volatile uint32_t native_adreno_dpu[16];
+extern "C" volatile uint32_t native_adreno_dpu_ext[16];
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -402,6 +405,20 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
  IOLog("CB GPU CP: fw=%u pm4=%u pfp=%u gpmu=%u ring=%u map=%u me=%x vbif=%x/%x trust=%x\n",
   gpu_firmware_size,fw.cpBytes(0),fw.cpBytes(1),fw.gpmuWords(),ring.bytes,seq,
   uint32_t(cb_cp[9]),uint32_t(cb_cp[10]),uint32_t(cb_cp[11]),uint32_t(cb_cp[18]));
+ // Read-only display-SMMU capture (sagit Display::MMU::capture model): record
+ // the firmware context and how it translates the pipe's current address. No
+ // SMMU, stream or pipe register is written.
+ { unsigned on=1;PE_parse_boot_argn("cheeseburger-dpu-capture",&on,sizeof on);
+   if(on){ PE_Video v={};
+     if(!PE_current_console(&v)&&v.v_baseAddr&&!(v.v_baseAddr>>32)){
+       const int crc=cheeseburger_dpu_capture(uint64_t(v.v_baseAddr));
+       IOLog("CB GPU dpu capture rc=%d st=%u bank=%u cb=%x sctlr=%x smr=%x s2cr=%x tcr=%x tcr2=%x ttbr=%x%08x mair=%x fsr=%x addr=%llx -> pa=%llx walk=%u\n",
+           crc,native_adreno_dpu[1],native_adreno_dpu[5],native_adreno_dpu[6],
+           native_adreno_dpu[7],native_adreno_dpu[3],native_adreno_dpu[4],
+           native_adreno_dpu[8],native_adreno_dpu[9],native_adreno_dpu_ext[1],
+           native_adreno_dpu_ext[0],native_adreno_dpu_ext[2],native_adreno_dpu_ext[3],
+           (unsigned long long)v.v_baseAddr,(unsigned long long)native_adreno_dpu_ext[7],
+           native_adreno_dpu_ext[9]); } } }
  // CP reset/configure/start is a separate opt-in: it writes GPU registers and
  // starts real firmware DMA, unlike the read-only mapping probe above.
  // 1 = full start; 2 = log-only long line (no GPU writes); 3 = log-only short

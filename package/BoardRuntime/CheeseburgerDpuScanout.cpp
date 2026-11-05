@@ -149,3 +149,83 @@ restore:
  if(d[0]==0)d[0]=0;
  return int(d[0]);
 }
+
+// Read-only capture of the firmware's display SMMU context, following sagit's
+// Display::MMU::capture: no SMR/S2CR/SCTLR or pipe writes. It records the
+// selected context, its TTBR/TCR/MAIR, and the translation of the address the
+// MDP pipe is currently programmed with, so a later step can adopt the
+// existing window instead of replacing the firmware's route.
+extern "C" { volatile uint32_t native_adreno_dpu_ext[16]; }
+
+namespace {
+uint64_t readPhys64(uint64_t pa,unsigned index){
+ IODeviceMemory *m=IODeviceMemory::withRange(pa&~0xfffull,4096);
+ IOMemoryMap *map=m?m->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+ OSSafeReleaseNULL(m);
+ uint64_t value=0;
+ if(map){const volatile uint64_t *v=(const volatile uint64_t*)map->getVirtualAddress();
+  if(v)value=v[index&511];map->release();}
+ return value;
+}
+uint64_t maskWidth(unsigned bits){return bits>=64?~0ull:((1ull<<bits)-1);}
+}
+
+// Returns 0 when the firmware context and the pipe address's translation were
+// both read. Writes nothing to hardware.
+extern "C" int cheeseburger_dpu_capture(uint64_t address){
+ auto &d=native_adreno_dpu;auto &x=native_adreno_dpu_ext;
+ for(unsigned i=0;i<16;++i){d[i]=0;x[i]=0;}
+ if(!gV){
+  IODeviceMemory *m=IODeviceMemory::withRange(MmssBase,MmssBytes);
+  gMap=m?m->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+  OSSafeReleaseNULL(m);
+  gV=gMap?(volatile uint32_t*)gMap->getVirtualAddress():nullptr;
+ }
+ if(!gV){d[0]=0xfffffffdu;return -2;}
+ const uint32_t id0=rd(0x20),id1=rd(0x24),id2=rd(0x28);
+ if(id0==0xffffffffu||id1==0xffffffffu||id2==0xffffffffu){d[0]=0xfffffffcu;return -3;}
+ d[2]=rd(0x0);d[3]=rd(0x800);d[4]=rd(0xc00);
+ // The stream the MDP uses: the valid SMR whose S2CR names a context bank.
+ unsigned bank=0xffffffffu;
+ for(unsigned n=0;n<(id0&0xffu);++n){
+  const uint32_t smr=rd(0x800+4*n),s2cr=rd(0xc00+4*n);
+  if(smr==0xffffffffu||s2cr==0xffffffffu){d[0]=0xfffffffbu;return -4;}
+  if((smr&(1u<<31))&&((smr^0u)&0xffffu)==0u&&!(s2cr&0x30000u)){bank=s2cr&0xffu;break;}
+ }
+ if(bank==0xffffffffu){d[1]=1;d[0]=0xfffffffau;return -5;}
+ const unsigned stride=(id1>>31)?0x10000u:0x1000u;
+ const unsigned pages=1u<<(((id1>>28)&7)+1);
+ const uint64_t cb=(uint64_t(pages)+bank)*stride;
+ if(cb+0x7f8>MmssBytes){d[1]=2;d[0]=0xfffffff9u;return -6;}
+ d[5]=bank;d[6]=uint32_t(cb);
+ d[7]=rd(uint32_t(cb));d[8]=rd(uint32_t(cb)+0x30);d[9]=rd(uint32_t(cb)+0x10);
+ x[0]=rd(uint32_t(cb)+0x20);x[1]=rd(uint32_t(cb)+0x24);
+ x[2]=rd(uint32_t(cb)+0x38);x[3]=rd(uint32_t(cb)+0x58);
+ const unsigned inputBits=64-(d[8]&63),output=(d[9]&7);
+ const unsigned outputBits=output==0?32:output==1?36:output==2?40:0;
+ x[4]=(inputBits&0xffu)|(outputBits<<8);
+ if(!x[0]||inputBits<32||inputBits>40||!outputBits){d[1]=3;d[0]=0xfffffff8u;return -7;}
+ x[5]=uint32_t(address);x[6]=uint32_t(address>>32);
+ // Walk the firmware's own tables for the pipe address.
+ const unsigned startLevel=inputBits>39?0:1;
+ uint64_t table=x[0]&0x0000fffffffff000ull,pa=0;
+ unsigned result=1;
+ for(unsigned level=startLevel;level<3&&result==1;++level){
+  const unsigned shift=39-9*level;
+  const uint64_t e=readPhys64(table,unsigned((address>>shift)&511));
+  if(!(e&1)){result=2;break;}
+  if((e&3)==3)table=e&0x0000fffffffff000ull;
+  else if((e&3)==1){
+   const uint64_t blockMask=level==1?0x3fffffffull:0x1fffffull;
+   pa=(e&~blockMask&maskWidth(outputBits))|(address&blockMask);result=0;
+  }else result=3;
+ }
+ if(result==1){
+  const uint64_t e=readPhys64(table,unsigned((address>>12)&511));
+  if((e&3)==3){pa=(e&0x0000fffffffff000ull)&maskWidth(outputBits);result=0;}
+  else if((e&3)==1)result=4;
+ }
+ x[7]=pa;x[8]=uint32_t(pa>>32);x[9]=result;
+ d[1]=3;d[0]=result==0?0:0xfffffff7u;
+ return result==0?0:-8;
+}
