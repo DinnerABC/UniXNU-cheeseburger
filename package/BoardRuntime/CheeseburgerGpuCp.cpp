@@ -41,6 +41,7 @@ int cheeseburger_gpu_clear540_test(void);
 int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
 int cheeseburger_gpu_scanout_flip_test(void);
 int cheeseburger_gpu_compute_band_test(void);
+int cheeseburger_gpu_copy540_test(void);
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -74,6 +75,10 @@ volatile uint32_t native_adreno_compute[12];
 // CS variant matrix: late dword0 for variants 0..7, their rc at 8..15, and the
 // immediate (pre-delay) dword0 at 16..23.
 volatile uint32_t native_adreno_cprobe[24];
+// 2D GPU->GPU copy (sagit snapshot2D): rc, seq, words, four samples from the
+// same-pitch target, four from the 1088-pitch target, both match counts and
+// the two destination pitches.
+volatile uint32_t native_adreno_copy2d[16];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
@@ -559,6 +564,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
       const int crc=cheeseburger_gpu_clear540_test();
       IOLog("CB GPU clear: exit rc=%d\n",crc);
       if(crc==0&&gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
+       const int copyrc=cheeseburger_gpu_copy540_test();
+       IOLog("CB GPU copy: exit rc=%d\n",copyrc);
        const int frc=cheeseburger_gpu_scanout_flip_test();
        IOLog("CB GPU flip: exit rc=%d\n",frc);
        const int crc2=cheeseburger_gpu_compute_band_test();
@@ -1181,6 +1188,68 @@ extern "C" int cheeseburger_gpu_scanout_flip_test(void){
   (unsigned long long)dout[2],(unsigned long long)dout[3]);
  gFlipRc=drc?drc:0;
  return gFlipRc;
+}
+// ---------------------------------------------------------------------------
+// sagit snapshot2D on hardware: copy the finished 256x64 quadratic image into
+// two private linear targets, one with the same pitch and one with a different
+// 64-byte-aligned pitch. This is the GPU->GPU primitive a later IOSurface or
+// aligned display surface handoff needs; it does not touch the 4320-pitch GOP.
+enum {CopyW=256,CopyH=64,CopyPitch=1024,CopyBytes=CopyPitch*CopyH};
+static IOBufferMemoryDescriptor *gCopyBuf[2]={nullptr,nullptr};
+static volatile uint32_t *gCopyVA[2]={nullptr,nullptr};
+static const uint32_t gCopyPitch[2]={CopyPitch,1088};
+static const uint64_t gCopyIova[2]={0x2070000,0x2080000};
+static uint32_t gCopySamples[8];
+static int gCopyRc=0xffff;
+extern "C" int cheeseburger_gpu_copy540_test(void){
+ if(gCopyRc!=0xffff)return gCopyRc;
+ gCopyRc=-1;
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
+    !gClearIbVA||!gClearScratchIova||!gClearTargetIova)return gCopyRc;
+ for(unsigned i=0;i<2;++i){
+  gCopyBuf[i]=clearBuffer(CopyBytes);
+  if(!gCopyBuf[i]){IOLog("CB GPU copy: no target %u\n",i);return gCopyRc;}
+  gCopyVA[i]=(volatile uint32_t*)gCopyBuf[i]->getBytesNoCopy();
+  if(!gCopyVA[i]){IOLog("CB GPU copy: no view %u\n",i);return gCopyRc;}
+  memset((void*)gCopyVA[i],0,CopyBytes);
+  flush_dcache((vm_offset_t)gCopyVA[i],CopyBytes,FALSE);
+  if(clearMap(gCopyBuf[i],gCopyIova[i],CopyBytes/4096)){
+   IOLog("CB GPU copy: map %u failed\n",i);return gCopyRc;
+  }
+ }
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ CheeseburgerGpu::Blit540 b(e);
+ bool ok=b.restore()&&b.begin2D()&&b.copySetup();
+ for(unsigned i=0;i<2&&ok;++i)
+  ok=b.copyTile(gClearTargetIova,CopyPitch,gCopyIova[i],gCopyPitch[i],CopyW,CopyH);
+ if(ok)ok=b.copyEnd(gClearScratchIova);
+ const uint32_t words=e.size();
+ if(!ok){IOLog("CB GPU copy: encode failed\n");return gCopyRc;}
+ uint32_t seq=0;
+ const int rc=clearKick(words,seq);
+ __asm__ volatile("dsb sy":::"memory");
+ for(unsigned i=0;i<2;++i)flush_dcache((vm_offset_t)gCopyVA[i],CopyBytes,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ unsigned amatch=0,bmatch=0;
+ if(!rc)for(unsigned i=0;i<2;++i){
+  static const uint32_t xs[4]={64,192,64,192},ys[4]={16,16,48,48};
+  for(unsigned q=0;q<4;++q){
+   const uint32_t px=gCopyVA[i][(uint64_t(ys[q])*(gCopyPitch[i]/4))+xs[q]];
+   gCopySamples[i*4+q]=px;
+   if(px==gClearColors[q]){if(!i)++amatch;else ++bmatch;}
+  }
+ }
+ native_adreno_copy2d[0]=uint32_t(rc);native_adreno_copy2d[1]=seq;native_adreno_copy2d[2]=words;
+ for(unsigned i=0;i<8;++i)native_adreno_copy2d[3+i]=gCopySamples[i];
+ native_adreno_copy2d[11]=amatch;native_adreno_copy2d[12]=bmatch;
+ native_adreno_copy2d[13]=gCopyPitch[0];native_adreno_copy2d[14]=gCopyPitch[1];
+ IOLog("CB GPU copy: rc=%d seq=%u words=%u a=%x/%x/%x/%x am=%u/4 b=%x/%x/%x/%x bm=%u/4\n",
+  rc,seq,words,gCopySamples[0],gCopySamples[1],gCopySamples[2],gCopySamples[3],amatch,
+  gCopySamples[4],gCopySamples[5],gCopySamples[6],gCopySamples[7],bmatch);
+ gCopyRc=rc?rc:0;
+ return rc;
 }
 // ---------------------------------------------------------------------------
 // IR3 compute band on the firmware scanout. The GOP pitch (4320 bytes) blocks

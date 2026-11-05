@@ -1,3 +1,24 @@
+## 2026-11-05：P21-Starling（sagit snapshot2D 的 GPU→GPU 拷贝实机通过：同 pitch 4/4、1088 pitch 4/4）
+
+### 一、验证内容
+- 在 P21-Bittern 的 2D 清屏之后，把已渲染的 256x64 四象限图像用 sagit `snapshot2D` 的 sourced `CP_BLIT` 拷到两块自有线性目标：
+  - dstA `0x2070000`，pitch 1024（与源相同）；
+  - dstB `0x2080000`，pitch **1088**（与源不同，仍为 64B 的整数倍）。
+- 实机（boot `0x40a85c75`，日志 `out/p21/persistent-logs/20261105T035408Z/`，镜像 `8662ced6…`，内核 `ad6543ff…`，固件 `56d4166b…`）：
+  - `CB GPU clear: rc=0 seq=8 words=491 ... match=4/4`；
+  - `CB GPU copy: rc=0 seq=9 words=331 a=ff102030/ff405060/ff8090a0/ffb0c0d0 am=4/4 b=ff102030/ff405060/ff8090a0/ffb0c0d0 bm=4/4`；持久行 `CPY ... pa=1024 pb=1088`。
+  - 设备 400 s 自动回 Recovery；本轮 **客户端没有打开 GPU 服务**（`GPSVC open=0 ... err=0`），因此 ABI 用户链本轮未被执行，也没有失败信号；内核侧 2D 路径正常。
+- 结论：sagit `snapshot2D`（独立源/目标 pitch、R32_UINT、sourced `CP_BLIT`）在 A540 上可用，是后续“渲染结果 → 对齐显示/合成表面”的拷贝原语；GOP 的 4320 pitch 仍不能用 2D 直接写。
+
+### 二、当前状态与下一步
+1. 2D 能力：清屏（Bittern）与 GPU→GPU 拷贝（Starling）均已实机验证；可以在此基础上接 IOSurface/显示表面导入（BoImport → BoMap → copyTile），但 GOP 扫描线仍需 MDP/对齐缓冲或 shader 字节寻址方案。
+2. compute：仍因 ZAP 后 SP/RBCCU 域回落而不执行（Lapwing 的 7 个变体全 0）；不要在实时 CP 上做 halt+域写入+寄存器读回（Plover 挂死，日志停在 100.5 s）。如要重试，必须 posted writes、停机后不读 GPU 寄存器、以下一次 fence 判活，并单独候选默认关闭。
+3. 建议顺序：先用 copy 原语完成“自有 GPU 表面 → 对齐显示表面”的交接验证，再考虑 IOSurface 与 Metal；每次仍一次构建一次启动，失败回退 P21-Starling。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Starling** | `8662ced6…` | `ad6543ff…` | snapshot2D GPU→GPU 拷贝实机通过（1024/1088 pitch 各 4/4）；2D 清屏正常 |
+
 ## 2026-11-04：Plover 日志回收 + P21-Sandpiper 回退控制（移除实时 CP 停机/上电路径，恢复可开机基线）
 
 ### 一、Plover 日志（已回收）

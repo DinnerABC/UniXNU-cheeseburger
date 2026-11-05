@@ -94,6 +94,9 @@ extern volatile uint32_t native_adreno_compute[12] __attribute__((weak_import));
 /* Compute isolation matrix: const/shift probes into our own 4 KiB SSBO and
  * the same two shaders over the scanout band. */
 extern volatile uint32_t native_adreno_cprobe[24] __attribute__((weak_import));
+/* GPU->GPU 2D copy: rc/seq/words, same-pitch and 1088-pitch samples and
+ * match counts, plus the two destination pitches. */
+extern volatile uint32_t native_adreno_copy2d[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -711,6 +714,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       (int)(int16_t)(uint16_t)native_adreno_cprobe[12],(int)(int16_t)(uint16_t)native_adreno_cprobe[13],
       (int)(int16_t)(uint16_t)native_adreno_cprobe[14],cb_boot_id);
     at=put(out,at,cap,cpr,sizeof cpr);
+   }
+   if (&native_adreno_copy2d[0] && (native_adreno_copy2d[0] || native_adreno_copy2d[2])) {
+    char cpy[220];
+    snprintf(cpy,sizeof cpy,"CPY rc=%d seq=%u w=%u a=%x/%x/%x/%x am=%u/4 b=%x/%x/%x/%x bm=%u/4 pa=%u pb=%u bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_copy2d[0],native_adreno_copy2d[1],native_adreno_copy2d[2],
+      native_adreno_copy2d[3],native_adreno_copy2d[4],native_adreno_copy2d[5],native_adreno_copy2d[6],
+      native_adreno_copy2d[11],
+      native_adreno_copy2d[7],native_adreno_copy2d[8],native_adreno_copy2d[9],native_adreno_copy2d[10],
+      native_adreno_copy2d[12],native_adreno_copy2d[13],native_adreno_copy2d[14],cb_boot_id);
+    at=put(out,at,cap,cpy,sizeof cpy);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was
