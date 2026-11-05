@@ -24,6 +24,7 @@
 #include <libkern/c++/OSSymbol.h>
 #include <string.h>
 #include "NativeAdrenoABI.h"
+#include "CheeseburgerGpuMapRange.h"
 #include "CheeseburgerGpuBoPolicy.h"
 
 extern "C" {
@@ -62,6 +63,8 @@ int cheeseburger_gpu_engine_failed(void);
 int cheeseburger_gpu_engine_scratch(uint64_t *,volatile uint32_t **,unsigned *);
 int cheeseburger_gpu_smmu_map(uint64_t,uint64_t,unsigned);
 int cheeseburger_gpu_smmu_unmap(uint64_t,unsigned);
+int cheeseburger_gpu_smmu_map_batch(const CheeseburgerGpu::MapRange *,unsigned);
+int cheeseburger_gpu_smmu_unmap_batch(const CheeseburgerGpu::MapRange *,unsigned);
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_smmu4k_active(void);
@@ -124,6 +127,13 @@ Quarantined gQuarantine[MaxBo];
 unsigned gQuarantineCount=0;
 uint64_t gSerialCounter=0;
 IOLock *gRetireLock=nullptr;
+// sagit's native limits: 16 MiB per buffer and 128 MiB per client. Only one
+// ABI client is admitted by the gate, so the global 192 MiB cap is implied.
+enum : uint64_t { MaxBufferBytes540 = 16ull * 1024 * 1024, MaxClientBytes540 = 128ull * 1024 * 1024 };
+// Runs of the one ABI client's current BO mapping. The client lock serializes
+// every use; the batch helper chunks larger lists itself.
+CheeseburgerGpu::MapRange gClientRuns[4096];
+
 
 bool holdsAdd(uint64_t serial) {  // gRetireLock held
     if(!serial)return false;
@@ -256,6 +266,7 @@ class AGXDeviceUserClient : public IOUserClient {
     bool ownsClient_=false;
     bool abi_=false;
     uint64_t generation_=0;
+    uint64_t allocBytes_=0;
     task_t task_=TASK_NULL;
     static IOReturn action(OSObject *,void *,IOExternalMethodArguments *);
     IOReturn run(uint32_t,const void *,size_t,void *,size_t);
@@ -489,17 +500,18 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
     auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
     auto unmap=[&](){
         if(!bo.desc)return 0;
-        IOByteCount off=0;int rc=0;
-        while(off<bo.bytes){
+        unsigned runs=0;IOByteCount off=0;
+        while(off<bo.bytes&&runs<sizeof(gClientRuns)/sizeof(gClientRuns[0])){
             IOByteCount seg=0;
             const uint64_t pa=bo.desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
-            if(!pa||!seg){rc=-1;break;}
+            if(!pa||!seg)return -1;
             if(seg>bo.bytes-off)seg=bo.bytes-off;
             const unsigned pages=unsigned((seg+4095)/4096);
-            if(cheeseburger_gpu_smmu_unmap(bo.iova+off,pages)){rc=-1;break;}
+            gClientRuns[runs++]={bo.iova+off,pa,pages};
             off+=uint64_t(pages)*4096;
         }
-        return rc;
+        if(off<bo.bytes)return -1;
+        return runs?cheeseburger_gpu_smmu_unmap_batch(gClientRuns,runs):0;
     };
     if(!CheeseburgerGpu::releaseMappedBuffer(bo.mapped,idle,unmap)){
         // The pages may still be reachable from the GPU, or the SMMU could not
@@ -510,6 +522,7 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
         return false;
     }
     if(bo.mapped)native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
+    if(allocBytes_>=bo.bytes)allocBytes_-=bo.bytes;
     // An imported BO unwires the caller's pages; their cache mode is the
     // caller's and must not be touched here.
     if(bo.imported&&bo.desc)bo.desc->complete(kIODirectionInOut);
@@ -595,7 +608,8 @@ IOReturn AGXDeviceUserClient::query(NativeAdrenoAbiParams &p) {
     p.flags=NativeAdrenoDeviceClientIova;
     p.max_bo_bytes=0; // filled by the caller's window below
     uint64_t start=0,bytes=0;
-    if(cheeseburger_gpu_engine_window(&start,&bytes)==0)p.max_bo_bytes=bytes;
+    if(cheeseburger_gpu_engine_window(&start,&bytes)==0)
+        p.max_bo_bytes=bytes<MaxBufferBytes540?bytes:MaxBufferBytes540;
     return kIOReturnSuccess;
 }
 IOReturn AGXDeviceUserClient::deviceInfo(NativeAdrenoAbiDeviceInfo &d) {
@@ -616,8 +630,9 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     if(cheeseburger_gpu_engine_window(&start,&window)||!window)return kIOReturnNotReady;
     // contiguous is a hint: a physically contiguous allocation also satisfies
     // a non-contiguous request, which is what Turnip's Darwin backend asks for.
-    if(!a.bytes||(a.bytes&4095)||a.bytes>window||a.align_log2<12||a.align_log2>24)
-        return kIOReturnBadArgument;
+    if(!a.bytes||(a.bytes&4095)||a.bytes>window||a.bytes>MaxBufferBytes540||
+       a.align_log2<12||a.align_log2>24)return kIOReturnBadArgument;
+    if(allocBytes_>MaxClientBytes540-a.bytes)return kIOReturnNoResources;
     unsigned index=MaxBo;
     for(unsigned i=0;i<MaxBo;++i)if(!bos_[i].handle){index=i;break;}
     if(index==MaxBo)return kIOReturnNoResources;
@@ -658,6 +673,7 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     bo.desc=buf;
     bo.token=BoTokenBase+index;
     if(gRetireLock){IOLockLock(gRetireLock);bo.serial=++gSerialCounter;IOLockUnlock(gRetireLock);}
+    allocBytes_+=bo.bytes;
     r.handle=bo.handle;
     native_adreno_service_stats[2]=native_adreno_service_stats[2]+1;
     native_adreno_service_stats[12]=native_adreno_service_stats[12]+a.bytes;
@@ -686,41 +702,34 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
     // a single contiguous call would map the wrong pages for everything past
     // the first run.
     bo->spanCount=0;
-    int rc=0;
-    uint64_t failedAt=bo->bytes;
+    unsigned runs=0;
     {
         IOByteCount off=0;
-        while(off<bo->bytes){
+        while(off<bo->bytes&&runs<sizeof(gClientRuns)/sizeof(gClientRuns[0])){
             IOByteCount seg=0;
             const uint64_t pa=bo->desc?bo->desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone):0;
-            if(!pa||(pa&4095)||!seg){rc=-1;failedAt=off;break;}
+            if(!pa||(pa&4095)||!seg)break;
             if(seg>bo->bytes-off)seg=bo->bytes-off;
             const unsigned pages=unsigned((seg+4095)/4096);
-            if(pa+uint64_t(pages)*4096>(1ull<<36)){rc=-2;failedAt=off;break;}
-            if(cheeseburger_gpu_smmu_map(m.iova+off,pa,pages)){rc=-3;failedAt=off;break;}
-            if(bo->spanCount<64)bo->spans[bo->spanCount++]={m.iova+off,pa,pages};
+            gClientRuns[runs++]={m.iova+off,pa,pages};
             off+=uint64_t(pages)*4096;
+        }
+        if(off<bo->bytes){
+            native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
+            return kIOReturnNoMemory;
         }
     }
+    // One batch (the helper chunks internally) maps every scattered run in a
+    // few transactions instead of one live update per page.
+    const int rc=runs?cheeseburger_gpu_smmu_map_batch(gClientRuns,runs):0;
     if(rc){
-        // Unmap the prefix that was mapped; the first miss is the failure
-        // point. A real TLB/table failure retires the IOVA for the boot.
-        bool unmapFailed=false;
-        IOByteCount off=0;
-        while(off<failedAt){
-            IOByteCount seg=0;
-            const uint64_t pa=bo->desc?bo->desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone):0;
-            if(!pa||!seg)break;
-            if(seg>failedAt-off)seg=failedAt-off;
-            const unsigned pages=unsigned((seg+4095)/4096);
-            if(cheeseburger_gpu_smmu_unmap(m.iova+off,pages)){unmapFailed=true;break;}
-            off+=uint64_t(pages)*4096;
-        }
-        if(unmapFailed)retainIova(m.iova,bo->bytes);
-        bo->spanCount=0;
+        if(runs)cheeseburger_gpu_smmu_unmap_batch(gClientRuns,runs);
+        retainIova(m.iova,bo->bytes);
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
         return kIOReturnNoMemory;
     }
+    bo->spanCount=runs<64?runs:64;
+    for(unsigned i=0;i<bo->spanCount;++i)bo->spans[i]={gClientRuns[i].iova,gClientRuns[i].pa,gClientRuns[i].pages};
     bo->iova=m.iova;bo->mapped=true;
     r.iova=m.iova;
     native_adreno_service_stats[4]=native_adreno_service_stats[4]+1;
@@ -743,8 +752,9 @@ IOReturn AGXDeviceUserClient::boFree(uint64_t handle) {
 // caller keeps its CPU mapping and cache mode and maintains them; the pages
 // stay wired until BoFree, which is refused while a job still references them.
 IOReturn AGXDeviceUserClient::boImport(const NativeAdrenoAbiBoImport &a,NativeAdrenoAbiBoAllocReply &r) {
-    if(!a.address||!a.bytes||(a.bytes&4095)||(a.address&4095)||a.bytes>(1ull<<36))
-        return kIOReturnBadArgument;
+    if(!a.address||!a.bytes||(a.bytes&4095)||(a.address&4095)||a.bytes>(1ull<<36)||
+       a.bytes>MaxBufferBytes540)return kIOReturnBadArgument;
+    if(allocBytes_>MaxClientBytes540-a.bytes)return kIOReturnNoResources;
     unsigned index=MaxBo;
     for(unsigned i=0;i<MaxBo;++i)if(!bos_[i].handle){index=i;break;}
     if(index==MaxBo)return kIOReturnNoResources;
@@ -764,6 +774,7 @@ IOReturn AGXDeviceUserClient::boImport(const NativeAdrenoAbiBoImport &a,NativeAd
     bo.imported=true;
     bo.token=BoTokenBase+index;
     if(gRetireLock){IOLockLock(gRetireLock);bo.serial=++gSerialCounter;IOLockUnlock(gRetireLock);}
+    allocBytes_+=bo.bytes;
     r.handle=bo.handle;
     native_adreno_service_stats[2]=native_adreno_service_stats[2]+1;
     native_adreno_service_stats[12]=native_adreno_service_stats[12]+a.bytes;

@@ -1,3 +1,25 @@
+## 2026-11-05：P21-Wheatear（服务端 BO 切 batch 映射；sagit 配额 16 MiB/BO、128 MiB/client；大 BO 测试移出客户端窗口）
+
+### 一、改动
+- 服务端 `boMap`/`freeBo` 改为收集 BO 的全部物理 run，调用 `cheeseburger_gpu_smmu_map_batch/unmap_batch`（kit 每 256 run 一次事务）；失败回滚用同一列表并退休 IOVA。
+- 加入 sagit 配额：单 BO **16 MiB**（`boAlloc`/`boImport` 拒绝更大对象）、每 client **128 MiB**（`allocBytes_` 统计）；`Query.max_bo_bytes` 报告 16 MiB，窗口仍 128 MiB。单 ABI client 门限使全局 192 MiB 自然成立。
+- 内核 `bigbo` 测试基址从客户端窗口内 `0x5000000` 移到窗口外 **`0xC000000`**（aperture 上限 0x10000000 内），避免未来客户端映射冲突。
+
+### 二、实机（boot `0x40a3df1a`，日志 `out/p21/persistent-logs/20261105T060406Z/`，镜像 `3cce703a…`，内核 `ffeb6f04…`，固件 `37859308…`）
+- `BIG rc=0 seq=13 w=491 runs=2040 min=0x15102b000 max=0x153d56000 match=4/4`（5.26–5.31 GiB，窗口外 0xC000000）。
+- 其余无回归：`CLR/CPY/HPA match=4/4`、`HCP ib/src=0 val=1234abcd`。
+- 客户端：`GPSVC open=2 bo=2 map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`；服务 ~136 s 打开，400 s 自动回 Recovery。
+- 说明：客户端仍只分配 2×4 KiB，配额与 batch 映射在客户端路径上被实际执行；大 BO 的 ABI 分配尚未由客户端覆盖（客户端二进制固定）。
+
+### 三、下一步
+1. 继续 IOSurface/合成器 surface 交接（GPU 写入显示驱动收到的 surface）与 Metal 前端；compute 仍等待安全 SP 域方案。
+2. 可选：把全局 192 MiB 配额与多客户端语义写全（当前单客户端门限使全局上限自动成立）。
+3. 保持 P21-Wheatear 为基线，回归整体回退。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Wheatear** | `3cce703a…` | `ffeb6f04…` | 服务 batch 映射 + sagit 配额；8 MiB 表面窗口外 4/4；客户端链正常 |
+
 ## 2026-11-05：P21-Twite（sagit batch 映射：8 MiB/1080p 表面 2040 个分散 run 一次事务，2D 填充 4/4）
 
 ### 一、改动

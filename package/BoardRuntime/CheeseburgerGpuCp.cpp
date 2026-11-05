@@ -1438,7 +1438,9 @@ extern "C" int cheeseburger_gpu_highcp_test(void){
 // 1080p-scale surface through the scattered batch mapper. One 8 MiB normal
 // buffer is walked into physical runs and mapped at 0x5000000 (inside the
 // 128 MiB client window) in batched SMMU transactions, then the 2D engine
-// fills four 1088x480 bands and the CPU reads the centres back.
+// fills four 1088x480 bands and the CPU reads the centres back. The base sits
+// just past the client window (0xC000000) so a later client mapping can never
+// collide with this kernel test.
 enum {BigBoWidth=1088,BigBoHeight=1920,BigBoPitch=BigBoWidth*4,BigBoRows=480,
       BigBoBytes=BigBoPitch*BigBoHeight};
 static IOBufferMemoryDescriptor *gBigBoBuf=nullptr;
@@ -1460,7 +1462,7 @@ extern "C" int cheeseburger_gpu_bigbo_test(void){
   if(!pa||(pa&4095)||!seg)break;
   if(seg>BigBoBytes-off)seg=BigBoBytes-off;
   const unsigned pages=unsigned((seg+4095)/4096);
-  gBigRuns[runs++]={0x5000000+off,pa,pages};
+  gBigRuns[runs++]={0xC000000+off,pa,pages};
   if(pa<minPa)minPa=pa;if(pa>maxPa)maxPa=pa;
   off+=uint64_t(pages)*4096;
  }
@@ -1476,7 +1478,7 @@ extern "C" int cheeseburger_gpu_bigbo_test(void){
  bool ok=b.restore()&&b.begin2D();
  static const uint32_t bands[4]={0xff102030u,0xff405060u,0xff8090a0u,0xffb0c0d0u};
  for(unsigned i=0;i<4&&ok;++i)
-  ok=b.solidFill(0x5000000+uint64_t(i)*BigBoRows*BigBoPitch,BigBoWidth,BigBoRows,
+  ok=b.solidFill(0xC000000+uint64_t(i)*BigBoRows*BigBoPitch,BigBoWidth,BigBoRows,
    BigBoPitch,bands[i],gClearScratchIova);
  const uint32_t words=e.size();
  uint32_t seq=0;
