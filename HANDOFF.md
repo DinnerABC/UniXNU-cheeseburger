@@ -1,3 +1,30 @@
+## 2026-11-05：P21-Serin（修正 copy 越界；普通分散页策略；高物理地址实机通过——推翻“CP 不能访问 >5 GB”）
+
+### 一、关键修正：copy 测试越界导致的 SMMU fault
+- dstB 使用 pitch 1088、64 行，需要 `1088*64 = 69632` 字节，但旧测试只分配/映射了 65536 字节，越界写了 5120 字节，触发 SMMU stalled fault（Wigeon 日志 `smfsr=80000402`）。
+- 该 fault 使 `cheeseburger_gpu_engine_failed()` 置位：后续 flip/compute/highpa 全部被 fail-closed 拒绝（`exit rc=-1`），客户端也无法打开服务（Starling/Veery/Wigeon 的 `GPSVC open=0` 由此解释，不是客户端本身问题）。
+- 修正：按 `pitch*height` 分配/映射每个复制目标（dstA 65536、dstB 69632），copy 与后续测试恢复正常。
+
+### 二、新分配策略（按 sagit 模型）
+- `boAlloc` 不再使用低池/`<4 GiB` mask；`contiguous=0` 时分配普通 `IOBufferMemoryDescriptor`，不要求物理连续。
+- `boMap` 改为遍历 BO 描述符的每个物理 run、逐段映射到客户端 IOVA；`freeBo`/quarantine 也按 run 重新遍历解映射和恢复页属性；自有 BO 的 descriptor 直接使用 buffer 本身（分散页没有单一物理范围）。
+- 低池仍保留为探针期的预留，但不再用于服务 BO。
+
+### 三、P21-Serin 实机（boot `0x422fb451`，日志 `out/p21/persistent-logs/20261105T044906Z/`，镜像 `2888b992…`，内核 `59565b96…`，固件 `bdf5a5cb…`）
+- `CB GPU clear ... match=4/4`；`CB GPU copy ... am=4/4 bm=4/4`（无 fault）。
+- **高地址自检**：32 MiB 普通分配，`min=0x151f3e000`、`max=0x1545e3000`（5.27–5.32 GiB），`high=8192/8192` 页全部 >4 GiB；在其尾部 64 KiB 用 2D 引擎画四象限，`px=ff102030/ff405060/ff8090a0/ffb0c0d0 match=4/4`。**GPU（CP+RB/SMMU）可以在 >5 GiB 物理页上正确写入/回读**，旧的低地址依赖是移植期 workaround，不是硬件上限。
+- 客户端链路完全恢复：`GPSVC open=2 bo=2 map=2 unmap=2 free=2 sub=1 fence=1 wait=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`。这也证明新的“普通分散页 + 逐段映射”BO 策略在 ABI 路径上可用。
+- 说明：本轮高地址测试使用的是低地址内核 IB 去指挥 RB 写高地址目标；客户端 IB 所在的 4 KiB BO 是否落在高地址未单独记录，CP 从高地址取 IB 仍需一次专门验证。
+
+### 四、下一步
+1. 把客户端窗口从 16 MiB 扩到 sagit 量级（128 MiB/client、256 MiB aperture），否则真实 Metal/IOSurface 负载（1080p BGRA 8.29 MiB/张）仍会不够。
+2. 专门验证 CP 从高物理地址 BO 取 IB（把 IB 放在普通分配的高页），以及 CP_MEM_TO_MEM 读高页；如果都通过，可删除低池与所有低地址分支。
+3. 继续 IOSurface/合成器 surface 交接；MDP 直扫仍受 32 位 SRC0 限制，不是 GPU 内存模型问题。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Serin** | `2888b992…` | `59565b96…` | 修正 copy 越界；普通分散页 BO；高地址 5.27–5.32 GiB 2D 写入 match=4/4；客户端链恢复 |
+
 ## 2026-11-05：P21-Veery（提前+重试仍拿不到低 4 GiB 连续全帧；MDP flip 安全跳过）
 
 - 把 8 MiB 全帧（1088x1920，pitch 4352）的分配提前到探针早期（63.9 s）并最多重试 8 次；实机（boot `0x42402acc`，日志 `out/p21/persistent-logs/20261105T041045Z/`，镜像 `17975381…`，内核 `a0829194…`，固件 `044c8742…`）仍然 `CB GPU flip: no low contiguous 8 MiB frame`，flip 未执行（`CB GPU flip: exit rc=-1`），设备 400 s 自动回 Recovery。

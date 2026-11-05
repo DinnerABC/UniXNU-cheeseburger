@@ -167,18 +167,38 @@ void retireQuarantinedLocked() {
         bool done=true;
         if(q.mapped){
             int rc=0;
-            if(!q.spanCount)rc=cheeseburger_gpu_smmu_unmap(q.iova,unsigned(q.bytes/4096));
-            else for(unsigned s=0;s<q.spanCount;++s)
-                if(cheeseburger_gpu_smmu_unmap(q.spans[s].iova,q.spans[s].pages))rc=-1;
+            if(!q.desc){if(!q.spanCount)rc=cheeseburger_gpu_smmu_unmap(q.iova,unsigned(q.bytes/4096));}
+            else {
+                IOByteCount off=0;
+                while(off<q.bytes){
+                    IOByteCount seg=0;
+                    const uint64_t pa=q.desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+                    if(!pa||!seg){rc=-1;break;}
+                    if(seg>q.bytes-off)seg=q.bytes-off;
+                    const unsigned pages=unsigned((seg+4095)/4096);
+                    if(cheeseburger_gpu_smmu_unmap(q.iova+off,pages)){rc=-1;break;}
+                    off+=uint64_t(pages)*4096;
+                }
+                if(!rc&&off<q.bytes)rc=-1;
+            }
             auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
             if(!CheeseburgerGpu::releaseMappedBuffer(true,idle,[&](){ return rc; }))done=false;
         }
         if(!done){retainIova(q.iova,q.bytes);++i;continue;}
         if(q.imported&&q.desc)q.desc->complete(kIODirectionInOut);
-        if(!q.imported&&q.physical)
-            for(uint64_t off=0;off<q.bytes;off+=4096)
-                pmap_set_cache_attributes((ppnum_t)((q.physical+off)>>12),VM_WIMG_USE_DEFAULT);
-        OSSafeReleaseNULL(q.desc);
+        if(!q.imported&&q.desc){
+            IOByteCount off=0;
+            while(off<q.bytes){
+                IOByteCount seg=0;
+                const uint64_t pa=q.desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+                if(!pa||!seg)break;
+                if(seg>q.bytes-off)seg=q.bytes-off;
+                const unsigned pages=unsigned((seg+4095)/4096);
+                for(unsigned p=0;p<pages;++p)pmap_set_cache_attributes((ppnum_t)((pa+uint64_t(p)*4096)>>12),VM_WIMG_USE_DEFAULT);
+                off+=uint64_t(pages)*4096;
+            }
+        }
+        if(q.desc&&(IOMemoryDescriptor*)q.desc!=q.buf)OSSafeReleaseNULL(q.desc);
         OSSafeReleaseNULL(q.buf);
         q=Quarantined();
         for(unsigned k=i+1;k<gQuarantineCount;++k)gQuarantine[k-1]=gQuarantine[k];
@@ -473,10 +493,17 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
     dropView(bo);
     auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
     auto unmap=[&](){
-        if(!bo.spanCount)return cheeseburger_gpu_smmu_unmap(bo.iova,unsigned(bo.bytes/4096));
-        int rc=0;
-        for(unsigned i=0;i<bo.spanCount;++i)
-            if(cheeseburger_gpu_smmu_unmap(bo.spans[i].iova,bo.spans[i].pages))rc=-1;
+        if(!bo.desc)return 0;
+        IOByteCount off=0;int rc=0;
+        while(off<bo.bytes){
+            IOByteCount seg=0;
+            const uint64_t pa=bo.desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+            if(!pa||!seg){rc=-1;break;}
+            if(seg>bo.bytes-off)seg=bo.bytes-off;
+            const unsigned pages=unsigned((seg+4095)/4096);
+            if(cheeseburger_gpu_smmu_unmap(bo.iova+off,pages)){rc=-1;break;}
+            off+=uint64_t(pages)*4096;
+        }
         return rc;
     };
     if(!CheeseburgerGpu::releaseMappedBuffer(bo.mapped,idle,unmap)){
@@ -491,12 +518,22 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
     // An imported BO unwires the caller's pages; their cache mode is the
     // caller's and must not be touched here.
     if(bo.imported&&bo.desc)bo.desc->complete(kIODirectionInOut);
-    OSSafeReleaseNULL(bo.desc);
+    // An owned BO uses its buffer as the descriptor; release it once.
+    if(bo.desc&&bo.desc!=bo.buf)OSSafeReleaseNULL(bo.desc);
     // Restore the VM's default page attributes only after the GPU can no
-    // longer access this BO. This mirrors sheng's owned BO lifecycle.
-    if(!bo.imported&&bo.physical)
-        for(uint64_t off=0;off<bo.bytes;off+=4096)
-            pmap_set_cache_attributes((ppnum_t)((bo.physical+off)>>12),VM_WIMG_USE_DEFAULT);
+    // longer access this BO, page by page because the runs are scattered.
+    if(!bo.imported&&bo.desc){
+        IOByteCount off=0;
+        while(off<bo.bytes){
+            IOByteCount seg=0;
+            const uint64_t pa=bo.desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+            if(!pa||!seg)break;
+            if(seg>bo.bytes-off)seg=bo.bytes-off;
+            const unsigned pages=unsigned((seg+4095)/4096);
+            for(unsigned p=0;p<pages;++p)pmap_set_cache_attributes((ppnum_t)((pa+uint64_t(p)*4096)>>12),VM_WIMG_USE_DEFAULT);
+            off+=uint64_t(pages)*4096;
+        }
+    }
     OSSafeReleaseNULL(bo.buf);
     bo=Bo();
     return true;
@@ -589,51 +626,26 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     unsigned index=MaxBo;
     for(unsigned i=0;i<MaxBo;++i)if(!bos_[i].handle){index=i;break;}
     if(index==MaxBo)return kIOReturnNoResources;
-    // The CP cannot access pages above roughly 5 GB on this board: a runtime
-    // mapping at 0x2017000 (4.6 GB) is written and read normally, while every
-    // user page above 5.0 GB times out for both CP_MEM_TO_MEM reads (GCPY) and
-    // MEM_WRITE, even though ATOS reports a correct translation. Allocate GPU
-    // buffers from below 4 GiB, the same masked pool the SMMU tables use, and
-    // fall back to the normal pool when that is exhausted.
-    // A single 4 KiB page is contiguous by construction, so the low attempt
-    // does not need the physically-contiguous request that failed for the
-    // multi-page case in boot 0x55bce295. Larger buffers keep the old path.
-    // Take a page reserved at probe time first: pages allocated at submit
-    // time land above the range the CP can reach (GLTE rc=-4, boot 0x561d238f),
-    // while the probe's own early allocations stay below it.
+    // sagit's allocation model: normal kernel pages, no low-address mask and
+    // no contiguity requirement. The mapper walks every physical run and maps
+    // it into the client IOVA window; the SMMU translates per page. A
+    // contiguous request (ABI bit) still asks the allocator for one span.
     IOBufferMemoryDescriptor *buf=nullptr;
-    uint64_t poolPa=0;
-    bool low=false;
-    if(a.bytes==4096&&cheeseburger_gpu_low_take(&poolPa,&buf)==0&&buf){low=true;buf->retain();}
-    if(!buf&&a.bytes<=4096){
-        buf=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-            kIODirectionInOut|kIOMemoryMapperNone,(vm_size_t)a.bytes,0x00000000fffff000ull);
-        if(buf){IOByteCount s0=0;uint64_t p0=buf->getPhysicalSegment(0,&s0,kIOMemoryMapperNone);
-            if(!p0||(p0&4095)||s0<a.bytes||p0>=0x100000000ull){buf->release();buf=nullptr;}}
-    }
-    if(!buf)buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
-        kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,(vm_size_t)a.bytes,4096);
+    if(a.contiguous)
+        buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+            kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
+            (vm_size_t)a.bytes,4096);
+    else
+        buf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+            kIODirectionInOut|kIOMemoryMapperNone,(vm_size_t)a.bytes,4096);
     if(!buf){IOLog("CB GPU bo: alloc %llu align=%u contig=%u failed\n",
         (unsigned long long)a.bytes,a.align_log2,a.contiguous);return kIOReturnNoMemory;}
-    native_adreno_bo_low[low?0:1]=native_adreno_bo_low[low?0:1]+1;
     IOByteCount span=0;
-    uint64_t pa=low?poolPa:buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
-    if(!pa||(pa&4095)||(!low&&span<a.bytes)||pa+a.bytes>(1ull<<36)){buf->release();return kIOReturnNoMemory;}
-    void *block=buf->getBytesNoCopy();
-    if(!block){buf->release();return kIOReturnNoMemory;}
-    void *cpu=block;
-    if(low){
-        // A pool BO is one page of the shared block: view its own page. If the
-        // block base cannot be read back, keep the old view instead of
-        // refusing an allocation that used to succeed.
-        IOByteCount span0=0;
-        const uint64_t blockPa=buf->getPhysicalSegment(0,&span0,kIOMemoryMapperNone);
-        const IOByteCount blockLen=buf->getLength();
-        if(blockPa&&pa>=blockPa&&a.bytes<=blockLen&&pa-blockPa<=blockLen-a.bytes)
-            cpu=(void*)((uint8_t*)block+(pa-blockPa));
-        else IOLog("CB GPU bo: pool view fallback pa=%llx base=%llx\n",
-            (unsigned long long)pa,(unsigned long long)blockPa);
-    }
+    const uint64_t pa=buf->getPhysicalSegment(0,&span,kIOMemoryMapperNone);
+    if(!pa||(pa&4095)||(a.contiguous&&span<a.bytes)){buf->release();return kIOReturnNoMemory;}
+    void *cpu=buf->getBytesNoCopy();
+    if(!cpu){buf->release();return kIOReturnNoMemory;}
+    native_adreno_bo_low[1]=native_adreno_bo_low[1]+1;
     // Publish initialized cache lines before the pages are GPU-visible. The
     // WCOMB attribute from b9f698f was removed in boot 0x4a508e1d and changed
     // nothing: the failure follows the physical page, not its cache attribute.
@@ -645,16 +657,11 @@ IOReturn AGXDeviceUserClient::boAlloc(const NativeAdrenoAbiBoAlloc &a,NativeAdre
     bo.physical=pa;
     bo.buf=buf;
     bo.cpu=cpu;
-    // One descriptor object per BO: clientMemoryForType must return this same
-    // instance so IOConnectUnmapMemory64 can find and remove the mapping. The
-    // descriptor describes the same raw physical range the SMMU maps; its
-    // pages stay alive through bo.buf.
-    IOAddressRange range={pa,a.bytes};
-    bo.desc=IOMemoryDescriptor::withAddressRanges(&range,1,
-        static_cast<IOOptionBits>(kIODirectionInOut)|static_cast<IOOptionBits>(kIOMemoryTypePhysical64),nullptr);
-    if(!bo.desc){
-        buf->release();bo=Bo();return kIOReturnNoMemory;
-    }
+    // One descriptor per BO. Returning the buffer's own descriptor keeps the
+    // exact page set the mapper walks (a scattered BO has no single physical
+    // range), and clientMemoryForType still returns the same instance that
+    // IOConnectUnmapMemory64 asks for. bo.buf owns the only reference.
+    bo.desc=buf;
     bo.token=BoTokenBase+index;
     if(gRetireLock){IOLockLock(gRetireLock);bo.serial=++gSerialCounter;IOLockUnlock(gRetireLock);}
     r.handle=bo.handle;
@@ -680,36 +687,43 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
         if(!o.handle||!o.mapped)continue;
         if(m.iova<o.iova+o.bytes&&o.iova<m.iova+bo->bytes)return kIOReturnBusy;
     }
-    // Allocated BOs are one physically contiguous run; an imported BO may be
-    // scattered over the caller's pages, so every run is mapped at its offset.
+    // sagit-style mapping: walk every physical run of the BO descriptor and
+    // map it at its offset. Owned buffers are normal scattered pages now, so
+    // a single contiguous call would map the wrong pages for everything past
+    // the first run.
     bo->spanCount=0;
     int rc=0;
-    if(!bo->imported){
-        const uint64_t pa=bo->physical;
-        if(!pa||(pa&4095))return kIOReturnNoMemory;
-        if(cheeseburger_gpu_smmu_map(m.iova,pa,unsigned(bo->bytes/4096)))rc=-1;
-        else {bo->spans[0]={m.iova,pa,unsigned(bo->bytes/4096)};bo->spanCount=1;}
-    } else {
+    uint64_t failedAt=bo->bytes;
+    {
         IOByteCount off=0;
-        while(!rc&&off<bo->bytes&&bo->spanCount<64){
+        while(off<bo->bytes){
             IOByteCount seg=0;
             const uint64_t pa=bo->desc?bo->desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone):0;
-            if(!pa||!seg){rc=-1;break;}
+            if(!pa||(pa&4095)||!seg){rc=-1;failedAt=off;break;}
             if(seg>bo->bytes-off)seg=bo->bytes-off;
             const unsigned pages=unsigned((seg+4095)/4096);
-            if(cheeseburger_gpu_smmu_map(m.iova+off,pa,pages)){rc=-1;break;}
-            bo->spans[bo->spanCount++]={m.iova+off,pa,pages};
+            if(pa+uint64_t(pages)*4096>(1ull<<36)){rc=-2;failedAt=off;break;}
+            if(cheeseburger_gpu_smmu_map(m.iova+off,pa,pages)){rc=-3;failedAt=off;break;}
+            if(bo->spanCount<64)bo->spans[bo->spanCount++]={m.iova+off,pa,pages};
             off+=uint64_t(pages)*4096;
         }
-        if(!rc&&off<bo->bytes)rc=-1;
     }
     if(rc){
-        for(unsigned i=0;i<bo->spanCount;++i)cheeseburger_gpu_smmu_unmap(bo->spans[i].iova,bo->spans[i].pages);
+        // Unmap the prefix that was mapped; the first miss is the failure
+        // point. A real TLB/table failure retires the IOVA for the boot.
+        bool unmapFailed=false;
+        IOByteCount off=0;
+        while(off<failedAt){
+            IOByteCount seg=0;
+            const uint64_t pa=bo->desc?bo->desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone):0;
+            if(!pa||!seg)break;
+            if(seg>failedAt-off)seg=failedAt-off;
+            const unsigned pages=unsigned((seg+4095)/4096);
+            if(cheeseburger_gpu_smmu_unmap(m.iova+off,pages)){unmapFailed=true;break;}
+            off+=uint64_t(pages)*4096;
+        }
+        if(unmapFailed)retainIova(m.iova,bo->bytes);
         bo->spanCount=0;
-        // A failed map should leave no entry, but if the rollback cannot sync
-        // the TLB the IOVA is retired rather than offered to another map.
-        if(cheeseburger_gpu_smmu_unmap(m.iova,unsigned(bo->bytes/4096)))
-            retainIova(m.iova,bo->bytes);
         native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;
         return kIOReturnNoMemory;
     }

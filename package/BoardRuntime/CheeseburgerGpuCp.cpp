@@ -42,6 +42,7 @@ int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,ui
 int cheeseburger_gpu_scanout_flip_test(void);
 int cheeseburger_gpu_compute_band_test(void);
 int cheeseburger_gpu_copy540_test(void);
+int cheeseburger_gpu_highpa_test(void);
 int native_legacy_scanout_flip(uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,volatile uint64_t *);
 volatile uint64_t cb_gpu_paths[8];
 volatile uint64_t native_adreno_probe_exec;
@@ -79,6 +80,9 @@ volatile uint32_t native_adreno_cprobe[24];
 // same-pitch target, four from the 1088-pitch target, both match counts and
 // the two destination pitches.
 volatile uint32_t native_adreno_copy2d[16];
+// High physical address self-test: rc, seq, min/max page PA, pages above
+// 4 GiB, match count and four quadrant samples.
+volatile uint32_t native_adreno_highpa[12];
 // Low pool: count and first page, filled at probe time.
 volatile uint32_t native_adreno_low_pool[4];
 // Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
@@ -595,6 +599,8 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
       if(crc==0&&gEngine540&&gEngine540->ready()&&!gEngineSubmitFailed){
        const int copyrc=cheeseburger_gpu_copy540_test();
        IOLog("CB GPU copy: exit rc=%d\n",copyrc);
+       const int hprc=cheeseburger_gpu_highpa_test();
+       IOLog("CB GPU highpa: exit rc=%d\n",hprc);
        const int frc=cheeseburger_gpu_scanout_flip_test();
        IOLog("CB GPU flip: exit rc=%d\n",frc);
        const int crc2=cheeseburger_gpu_compute_band_test();
@@ -1223,13 +1229,17 @@ extern "C" int cheeseburger_gpu_copy540_test(void){
  if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
     !gClearIbVA||!gClearScratchIova||!gClearTargetIova)return gCopyRc;
  for(unsigned i=0;i<2;++i){
-  gCopyBuf[i]=clearBuffer(CopyBytes);
+  // The destination must cover pitch*height, not the source size: a 256-pixel
+  // image at pitch 1088 needs 69632 bytes for 64 rows. A 64 KiB buffer wrote
+  // 5120 bytes past the mapping and faulted the SMMU context.
+  const uint32_t bytes=gCopyPitch[i]*CopyH;
+  gCopyBuf[i]=clearBuffer(bytes);
   if(!gCopyBuf[i]){IOLog("CB GPU copy: no target %u\n",i);return gCopyRc;}
   gCopyVA[i]=(volatile uint32_t*)gCopyBuf[i]->getBytesNoCopy();
   if(!gCopyVA[i]){IOLog("CB GPU copy: no view %u\n",i);return gCopyRc;}
-  memset((void*)gCopyVA[i],0,CopyBytes);
-  flush_dcache((vm_offset_t)gCopyVA[i],CopyBytes,FALSE);
-  if(clearMap(gCopyBuf[i],gCopyIova[i],CopyBytes/4096)){
+  memset((void*)gCopyVA[i],0,bytes);
+  flush_dcache((vm_offset_t)gCopyVA[i],bytes,FALSE);
+  if(clearMap(gCopyBuf[i],gCopyIova[i],bytes/4096)){
    IOLog("CB GPU copy: map %u failed\n",i);return gCopyRc;
   }
  }
@@ -1246,7 +1256,7 @@ extern "C" int cheeseburger_gpu_copy540_test(void){
  uint32_t seq=0;
  const int rc=clearKick(words,seq);
  __asm__ volatile("dsb sy":::"memory");
- for(unsigned i=0;i<2;++i)flush_dcache((vm_offset_t)gCopyVA[i],CopyBytes,FALSE);
+ for(unsigned i=0;i<2;++i)flush_dcache((vm_offset_t)gCopyVA[i],gCopyPitch[i]*CopyH,FALSE);
  __asm__ volatile("dsb sy":::"memory");
  unsigned amatch=0,bmatch=0;
  if(!rc)for(unsigned i=0;i<2;++i){
@@ -1265,6 +1275,92 @@ extern "C" int cheeseburger_gpu_copy540_test(void){
   rc,seq,words,gCopySamples[0],gCopySamples[1],gCopySamples[2],gCopySamples[3],amatch,
   gCopySamples[4],gCopySamples[5],gCopySamples[6],gCopySamples[7],bmatch);
  gCopyRc=rc?rc:0;
+ return rc;
+}
+// ---------------------------------------------------------------------------
+// High physical address check with sagit's allocation model: one 32 MiB
+// normal buffer (no low mask, no contiguity), then the last 64 KiB is filled
+// by the 2D engine with per-run SMMU mappings. The old low-pool workaround
+// assumed the CP cannot reach pages above ~5 GB; this records the actual page
+// range and whether the GPU writes/reads the chosen pages.
+enum {HighPaBytes=32*1024*1024,HighPaImage=64*1024,HighPaWidth=256,HighPaHeight=64,
+      HighPaPitch=1024};
+static IOBufferMemoryDescriptor *gHighPaBuf=nullptr;
+static volatile uint32_t *gHighPaVA=nullptr;
+static uint32_t gHighPaSamples[4];
+static int gHighPaRc=0xffff;
+extern "C" int cheeseburger_gpu_highpa_test(void){
+ if(gHighPaRc!=0xffff)return gHighPaRc;
+ gHighPaRc=-1;
+ if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
+    !gClearIbVA||!gClearScratchIova)return gHighPaRc;
+ gHighPaBuf=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+  kIODirectionInOut|kIOMemoryMapperNone,(vm_size_t)HighPaBytes,4096);
+ if(!gHighPaBuf){IOLog("CB GPU highpa: alloc failed\n");return gHighPaRc;}
+ uint64_t minPa=~0ull,maxPa=0;unsigned highPages=0,totalPages=0;
+ for(uint64_t off=0;off<HighPaBytes;off+=4096){
+  IOByteCount seg=0;
+  const uint64_t pa=gHighPaBuf->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+  if(!pa||!seg)break;
+  if(pa<minPa)minPa=pa;if(pa>maxPa)maxPa=pa;
+  if(pa>=(1ull<<32))++highPages;
+  ++totalPages;
+ }
+ const uint64_t imgOff=HighPaBytes-HighPaImage;
+ gHighPaVA=(volatile uint32_t*)((uint8_t*)gHighPaBuf->getBytesNoCopy()+imgOff);
+ if(!gHighPaVA){IOLog("CB GPU highpa: no view\n");return gHighPaRc;}
+ memset((void*)gHighPaVA,0,HighPaImage);
+ flush_dcache((vm_offset_t)gHighPaVA,HighPaImage,FALSE);
+ // Map the image's runs at 0x2600000; every run is checked against 36 bits.
+ int mrc=0;uint64_t mappedOff=0;
+ {
+  uint64_t off=imgOff,done=0;
+  while(done<HighPaImage){
+   IOByteCount seg=0;
+   const uint64_t pa=gHighPaBuf->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+   if(!pa||(pa&4095)||!seg){mrc=-1;break;}
+   if(seg>imgOff+HighPaImage-off)seg=imgOff+HighPaImage-off;
+   const unsigned pages=unsigned((seg+4095)/4096);
+   if(pa+uint64_t(pages)*4096>(1ull<<36)){mrc=-2;break;}
+   if(cheeseburger_gpu_smmu_map(0x2600000+done,pa,pages)){mrc=-3;break;}
+   off+=uint64_t(pages)*4096;done+=uint64_t(pages)*4096;mappedOff=done;
+  }
+ }
+ if(mrc){
+  IOLog("CB GPU highpa: map rc=%d off=%llu\n",mrc,(unsigned long long)imgOff);
+  return gHighPaRc;
+ }
+ uint32_t *ib=(uint32_t*)gClearIbVA;
+ memset(ib,0,8192);
+ CheeseburgerGpu::Encoder540 e(ib,2048);
+ CheeseburgerGpu::Blit540 b(e);
+ bool ok=b.restore()&&b.begin2D();
+ for(unsigned q=0;q<4&&ok;++q){
+  const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
+  ok=b.solidFill(0x2600000+uint64_t(qy)*HighPaPitch+qx*4u,128,32,HighPaPitch,
+   gClearColors[q],gClearScratchIova);
+ }
+ const uint32_t words=e.size();
+ uint32_t seq=0;
+ const int rc=ok?clearKick(words,seq):-10;
+ __asm__ volatile("dsb sy":::"memory");
+ flush_dcache((vm_offset_t)gHighPaVA,HighPaImage,FALSE);
+ __asm__ volatile("dsb sy":::"memory");
+ unsigned match=0;
+ if(!rc)for(unsigned q=0;q<4;++q){
+  const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
+  gHighPaSamples[q]=gHighPaVA[(qy+16)*(HighPaPitch/4)+qx+64];
+  if(gHighPaSamples[q]==gClearColors[q])++match;
+ }
+ native_adreno_highpa[0]=uint32_t(rc);native_adreno_highpa[1]=seq;
+ native_adreno_highpa[2]=uint32_t(minPa);native_adreno_highpa[3]=uint32_t(minPa>>32);
+ native_adreno_highpa[4]=uint32_t(maxPa);native_adreno_highpa[5]=uint32_t(maxPa>>32);
+ native_adreno_highpa[6]=highPages;native_adreno_highpa[7]=match;
+ for(unsigned q=0;q<4;++q)native_adreno_highpa[8+q]=gHighPaSamples[q];
+ IOLog("CB GPU highpa: rc=%d seq=%u words=%u min=%llx max=%llx high=%u/%u px=%x/%x/%x/%x match=%u/4\n",
+  rc,seq,words,(unsigned long long)minPa,(unsigned long long)maxPa,highPages,totalPages,
+  gHighPaSamples[0],gHighPaSamples[1],gHighPaSamples[2],gHighPaSamples[3],match);
+ gHighPaRc=rc;
  return rc;
 }
 // ---------------------------------------------------------------------------

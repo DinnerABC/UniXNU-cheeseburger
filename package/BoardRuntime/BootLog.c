@@ -97,6 +97,9 @@ extern volatile uint32_t native_adreno_cprobe[24] __attribute__((weak_import));
 /* GPU->GPU 2D copy: rc/seq/words, same-pitch and 1088-pitch samples and
  * match counts, plus the two destination pitches. */
 extern volatile uint32_t native_adreno_copy2d[16] __attribute__((weak_import));
+/* High physical address self-test: rc/seq, min/max page PA, pages above
+ * 4 GiB and the four quadrant samples. */
+extern volatile uint32_t native_adreno_highpa[12] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -724,6 +727,16 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       native_adreno_copy2d[7],native_adreno_copy2d[8],native_adreno_copy2d[9],native_adreno_copy2d[10],
       native_adreno_copy2d[12],native_adreno_copy2d[13],native_adreno_copy2d[14],cb_boot_id);
     at=put(out,at,cap,cpy,sizeof cpy);
+   }
+   if (&native_adreno_highpa[0] && (native_adreno_highpa[0] || native_adreno_highpa[1])) {
+    char hpa[200];
+    snprintf(hpa,sizeof hpa,"HPA rc=%d seq=%u min=%x%08x max=%x%08x high=%u px=%x/%x/%x/%x match=%u/4 bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_highpa[0],native_adreno_highpa[1],
+      native_adreno_highpa[3],native_adreno_highpa[2],
+      native_adreno_highpa[5],native_adreno_highpa[4],native_adreno_highpa[6],
+      native_adreno_highpa[8],native_adreno_highpa[9],native_adreno_highpa[10],
+      native_adreno_highpa[11],native_adreno_highpa[7],cb_boot_id);
+    at=put(out,at,cap,hpa,sizeof hpa);
    }
    /* Last submission as the CP reads it: seq, start, end and the first words
     * of the stream, so a fence that never fires can be compared with what was
