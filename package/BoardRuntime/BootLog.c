@@ -88,9 +88,11 @@ extern volatile uint32_t native_adreno_clear[24] __attribute__((weak_import));
 /* GPU frame on the panel: render rc, physical address, stride, four band
  * pixels, and the display driver's flip result/pipe/control. */
 extern volatile uint32_t native_adreno_flip[10] __attribute__((weak_import));
-/* IR3 compute band: rc/seq/words, four samples, match, band PA/bytes and the
- * local/group geometry. */
-extern volatile uint32_t native_adreno_compute[12] __attribute__((weak_import));
+/* IR3 compute band: rc/seq/words, four samples, match, band PA/bytes, the
+ * local/group geometry, then the isolated constant probe (rc/words/px). */
+extern volatile uint32_t native_adreno_compute[16] __attribute__((weak_import));
+/* Core-domain transition: rc, RBCCU/SP status before and after, fence result. */
+extern volatile uint32_t native_adreno_resume[6] __attribute__((weak_import));
 /* Compute isolation matrix: const/shift probes into our own 4 KiB SSBO and
  * the same two shaders over the scanout band. */
 extern volatile uint32_t native_adreno_cprobe[24] __attribute__((weak_import));
@@ -694,6 +696,26 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       (int)(int16_t)(uint16_t)native_adreno_flip[7],native_adreno_flip[8],native_adreno_flip[9],
       cb_boot_id);
     at=put(out,at,cap,flip,sizeof flip);
+   }
+   /* Core-domain transition: status before and after the CP-quiescent
+    * power-up, and the keep-alive fence that proves the CP survived it. */
+   if (&native_adreno_resume[0] && native_adreno_resume[1]) {
+    char core[170];
+    snprintf(core,sizeof core,"CORE rbccu=%x>%x sp=%x>%x rc=%d fence=%d/%u bid=%llx",
+      native_adreno_resume[1],native_adreno_resume[3],
+      native_adreno_resume[2],native_adreno_resume[4],
+      (int)(int16_t)(uint16_t)native_adreno_resume[0],
+      (int)(int16_t)(uint16_t)(native_adreno_resume[5]&0xff),
+      (native_adreno_resume[5]>>8)&0xffu,cb_boot_id);
+    at=put(out,at,cap,core,sizeof core);
+   }
+   /* Isolated compute constant probe: its own page should hold 0xdeadbeef. */
+   if (&native_adreno_compute[0] && (native_adreno_compute[12] || native_adreno_compute[14])) {
+    char shdr[150];
+    snprintf(shdr,sizeof shdr,"SHDR rc=%d w=%u px=%x/%x bid=%llx",
+      (int)(int16_t)(uint16_t)native_adreno_compute[12],native_adreno_compute[13],
+      native_adreno_compute[14],native_adreno_compute[15],cb_boot_id);
+    at=put(out,at,cap,shdr,sizeof shdr);
    }
    /* Compute shader band on the firmware scanout: the SSBO store is byte
     * addressed, so it writes the real 4320-byte pitch that the 2D/3D engines

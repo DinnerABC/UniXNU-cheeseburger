@@ -1,3 +1,103 @@
+## 2026-11-05：P21-Wagtail（构建完成、**未启动**；SP 域恢复 + A540 shader 执行路径）
+
+> 用户在本轮启动前要求停止设备操作并交接给下一位 agent。**本轮没有 fastboot，
+> 也没有写 misc。设备仍在 Recovery（`3b25cc7c`）。** 下一位按下面第 5 节执行即可。
+
+### 一、根因与 sagit 对照（本轮新增结论）
+
+- sagit（`MC-XiaoXiao/ios_sagit` @ `673f85070fe9f7872793015eb230a5c3987d4a8c`，2026-11-05 重新 fetch 仍为最新）
+  的 `QcomGPUSecure.cpp` 只对**引导器已认证**的 ZAP 调用 PAS **resume**；内核从不执行
+  `authenticate`，所以 GPU 核心域不会被重置。
+- 一加 5 的固件不做预认证，我们在运行时执行完整 PAS（`init → mem_setup → authenticate`）。
+  authenticate 会重置 GPU 核心域；P21-Lapwing 的 `rbccu=778801/1 sp=778001/1` 正是该步之后。
+  这解释了两件事：2D（RB/RAC）一直正常，而 CS/VS/FS 只 fence、不写。
+- 恢复方式与 Android `a5xx_pm_resume` / sagit `enableCoreBlocks` 相同：**CP 停止时**写
+  `0xa887=0x778000`、`0xa881=0x778000`。活动 CP 上写会停 CP（P21-Quail）。
+- 本轮复用本板已实机验证的 `drainForTables/resumeAfterTables`（每次 SMMU 表更新都在用）
+  作为停机/恢复窗口，避免 P21-Plover 自写 halt 路径。
+
+### 二、本轮代码（已提交）
+
+- `package/BoardRuntime/CheeseburgerGpuCp.cpp`
+  - 新增 `resumeCoreDomains()`：取 `gSubmitLock` → 采样域状态 → `drainForTables`（停 CP/VBIF、
+    空环、idle）→ **posted** 写 RBCCU/SP 电源命令（各 3 ms）→ `resumeAfterTables` → 解锁后
+    才读状态。halt 期间不读任何 GPMU/GPU 寄存器。失败即 quarantine，不再提交。
+  - compute 测试改为 opt-in：必须 `cheeseburger-gpu-compute=1`；测试内先做上述转换，再用
+    `keepAliveInline()` 发一个 fence 证明 CP 存活（失败即 quarantine）。
+  - 私有 SSBO 第 7 页新增独立常量探针（`Probe540` 写 `0xdeadbeef`），与扫描带分开取证。
+  - 探针新增 `CB GPU args: len=` 行，记录内核命令行真实长度（本轮 args 697 B + 运行期池参数）。
+  - `native_adreno_compute[16]`（新增 [12..15] 常量探针）与 `native_adreno_resume[6]`。
+- `package/BoardRuntime/BootLog.c`：新增持久行 `CORE rbccu=a>b sp=c>d rc=… fence=…` 与
+  `SHDR rc/w/px`；`CMPT`/`CPRB` 不变。
+- `package/BoardRuntime/CheeseburgerGpuService.cpp`（生命周期复核后的具体修正）：
+  - `clientMemoryForType` / `BoCpuUnmap` 拒绝 imported BO（ABI 明确 imported BO 无 CPU token）。
+  - `BoImport` 拒绝无 `task_` 的客户端。
+  - `BoMap` 拒绝与“unmap 失败而保留的 IOVA”重叠的请求，避免覆盖仍可能被 GPU 使用的 leaf。
+  - `clientClose()`/`free()` 与 `run()` 用同一把客户端锁串行 BO 表。
+  - 未改：job holds、失败保留、fence 后退休、每次提交 TLBIALL。
+- 文档：`docs/P21_A540_SHADER_20261105.md`（sagit 对照表、状态机、取证字段）。
+- 未改动：启动/显示/触摸/UEFI/固件池/Data seed/日志路径；固件 DarwinBoot 仍为 16 页池。
+
+### 三、构建（全部完成，离线门禁 PASS）
+
+| 项 | 值 |
+| --- | --- |
+| 候选 | `out/p21/p21-wagtail/` |
+| 内核（入口补丁后） | `f8ab89ca72dcb46d8062bce3e9d6deb16f6938434a05a04b3fec6c2af8634548`（126,070,784 B） |
+| native（unstripped） | `f77b7ddd998ea4be2b5f935a419260e357f462f22c41e600b1cefb9f73c22613` |
+| prelink | `24b7935167bbc128cf44abaece88ceadcae2814a36de66c0331cbc86f24ba0c9` |
+| payload 展开 / 容器 | `b5795f8f58f57bdc7c92e841dde93c7255335bb628e417ada41282de932dd134` / `8a095b7f01edeb31b993c55bd2a280aa6bc8e152ce8ddf9b3c564dc0df947bbb` |
+| 固件 FD | `a8a146a8a70bd35cd5ab588fb06690f76d0c3081ff03bc9052257266263fe3c7`（6,291,456 B，overlay `unixnu-up1-gpu-smmu-irq-drain`） |
+| 镜像 | `out/p21/p21-wagtail/uefi/boot-p21-up1.img` `c7387f79732fd49c6af7848fca83f86d207cf8e15f033f3dbc4b84c7b3073126`（82,800,640 B） |
+| gate | `20261105T135206Z` PASS，`args_bytes=697`，kernel/payload/ADT 三项 pin 命中（`FVMAIN.Fv` 等） |
+
+唯一相对基线的启动参数变化：`cheeseburger-gpu-compute=1`（加在 args 串第二位）。默认不设该参数
+时，本轮内核与基线的运行行为一致（compute 不再默认执行）。
+
+### 四、下一位启动前必须核对
+
+1. 设备 `3b25cc7c` 处于 Recovery；上一轮日志 `out/p21/persistent-logs/20261105T130600Z/`
+   已回收（控制启动 `0x42238bf5`），启动前无需再读。
+2. 先跑 `scripts/unattended/preboot-gate-p21.py out/p21/p21-wagtail`（已 PASS；重跑需新 receipt）。
+3. misc BCB（`/dev/block/sda4` 首 4 KiB 的 `boot-recovery\0`，保留其余字节）需要用户逐次授权；
+   本轮**未写**。写入后必须 push→dd→回读，确认回读非零且首字节为 `boot-recovery`，否则不启动
+   （P21-Skua 的教训）。
+4. `adb reboot bootloader` → 确认 `fastboot devices` 看到 `3b25cc7c` → 只执行一次
+   `fastboot boot out/p21/p21-wagtail/uefi/boot-p21-up1.img`，保存 `Sending/Booting OKAY` 与时间。
+5. 观察窗口 230 s（约 262 s 自动回 Recovery）；若日志到 ~110 s 就停且无 USB，按第 6 节手动恢复。
+
+### 五、启动后要看的字段（按顺序）
+
+- `CB GPU args: len=…`（新）：确认真实命令行长度与是否截断。
+- `CB GPU power: before … after …` / `after-zap rbccu=778801/1 sp=778001/1`：确认转换前域是关的。
+- `CB GPU core: resume rc=<0|1> rb=a>b sp=c>d`：`b`/`d` 的 bit20（`0x100000`）都应置位；
+  `rc=1` 表示本轮写了电源命令，`rc=0` 表示本来就开着。
+- `CB GPU core: fence rc=0 stage=6 fr=…`：转换后 CP 仍执行；非 0 表示引擎已 quarantine（系统仍可用）。
+- `CB GPU compute: var 0 sagit rc=0 … late=deadbeef` → 常量探针 `late` 应为 `deadbeef`；
+  `CB GPU compute: probe rc=0 … px=deadbeef/deadbeef` 是独立 SSBO 证据。
+- `CB GPU compute: band rc=0 … match=4/4`（采样值 = `id<<8`）：CS 写进 4320 pitch 扫描带。
+- 持久快照应出现 `CORE`、`SHDR`、`CMPT`、`CPRB`；回归看 `CLR/CPY/BIG/SURF` 仍 `match=4/4`、
+  `GPSVC … err=0`、`GBOD 1:adc0de1/feed0002/600d0003`、`DISPLAY frames>=2`。
+- 启动后立即用 `scripts/logging/read-cheeseburger-log.py` 回收，比较 boot ID 与窗口哈希，
+  再跑 `scripts/p21-freeze-round.py <UTC>-p21-wagtail --candidate out/p21/p21-wagtail --boot-log … --retrieval …`。
+
+### 六、失败签名与回退
+
+- 日志停在 `CB GPU core: resume` 之前/之后且无 USB：转换窗口不适用于本板（最可能的新风险）。
+  手动长按电源回 Recovery，不重复启动同一镜像；保留日志，回退源码到 `p21-bootable`，
+  下一轮把 `cheeseburger-gpu-core-resume=0` 作为对照（compute 仍会 fence、不写）。
+- `resume rc=-4`：drain 前置条件失败（环不空/状态非 idle/ME 或 VBIF 未停）→ 引擎已 quarantine，
+  系统应继续运行；查该时刻的 `pre pwr` 行。
+- `rc=-5`：resume 失败 → 引擎 quarantine；说明 halt 后 VBIF/CP 没有恢复，不可再提交。
+- `rc=-6`：写了命令但状态 bit20 仍为 0 → SP 未上电；CS 不会写，但 2D/用户链不受影响。
+- 显示/客户端回归失败但 compute 正常：整体回退到本轮的 2D 基线（源码 HEAD 的 `p21-bootable` +
+  `cheeseburger-gpu-compute=0`），不要只删 compute 的一半代码。
+- 已知可启动控制镜像：`out/p21/p21-zorzal/logs/control-cde78c8c.img`。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Wagtail** | `c7387f79…` | `f8ab89ca…` | SP 域恢复 + shader 执行路径（opt-in）；构建/gate PASS；**未启动**，待实机验证 |
+
 ## 2026-11-05：停止修改，回滚到可启动分支 p21-bootable（已登记）
 
 - 两次共享固件低位池的镜像（`07a20f5c…`、`f798d565…`）均在 230 s 后无 USB/无 fastboot；用户确认第二次仍无蓝/品红条。

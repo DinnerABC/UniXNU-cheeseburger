@@ -82,11 +82,15 @@ volatile uint32_t native_adreno_clear[24];
 // stride, four band pixels, the display-hook result and its pipe/ctl.
 volatile uint32_t native_adreno_flip[10];
 // Compute band: rc, sequence, IB words, four samples, match count, band base,
-// buffer bytes and the local/group geometry.
-volatile uint32_t native_adreno_compute[12];
+// buffer bytes, the local/group geometry, then the isolated constant probe
+// (rc, words, dword 0, dword 1).
+volatile uint32_t native_adreno_compute[16];
 // CS variant matrix: late dword0 for variants 0..7, their rc at 8..15, and the
 // immediate (pre-delay) dword0 at 16..23.
 volatile uint32_t native_adreno_cprobe[24];
+// Core-domain transition: rc, RBCCU/SP status before, the same after, and the
+// keep-alive fence result (rc | stage<<8) that proves the CP survived it.
+volatile uint32_t native_adreno_resume[6];
 // 2D GPU->GPU copy (sagit snapshot2D): rc, seq, words, four samples from the
 // same-pitch target, four from the 1088-pitch target, both match counts and
 // the two destination pitches.
@@ -305,6 +309,44 @@ static int flipPreallocate(void){
 static uint64_t gRingGva=0,gFenceGva=0;
 static uint32_t gRingWords=0,gFenceSeq=0;
 static IOLock *gSubmitLock=nullptr;
+// sagit Engine::idlePowerTransition. The PAS authenticate step that follows
+// CP_ME_INIT resets the RBCCU/SP core domains (P21-Lapwing:
+// rbccu=778801/1 sp=778001/1), and a compute or vertex/fragment shader cannot
+// execute while SP is down. The power-up command may only be written with the
+// CP stopped, so this reuses the halt/drain/resume that every SMMU table update
+// already runs on this board: halt CP and VBIF, prove the ring is empty and the
+// pipeline idle, write both domains, resume the same cursor, and read the GPMU
+// status only after the CP is live. No register read is issued while the AXI is
+// halted. A failed transition quarantines the engine and submits nothing.
+static int resumeCoreDomains(){
+ if(!gMmio||!gMmio->v||!gSubmitLock||!gEngine540||!gFence)return -1;
+ W gp;gp.v=gMmio->v;
+ IOLockLock(gSubmitLock);
+ if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||!gEngine540->ready()){
+  IOLockUnlock(gSubmitLock);return -2;
+ }
+ uint64_t pre[6]={0};powerCore(gp,pre,false);
+ native_adreno_resume[1]=uint32_t(pre[1]);native_adreno_resume[2]=uint32_t(pre[3]);
+ if(pre[1]==0xffffffffu||pre[3]==0xffffffffu){IOLockUnlock(gSubmitLock);return -3;}
+ if((pre[4]&(1u<<20))&&(pre[5]&(1u<<20))){IOLockUnlock(gSubmitLock);return 0;}
+ CheeseburgerGpu::DrainState drain;
+ if(!CheeseburgerGpu::drainForTables(*gMmio,true,drain)){
+  gEngineSubmitFailed=true;gEngine540->quarantine();
+  IOLockUnlock(gSubmitLock);return -4;
+ }
+ // Posted writes only: the halt left AXI quiesced, so the command must not wait
+ // on a trailing barrier here; resumeAfterTables' publish orders them.
+ if(!(pre[4]&(1u<<20))){gMmio->writePosted(0xa887*4,0x778000);IODelay(3);}
+ if(!(pre[5]&(1u<<20))){gMmio->writePosted(0xa881*4,0x778000);IODelay(3);}
+ if(!CheeseburgerGpu::resumeAfterTables(*gMmio,drain)){
+  gEngineSubmitFailed=true;gEngine540->quarantine();
+  IOLockUnlock(gSubmitLock);return -5;
+ }
+ IOLockUnlock(gSubmitLock);
+ uint64_t post[6]={0};powerCore(gp,post,false);
+ native_adreno_resume[3]=uint32_t(post[4]);native_adreno_resume[4]=uint32_t(post[5]);
+ return ((post[4]&(1u<<20))&&(post[5]&(1u<<20)))?1:-6;
+}
 static void captureGpuFaults(Mmio &m){
  cb_cp[50]=m.read(CheeseburgerGpu::CPHwFault);
  cb_cp[51]=m.read(CheeseburgerGpu::CPProtectStatus);
@@ -383,6 +425,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
   uint32_t(cb_cp[32]),uint32_t(cb_cp[33]),uint32_t(cb_cp[34]),uint32_t(cb_cp[35]),
   uint32_t(cb_cp[36]),uint32_t(cb_cp[37]));
  probePaths();
+ // The kernel command line is the one fixed buffer both loaders share; record
+ // its real length so a later arg can be added without guessing the cutoff.
+ { const char *a=PE_boot_args();IOLog("CB GPU args: len=%u\n",a?unsigned(strlen(a)):0xffffffffu); }
  IOSleep(8000); // let one BootLog round persist the state before any map
  // Persist each map result before the next step: the panel may black here and
  // the run is often returned manually, so a quick all-at-once map could be lost.
@@ -634,8 +679,15 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
        IOLog("CB GPU bigbo: exit rc=%d\n",bbrc);
        const int frc=cheeseburger_gpu_scanout_flip_test();
        IOLog("CB GPU flip: exit rc=%d\n",frc);
-       const int crc2=cheeseburger_gpu_compute_band_test();
-       IOLog("CB GPU compute: exit rc=%d\n",crc2);
+       // The IR3/CS path needs the SP core domain up, which costs a halt/resume
+       // of the live CP; keep it opt-in until this round's device result proves
+       // the transition, so a normal boot never enters it.
+       unsigned compute=0;
+       PE_parse_boot_argn("cheeseburger-gpu-compute",&compute,sizeof compute);
+       if(compute){
+        const int crc2=cheeseburger_gpu_compute_band_test();
+        IOLog("CB GPU compute: exit rc=%d\n",crc2);
+       }
       }
      } }
    cb_cp[48]=m.read(CheeseburgerGpu::TrustControl);
@@ -1684,6 +1736,25 @@ extern "C" int cheeseburger_gpu_compute_band_test(void){
  gComputeRc=-1;
  if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
     !gClearIbVA||!gClearScratchIova)return gComputeRc;
+ // RBCCU/SP are down after the PAS authenticate; bring them back in a proven
+ // quiescent window before the first shader dispatch. The keep-alive fence
+ // afterwards is the liveness proof for the transition itself.
+ unsigned resume=1;PE_parse_boot_argn("cheeseburger-gpu-core-resume",&resume,sizeof resume);
+ if(resume){
+  const int rrc=resumeCoreDomains();
+  IOLog("CB GPU core: resume rc=%d rb=%x/%x sp=%x/%x\n",rrc,
+   native_adreno_resume[1],native_adreno_resume[3],
+   native_adreno_resume[2],native_adreno_resume[4]);
+  if(rrc<0){gComputeRc=rrc;return gComputeRc;}
+  CheeseburgerGpu::SubmitRecord ka;
+  const int krc=keepAliveInline(gFenceSeq+1,ka);
+  native_adreno_resume[5]=uint32_t(uint16_t(uint32_t(krc)))|(uint32_t(ka.stage&0xff)<<8);
+  IOLog("CB GPU core: fence rc=%d stage=%u fr=%x\n",krc,ka.stage,ka.fence);
+  if(krc){
+   gEngineSubmitFailed=true;gEngine540->quarantine();gComputeRc=krc;return krc;
+  }
+  gFenceSeq=gFenceSeq+1;
+ }
  PE_Video v={};
  if(PE_current_console(&v)||!v.v_baseAddr||v.v_depth!=32||v.v_width<64||
     v.v_height<ComputeRows||v.v_rowBytes!=uint64_t(v.v_width)*4||(v.v_baseAddr&4095)){
@@ -1740,6 +1811,22 @@ extern "C" int cheeseburger_gpu_compute_band_test(void){
   native_adreno_cprobe[16+i]=immediate;
   IOLog("CB GPU compute: var %u %s rc=%d seq=%u words=%u imm=%x late=%x\n",
    i,name,rc,seq,words,immediate,late);
+ }
+ // Isolated constant probe on its own page: the shader stores 0xdeadbeef to
+ // every covered dword, so a non-zero page proves a launched CS wrote memory
+ // independently of the scanout mapping and of the id<<8 gradient.
+ { const uint64_t probeVA=gComputeProbeIova+7ull*4096;
+   uint32_t pseq=0,pwords=0;
+   const int prc=computeKickVariant(CheeseburgerGpu::Probe540::Code,gComputeShaderIova,
+    probeVA,4096,64,16,CheeseburgerGpu::ScanBand540::DefaultVariant(),pseq,pwords);
+   IODelay(20000);
+   __asm__ volatile("dsb sy":::"memory");
+   flush_dcache((vm_offset_t)(gComputeProbeVA+7*1024),64,FALSE);
+   __asm__ volatile("dsb sy":::"memory");
+   const uint32_t p0=gComputeProbeVA[7*1024],p1=gComputeProbeVA[7*1024+1];
+   native_adreno_compute[12]=uint32_t(prc);native_adreno_compute[13]=pwords;
+   native_adreno_compute[14]=p0;native_adreno_compute[15]=p1;
+   IOLog("CB GPU compute: probe rc=%d seq=%u words=%u px=%x/%x\n",prc,pseq,pwords,p0,p1);
  }
  // The scanout band uses variant 0 and waits before reading.
  const uint32_t local=64,pixels=uint32_t(v.v_width)*ComputeRows,groups=pixels/local;

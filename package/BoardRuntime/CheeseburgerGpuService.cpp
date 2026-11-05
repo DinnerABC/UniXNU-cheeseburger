@@ -97,6 +97,17 @@ void retainIova(uint64_t iova,uint64_t bytes) {
     if(gRetainedCount<MaxRetained)gRetained[gRetainedCount++]={iova,bytes};
     IOLockUnlock(gGateLock);
 }
+// A retained range still names a translation the GPU may hold; handing it to a
+// new BO would overwrite that leaf behind a mapping that could not be torn down.
+bool iovaRetained(uint64_t iova,uint64_t bytes) {
+    if(!gGateLock||!bytes)return true;
+    IOLockLock(gGateLock);
+    bool hit=false;
+    for(unsigned i=0;i<gRetainedCount&&!hit;++i)
+        if(iova<gRetained[i].iova+gRetained[i].bytes&&gRetained[i].iova<iova+bytes)hit=true;
+    IOLockUnlock(gGateLock);
+    return hit;
+}
 
 // --- Submission holds, jobs and quarantine ---------------------------------
 // A job keeps every mapped object of the client until its fence is observed.
@@ -552,18 +563,24 @@ void AGXDeviceUserClient::free() {
     }
     if(task_){task_deallocate(task_);task_=TASK_NULL;}
     if(bos_) {
+        // Runs after clientClose but must not race a method that is still on
+        // another thread: the same lock serializes this table with run().
+        if(lock_)IOLockLock(lock_);
         // A failed release is not dropped with the array: the object moves to
         // the tracked quarantine and its pages stay owned.
         for(unsigned i=0;i<MaxBo;++i)
             if(!freeBo(bos_[i])&&bos_[i].handle)quarantine(bos_[i]);
+        if(lock_)IOLockUnlock(lock_);
         IODelete(bos_,Bo,MaxBo);bos_=nullptr;
     }
     if(lock_){IOLockFree(lock_);lock_=nullptr;}
     IOUserClient::free();
 }
 IOReturn AGXDeviceUserClient::clientClose() {
+    if(lock_)IOLockLock(lock_);
     if(bos_)for(unsigned i=0;i<MaxBo;++i)
         if(!freeBo(bos_[i])&&bos_[i].handle)quarantine(bos_[i]);
+    if(lock_)IOLockUnlock(lock_);
     if(live_){live_=false;native_adreno_service_stats[1]=native_adreno_service_stats[1]+1;}
     if(ownsClient_){
         if(gGateLock){IOLockLock(gGateLock);gGate.release(generation_);IOLockUnlock(gGateLock);}
@@ -579,7 +596,7 @@ IOReturn AGXDeviceUserClient::clientMemoryForType(UInt32 type,IOOptionBits *opti
     IOLockLock(lock_);
     Bo *bo=nullptr;
     for(unsigned i=0;i<MaxBo;++i)
-        if(bos_[i].handle && bos_[i].token==type){bo=&bos_[i];break;}
+        if(bos_[i].handle && !bos_[i].imported && bos_[i].token==type){bo=&bos_[i];break;}
     if(!bo||!bo->desc){IOLockUnlock(lock_);return kIOReturnNotFound;}
     // The BO pages are cached in the kernel and the GPU's PTEs are
     // non-cacheable, so the client gets an uncached view of the same
@@ -688,6 +705,9 @@ IOReturn AGXDeviceUserClient::boMap(const NativeAdrenoAbiBoMap &m,NativeAdrenoAb
     if(!(m.permissions&1)||m.reserved||(m.iova&4095)||m.iova<start||m.iova+bo->bytes>start+window)
         return kIOReturnBadArgument;
     if(bo->mapped)return bo->iova==m.iova?kIOReturnSuccess:kIOReturnBusy;
+    // A range whose teardown failed still belongs to the object that could not
+    // be unmapped: its leaf entry must not be rewritten for a new BO.
+    if(iovaRetained(m.iova,bo->bytes))return kIOReturnBusy;
     // No two live BOs may claim the same GPU addresses: the SMMU leaf entries
     // are updated under this client's lock, and a duplicate range would let a
     // later free tear down another object's mapping.
@@ -751,7 +771,7 @@ IOReturn AGXDeviceUserClient::boFree(uint64_t handle) {
 // caller keeps its CPU mapping and cache mode and maintains them; the pages
 // stay wired until BoFree, which is refused while a job still references them.
 IOReturn AGXDeviceUserClient::boImport(const NativeAdrenoAbiBoImport &a,NativeAdrenoAbiBoAllocReply &r) {
-    if(!a.address||!a.bytes||(a.bytes&4095)||(a.address&4095)||a.bytes>(1ull<<36)||
+    if(!task_||!a.address||!a.bytes||(a.bytes&4095)||(a.address&4095)||a.bytes>(1ull<<36)||
        a.bytes>MaxBufferBytes540)return kIOReturnBadArgument;
     if(allocBytes_>MaxClientBytes540-a.bytes)return kIOReturnNoResources;
     unsigned index=MaxBo;
@@ -789,7 +809,9 @@ IOReturn AGXDeviceUserClient::boCpuMap(uint64_t handle,NativeAdrenoAbiBoCpuMapRe
 }
 IOReturn AGXDeviceUserClient::boCpuUnmap(uint64_t handle,uint32_t token) {
     Bo *bo=find(handle);
-    if(!bo||bo->token!=token)return kIOReturnBadArgument;
+    // The ABI gives an imported BO no token: its caller keeps the mapping and
+    // the cache mode it already owns, so there is nothing here to drop.
+    if(!bo||bo->imported||bo->token!=token)return kIOReturnBadArgument;
     dropView(*bo);
     bo->cpuMapped=false;
     return kIOReturnSuccess;
