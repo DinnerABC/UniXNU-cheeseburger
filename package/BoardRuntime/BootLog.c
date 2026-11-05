@@ -108,7 +108,7 @@ extern volatile uint32_t native_adreno_highcp[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_bigbo[13] __attribute__((weak_import));
 /* GPU->compositor surface paint: rc/seq/words, runs, stride, format, match and
  * four quadrant samples. */
-extern volatile uint32_t native_adreno_surface[12] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_surface[13] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540[4][68] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_ring_log540_count __attribute__((weak_import));
 extern volatile uint32_t native_adreno_late_test[8] __attribute__((weak_import));
@@ -766,7 +766,8 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
    }
    if (&native_adreno_surface[0] && (native_adreno_surface[0]|native_adreno_surface[1]|native_adreno_surface[2])) {
     char srf[200];
-    snprintf(srf,sizeof srf,"SURF rc=%d seq=%u w=%u runs=%u stride=%u fmt=%x px=%x/%x/%x/%x match=%u/4 bid=%llx",
+    snprintf(srf,sizeof srf,"SURF f=%u rc=%d seq=%u w=%u runs=%u stride=%u fmt=%x px=%x/%x/%x/%x match=%u/4 bid=%llx",
+      native_adreno_surface[12],
       (int)(int16_t)(uint16_t)native_adreno_surface[0],native_adreno_surface[1],native_adreno_surface[2],
       native_adreno_surface[3],native_adreno_surface[4],native_adreno_surface[6],
       native_adreno_surface[8],native_adreno_surface[9],native_adreno_surface[10],native_adreno_surface[11],

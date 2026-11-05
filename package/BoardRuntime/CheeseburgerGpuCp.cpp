@@ -41,7 +41,8 @@ int cheeseburger_gpu_smmu4k_active(void);
 int cheeseburger_gpu_smmu4k_faulted(void);
 int cheeseburger_gpu_service_publish(void);
 int cheeseburger_gpu_clear540_test(void);
-int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
+int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *,
+ const volatile uint32_t *,unsigned);
 int cheeseburger_gpu_scanout_flip_test(void);
 int cheeseburger_gpu_compute_band_test(void);
 int cheeseburger_gpu_copy540_test(void);
@@ -97,12 +98,8 @@ volatile uint32_t native_adreno_highcp[8];
 volatile uint32_t native_adreno_bigbo[13];
 // GPU->compositor surface paint: rc, seq, words, runs, stride, format, match
 // and four quadrant samples.
-volatile uint32_t native_adreno_surface[12];
+volatile uint32_t native_adreno_surface[13];
 // Low pool: count and first page, filled at probe time.
-// Diagnostic: when gpu-inline-ib=1, the client's first IB words are run from
-// the ring instead of being fetched through CP_INDIRECT_BUFFER.
-volatile uint32_t *cb_inline_ib=nullptr;
-unsigned cb_inline_dwords=0;
 int vnode_lookup(const char *,int,void **,void *);
 void vnode_put(void *);
 void *vfs_context_current(void);
@@ -896,7 +893,8 @@ static int preflightUserPage(uint64_t userIova,uint32_t sequence,CheeseburgerGpu
    __asm__ volatile("dsb sy":::"memory");
    native_adreno_gate[10]=uint32_t(rcc);native_adreno_gate[11]=rec.stage;
    for(unsigned i=0;i<4;++i)native_adreno_gate[12+i]=sc[i];
-   native_adreno_gate[16]=cb_inline_ib?((volatile uint32_t*)cb_inline_ib)[0]:0xdeadbeefu;
+   // The client's kernel view is no longer a boot-global; this probe has none.
+   native_adreno_gate[16]=0xdeadbeefu;
    IOLog("CB GPU engine: gate C rc=%d stage=%u cp=%x/%x kview=%x fr=%x\n",
     rcc,rec.stage,sc[0],sc[1],native_adreno_gate[16],rec.fence);
    if(rcc)return -4; }
@@ -1075,7 +1073,7 @@ static int clearKick(uint32_t words,uint32_t &seq){
  __asm__ volatile("dsb sy":::"memory");
  const uint64_t va=gClearIbIova;const uint32_t dw=words;
  seq=0;
- return cheeseburger_gpu_engine_submit(&va,&dw,1,&seq);
+ return cheeseburger_gpu_engine_submit(&va,&dw,1,&seq,nullptr,0);
 }
 extern "C" int cheeseburger_gpu_clear540_test(void){
  if(gClearDone)return gClearRc;
@@ -1398,7 +1396,7 @@ extern "C" int cheeseburger_gpu_highcp_test(void){
  flush_dcache((vm_offset_t)t,8,FALSE);
  flush_dcache((vm_offset_t)ib,ibWords*4,FALSE);
  uint32_t seq=0;uint64_t va=0x2700000;uint32_t dw=ibWords;
- const int rc=ok?cheeseburger_gpu_engine_submit(&va,&dw,1,&seq):-10;
+ const int rc=ok?cheeseburger_gpu_engine_submit(&va,&dw,1,&seq,nullptr,0):-10;
  __asm__ volatile("dsb sy":::"memory");
  flush_dcache((vm_offset_t)t,8,FALSE);
  __asm__ volatile("dsb sy":::"memory");
@@ -1508,23 +1506,26 @@ extern "C" int cheeseburger_gpu_bigbo_test(void){
 }
 // ---------------------------------------------------------------------------
 // GPU write into the compositor IOSurface the display is about to present.
-// The surface is BGRA with a 64-byte-aligned stride (the 2D engine requires
-// that); its first 64 rows are mapped at 0xD000000 and four 128x32 quadrants
-// are drawn before the display's own copy/flip. One shot per boot; any
-// precondition failure only skips the paint and leaves the display path alone.
+// Per frame: the surface's first 64 rows are mapped at 0xD000000, a 256x64
+// block moves horizontally with rotating colours, the stream is fenced and the
+// mapping is retired again so the range ledger only ever holds this frame.
+// The surface is BGRA with a 64-byte-aligned stride; any precondition failure
+// only skips this frame and leaves the display path alone.
 enum {SurfaceBandRows=64,SurfacePaintWidth=256,SurfacePaintHeight=64};
 static CheeseburgerGpu::MapRange gSurfaceRuns[512];
 static uint32_t gSurfaceSamples[4];
+static uint32_t gSurfaceFrame=0,gSurfaceStuck=0;
 extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_t stride,
     uint32_t width,uint32_t height,uint32_t format){
- if(!memory||!stride||(stride&63)||width<64||height<SurfaceBandRows||
+ if(gSurfaceStuck)return -6;
+ if(!memory||!stride||(stride&63)||width<SurfacePaintWidth||height<SurfaceBandRows||
     uint64_t(width)*4>stride||(format!=0x42475241u&&format!=0x26424741u)){
-  IOLog("CB GPU surf: skip stride=%llu w=%u h=%u fmt=%x\n",
+  if(gSurfaceFrame<4)IOLog("CB GPU surf: skip stride=%llu w=%u h=%u fmt=%x\n",
    (unsigned long long)stride,width,height,format);
   return -1;
  }
  if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
-    !gClearIbVA||!gClearScratchIova){IOLog("CB GPU surf: engine not ready\n");return -2;}
+    !gClearIbVA||!gClearScratchIova){if(gSurfaceFrame<4)IOLog("CB GPU surf: engine not ready\n");return -2;}
  const uint64_t bandBytes=stride*SurfaceBandRows;
  unsigned runs=0;uint64_t off=0,minPa=~0ull,maxPa=0;
  while(off<bandBytes&&runs<512){
@@ -1537,9 +1538,15 @@ extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_
   if(pa<minPa)minPa=pa;if(pa>maxPa)maxPa=pa;
   off+=uint64_t(pages)*4096;
  }
- if(off<bandBytes||!runs){IOLog("CB GPU surf: runs=%u off=%llu\n",runs,(unsigned long long)off);return -3;}
+ if(off<bandBytes||!runs){
+  if(gSurfaceFrame<4)IOLog("CB GPU surf: runs=%u off=%llu\n",runs,(unsigned long long)off);
+  return -3;
+ }
  const int mrc=cheeseburger_gpu_smmu_map_batch(gSurfaceRuns,runs);
  if(mrc){IOLog("CB GPU surf: map rc=%d runs=%u\n",mrc,runs);return -4;}
+ ++gSurfaceFrame;
+ const uint32_t span=(width-SurfacePaintWidth)&~15u;
+ const uint32_t x=span?uint32_t((uint64_t(gSurfaceFrame)*16u)%span)&~15u:0;
  uint32_t *ib=(uint32_t*)gClearIbVA;
  memset(ib,0,8192);
  CheeseburgerGpu::Encoder540 e(ib,2048);
@@ -1547,33 +1554,41 @@ extern "C" int cheeseburger_gpu_paint_surface(IOMemoryDescriptor *memory,uint64_
  bool ok=b.restore()&&b.begin2D();
  for(unsigned q=0;q<4&&ok;++q){
   const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
-  ok=b.solidFill(0xD000000+uint64_t(qy)*stride+qx*4u,128,32,uint32_t(stride),
-   gClearColors[q],gClearScratchIova);
+  const uint32_t color=gClearColors[(q+gSurfaceFrame)&3u];
+  ok=b.solidFill(0xD000000+uint64_t(qy)*stride+uint64_t(x+qx)*4u,128,32,uint32_t(stride),
+   color,gClearScratchIova);
  }
  const uint32_t words=e.size();
  uint32_t seq=0;
  const int rc=ok?clearKick(words,seq):-10;
  unsigned match=0;
- if(!rc){
+ if(!rc&&(gSurfaceFrame%30u)==1u){
   IOMemoryMap *mp=memory->map(kIOMapAnywhere|kIOMapInhibitCache);
   if(mp){
    volatile uint8_t *va=(volatile uint8_t*)mp->getVirtualAddress();
    if(va)for(unsigned q=0;q<4;++q){
     const uint32_t qx=(q&1u)?128u:0u,qy=(q&2u)?32u:0u;
-    const uint64_t o=uint64_t(qy+16)*stride+(qx+64)*4u;
+    const uint64_t o=uint64_t(qy+16)*stride+uint64_t(x+qx+64)*4u;
     gSurfaceSamples[q]=*reinterpret_cast<volatile uint32_t*>(va+o);
-    if(gSurfaceSamples[q]==gClearColors[q])++match;
+    if(gSurfaceSamples[q]==gClearColors[(q+gSurfaceFrame)&3u])++match;
    }
    mp->release();
   }
+ }
+ // Retire this frame's mapping now that its fence completed; the next frame
+ // can reuse 0xD000000 without growing the ledger.
+ if(runs&&cheeseburger_gpu_smmu_unmap_batch(gSurfaceRuns,runs)){
+  gSurfaceStuck=1;IOLog("CB GPU surf: frame retire failed runs=%u\n",runs);
  }
  native_adreno_surface[0]=uint32_t(rc);native_adreno_surface[1]=seq;native_adreno_surface[2]=words;
  native_adreno_surface[3]=runs;native_adreno_surface[4]=uint32_t(stride);native_adreno_surface[5]=uint32_t(stride>>32);
  native_adreno_surface[6]=format;native_adreno_surface[7]=match;
  for(unsigned q=0;q<4;++q)native_adreno_surface[8+q]=gSurfaceSamples[q];
- IOLog("CB GPU surf: rc=%d seq=%u w=%u runs=%u stride=%llu fmt=%x px=%x/%x/%x/%x match=%u/4 min=%llx max=%llx\n",
-  rc,seq,words,runs,(unsigned long long)stride,format,gSurfaceSamples[0],gSurfaceSamples[1],
-  gSurfaceSamples[2],gSurfaceSamples[3],match,(unsigned long long)minPa,(unsigned long long)maxPa);
+ native_adreno_surface[12]=gSurfaceFrame;
+ if((gSurfaceFrame%30u)==1u||rc)
+  IOLog("CB GPU surf: f=%u rc=%d seq=%u w=%u runs=%u stride=%llu x=%u px=%x/%x/%x/%x match=%u/4 min=%llx max=%llx\n",
+   gSurfaceFrame,rc,seq,words,runs,(unsigned long long)stride,x,gSurfaceSamples[0],gSurfaceSamples[1],
+   gSurfaceSamples[2],gSurfaceSamples[3],match,(unsigned long long)minPa,(unsigned long long)maxPa);
  return rc;
 }
 // ---------------------------------------------------------------------------
@@ -1701,7 +1716,7 @@ extern "C" int cheeseburger_gpu_compute_band_test(void){
  return rc;
 }
 extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t *dwords,
- unsigned count,uint32_t *seq){
+ unsigned count,uint32_t *seq,const volatile uint32_t *ibView,unsigned ibWords){
  if(!gEngine||!gRing||!gFence||!gFenceGva||!gSubmitLock||!seq||count>16||(count&&(!vas||!dwords)))return -1;
  CheeseburgerGpu::Ib540 ibs[16];
  for(unsigned i=0;i<count;++i)ibs[i]={vas[i],dwords[i]};
@@ -1778,8 +1793,11 @@ extern "C" int cheeseburger_gpu_engine_submit(const uint64_t *vas,const uint32_t
  // completed on the CPU instead of being kicked, which is what an empty buffer
  // means; the client still gets a fence it can wait on, and the ring stays
  // usable for the next, real submission.
- { const volatile uint32_t *w=cb_inline_ib;
-   const unsigned n=cb_inline_dwords;
+ // The view is supplied by this call's owner and is valid only for the
+ // duration of the call: a boot-global pointer outlived the client BO it named
+ // and P21-Xenops faulted reading it after the client freed the buffer.
+ { const volatile uint32_t *w=ibView;
+   const unsigned n=ibWords;
    if(w&&n){
     const unsigned lim=n<64?n:64;
     bool any=false;

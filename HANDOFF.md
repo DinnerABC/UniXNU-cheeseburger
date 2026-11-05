@@ -1,3 +1,41 @@
+## 2026-11-05：P21-Yellowlegs（逐帧 GPU 写入合成器 surface；修复 Xenops 空 IB 悬空全局导致的 data abort）
+
+### 一、P21-Xenops 失败与根因（已回退）
+- Xenops 把 surface 交接改成逐帧后，出现内核 data abort：`pc 0xfffffff00bfa4fd8`、`lr 0xfffffff00bfa4f80`、`far 0xfffffff82e7be000`、`esr 0x96000007`（level-3 读翻译错误）。
+- 用 Xenops `native/kernel.macho` 符号化：pc 落在 `cheeseburger_gpu_engine_submit`（日志第 1803 行）的空 IB 扫描，故障指令 `ldr w11,[x8]`；`x8=cb_inline_ib=0xfffffff82e7be000`，是客户端 IB BO 释放后失效的内核堆视图。
+- 触发链：服务提交把 `cb_inline_ib` 写成客户端的 IB 内核视图（启动期全局）；客户端随后释放该 BO；之后每次 `clearKick` 进入同一个空 IB 扫描就读取悬空指针。逐帧 surface paint 让这条路径在客户端释放后仍被频繁调用，所以崩溃。Xenops 未提交，源码回退到 Wryneck（`f09f137`）后重新修复。
+- 证据：`out/p21/p21-xenops/logs/xenops-panic-symbolized.txt`、`xenops-uncommitted-delta.patch`。
+
+### 二、改动（在 Wryneck 基线上）
+- `cheeseburger_gpu_engine_submit` 增加 `(const volatile uint32_t *ibView, unsigned ibWords)`：空 IB 扫描只读本次调用方提供的视图；板内 `clearKick`/`highcp` 传 `nullptr,0`；删除全局 `cb_inline_ib/cb_inline_dwords` 及 gate C 的 kview 读数。
+- 服务 `submit`：等 job holds 建立后，才从首个 IB BO 取内核视图并传入同一次调用，避免客户端并发释放。
+- 逐帧 surface 交接（Xenops 的功能保留）：每帧把 surface 前 64 行映射到 `0xD000000`，256x64 块水平移动、颜色轮换，fence 后 `unmap_batch` 退休本帧；每 30 帧做一次 CPU 回读。
+
+### 三、构建（全部同轮）
+- 内核 `beb000da…`（本地树，69.3 s）→ prelink `bb67b298…` → panic-screen 后 `1d0b0f64…`；payload 展开 `2de6e36f…`；固件 `MSM8998PKG_UEFI.fd` `3b285b06…`（同一 overlay 重编，pins 三项命中）；镜像 `out/p21/p21-yellowlegs/uefi/boot-p21-up1.img` `a7151d7a…`（82,493,440 B），preboot-gate PASS；misc BCB 已 push→dd→回读 `boot-recovery`（哈希 `8698abf4…`）。
+- 启动前确认无旧 fastboot/监视进程，设备 `3b25cc7c`；`fastboot boot` 于 06:48:42Z（`Sending/Booting OKAY`）。
+
+### 四、实机（boot `0x447ff06e`，日志 `out/p21/persistent-logs/20261105T065703Z/`）
+- **逐帧 surface**：206.6 s `CB GPU surf: f=1 rc=0 seq=23 w=491 runs=80 stride=5120 x=16 px=ff405060/ff8090a0/ffb0c0d0/ff102030 match=4/4 min=0x113542000 max=0x180006000`；`CB DISP surface paint rc=0 stride=5120 w=1080 h=1920` 连续 6 次（206.6–297.3 s）；338 s 快照 `SURF f=27`，帧计数持续增长。
+- 其余无回归：`CLR/CPY/HPA/HCP/BIG` 全部 rc=0、match=4/4（或 sent/val 正确）；`CMPT` 仍 rc=0 但 match=0/4（CS 写入未解决）；`GPSVC ready=1 open=2 sub=1 fence=1 err=0`；`GBOD 1:adc0de1/feed0002/600d0003`。
+- **未 panic**：心跳到 338 s，日志无 data abort；设备在 06:55:57Z（启动后约 427 s）自动回 Recovery，证明 400 s 内核路径完整执行。
+- 说明：这仍是 GPU 写入每个合成器 surface；呈现由现有 CPU 拷贝/MDP 完成，尚未整体 GPU 合成，也未接 Metal。
+
+### 五、已知遗留
+1. 逐帧交接在 fence 失败（rc!=0）时仍执行 `unmap_batch`；下一轮改为 fail-closed：未证明 fence 就保留映射并停止后续帧。
+2. 服务提交前的诊断读取（`native_adreno_ib_head`、全 BO `flush_dcache`）仍在 job holds 之前，理论上可与并发 `BoFree` 竞争；一并移到 holds 之后。
+3. compute 仍无效（CMPT match=0/4），等待安全的 SP 域方案；MDP 直扫仍受 GOP pitch/32 位 SRC0 约束。
+
+### 六、下一步
+1. 修掉上面的 fail-closed 与 holds 顺序，保持 P21-Yellowlegs 为基线。
+2. 继续 Metal 前端（插件→metal2vulkan→Turnip 自有 A5xx 后端）与 IOSurface/合成路径。
+3. 回归整体回退 P21-Yellowlegs。
+
+  | 日期 | 代号 | 镜像 SHA-256 | 内核 | 目的 / 结果 |
+  |---|---|---|---|---|
+  | 2026-11-05 | **P21-Yellowlegs** | `a7151d7a…` | `1d0b0f64…` | 逐帧 GPU 写合成器 surface（80 run，f=27，回读 4/4）；修复空 IB 悬空全局；客户端 sub=1/fence=1；427 s 自动回 |
+  | 2026-11-05 | P21-Xenops | `fe23d459…` | `ecd9e37d…` | 逐帧 surface 首次尝试；空 IB 扫描读悬空全局 → data abort；未提交，已回退 |
+
 ## 2026-11-05：P21-Wryneck（GPU 写入合成器 IOSurface：stride 5120、80 个 run、2D 四象限回读 4/4）
 
 ### 一、改动

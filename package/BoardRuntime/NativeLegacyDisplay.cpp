@@ -386,17 +386,15 @@ public:
            !native_legacy_surface_bounds(width,height,video.v_rowBytes,bootMapping->getLength(),bootMapping->getLength())) {
             native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;
         }
-        // GPU->compositor handoff (P21-Wryneck): draw once into the frame the
-        // display is about to copy/scan, before any presentation. The helper
-        // rejects a non-64-byte pitch and fails closed without touching the
-        // display path.
-        { static unsigned attempts=0;
-          if(attempts<8){++attempts;
-            const int prc=cheeseburger_gpu_paint_surface(memory,sourceStride,width,height,
-                native_legacy_surface_format(surface));
+        // GPU->compositor handoff: draw into the frame the display is about
+        // to copy/scan, before any presentation. The helper rejects a
+        // non-64-byte pitch and fails closed without touching the display path.
+        { static unsigned logs=0;
+          const int prc=cheeseburger_gpu_paint_surface(memory,sourceStride,width,height,
+              native_legacy_surface_format(surface));
+          if(logs<6){++logs;
             IOLog("CB DISP surface paint rc=%d stride=%llu w=%u h=%u fmt=%x\n",prc,
                 (unsigned long long)sourceStride,width,height,native_legacy_surface_format(surface));
-            if(prc==0)attempts=8;
           } }
         uint32_t sourceWidth=0,sourceHeight=0;
         if(!p21_scale_geometry(reinterpret_cast<const unsigned char *>(request),width,height,&sourceWidth,&sourceHeight)) {

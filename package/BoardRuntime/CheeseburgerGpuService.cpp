@@ -55,7 +55,8 @@ extern volatile uint64_t native_adreno_submit_stage_gva;
 extern "C" void proc_selfname(char *, int);
 char native_adreno_service_text[64];
 volatile int native_adreno_service_ready;
-int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *);
+int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *,
+ const volatile uint32_t *,unsigned);
 int cheeseburger_gpu_engine_wait(uint32_t,uint64_t);
 int cheeseburger_gpu_engine_window(uint64_t *,uint64_t *);
 int cheeseburger_gpu_engine_idle(void);
@@ -68,8 +69,6 @@ int cheeseburger_gpu_smmu_unmap_batch(const CheeseburgerGpu::MapRange *,unsigned
 int cheeseburger_gpu_smmu_lookup(uint64_t,uint64_t *);
 int cheeseburger_gpu_smmu_atos(uint64_t,uint64_t *,volatile uint64_t *);
 int cheeseburger_gpu_smmu4k_active(void);
-extern volatile uint32_t *cb_inline_ib;
-extern unsigned cb_inline_dwords;
 int cheeseburger_gpu_engine_copy_test(uint64_t);
 int cheeseburger_gpu_engine_late_test(void);
 
@@ -869,14 +868,6 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         if(p)flush_dcache((vm_offset_t)p,(unsigned)b.bytes,FALSE);
     }
     __asm__ volatile("dsb sy":::"memory");
-    // The diagnostic inline path runs the client's first IB from the ring when
-    // the board enables gpu-inline-ib; publish its kernel view here.
-    if(s.buffer_count){
-        Bo *ib=find(s.buffers[0].handle);
-        void *p=ib?ib->cpu:nullptr;
-        cb_inline_ib=(volatile uint32_t *)p;
-        cb_inline_dwords=(p&&s.buffers[0].bytes<=ib->bytes)?unsigned(s.buffers[0].bytes/4):0;
-    }
     // Every mapped object is held until this job's fence: the ABI names only
     // the submitted buffers, while an IB may use any mapped object as data,
     // texture or write target. Reserve the slot first so a submission can
@@ -897,7 +888,18 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         native_adreno_retire[3]=native_adreno_retire[3]+1;
         return kIOReturnBusy;
     }
-    int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq);
+    // The first IB's kernel view lives only for this call, and only after the
+    // job's holds exist: a boot-global copy outlived the client BO and Xenops
+    // faulted reading it once the client freed that buffer.
+    const volatile uint32_t *ibView=nullptr;unsigned ibWords=0;
+    if(s.buffer_count){
+        Bo *ib=find(s.buffers[0].handle);
+        if(ib&&ib->cpu&&s.buffers[0].bytes<=ib->bytes){
+            ibView=(const volatile uint32_t*)ib->cpu;
+            ibWords=unsigned(s.buffers[0].bytes/4);
+        }
+    }
+    int rc=cheeseburger_gpu_engine_submit(vas,dwords,s.buffer_count,&seq,ibView,ibWords);
     // Kernel-side readback of every mapped BO: the IB's write target is one of
     // them, and the values show whether the commands ran even without a fence.
     { unsigned n=0;
