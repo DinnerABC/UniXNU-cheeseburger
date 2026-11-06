@@ -67,8 +67,22 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor*)descriptor;
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor*)descriptor iosurface:(IOSurfaceRef)surface plane:(NSUInteger)plane;
 - (id)newLibraryWithData:(dispatch_data_t)data error:(NSError**)error;
+- (id)newLibraryWithFile:(NSString*)path error:(NSError**)error;
+- (id)newLibraryWithURL:(NSURL*)url error:(NSError**)error;
+- (id)newDefaultLibrary;
+- (id)newDefaultLibraryWithBundle:(NSBundle*)bundle error:(NSError**)error;
+- (id)newLibraryWithSource:(NSString*)source options:(MTLCompileOptions*)options error:(NSError**)error;
+- (void)newLibraryWithSource:(NSString*)source options:(MTLCompileOptions*)options completionHandler:(void (^)(id,NSError*))handler;
 - (id)newComputePipelineStateWithFunction:(id)function error:(NSError**)error;
+- (id)newComputePipelineStateWithFunction:(id)function options:(MTLPipelineOption)options reflection:(MTLComputePipelineReflection**)reflection error:(NSError**)error;
+- (id)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor*)descriptor options:(MTLPipelineOption)options reflection:(MTLComputePipelineReflection**)reflection error:(NSError**)error;
+- (void)newComputePipelineStateWithFunction:(id)function completionHandler:(void (^)(id,NSError*))handler;
+- (void)newComputePipelineStateWithFunction:(id)function options:(MTLPipelineOption)options completionHandler:(void (^)(id,MTLComputePipelineReflection*,NSError*))handler;
+- (void)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor*)descriptor options:(MTLPipelineOption)options completionHandler:(void (^)(id,MTLComputePipelineReflection*,NSError*))handler;
 - (id)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)descriptor error:(NSError**)error;
+- (id)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)descriptor options:(MTLPipelineOption)options reflection:(MTLRenderPipelineReflection**)reflection error:(NSError**)error;
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)descriptor completionHandler:(void (^)(id,NSError*))handler;
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)descriptor options:(MTLPipelineOption)options completionHandler:(void (^)(id,MTLRenderPipelineReflection*,NSError*))handler;
 - (id)newCommandQueue;
 - (int)retireResources;
 - (NativeMetal540SessionRetirement::Record)retirementResult;
@@ -142,8 +156,34 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor*)d{return [context(self)->backend newTextureWithDescriptor:d];}
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor*)d iosurface:(IOSurfaceRef)s plane:(NSUInteger)p{return [context(self)->backend newTextureWithDescriptor:d iosurface:s plane:p];}
 - (id)newLibraryWithData:(dispatch_data_t)d error:(NSError**)e{return [context(self)->backend newLibraryWithData:d error:e];}
+- (id)newLibraryWithFile:(NSString*)p error:(NSError**)e{return [context(self)->backend newLibraryWithFile:p error:e];}
+- (id)newLibraryWithURL:(NSURL*)u error:(NSError**)e{return [context(self)->backend newLibraryWithURL:u error:e];}
+- (id)newDefaultLibrary{return [context(self)->backend newDefaultLibrary];}
+- (id)newDefaultLibraryWithBundle:(NSBundle*)b error:(NSError**)e{return [context(self)->backend newDefaultLibraryWithBundle:b error:e];}
+- (id)newLibraryWithSource:(NSString*)s options:(MTLCompileOptions*)o error:(NSError**)e{return [context(self)->backend newLibraryWithSource:s options:o error:e];}
+- (void)newLibraryWithSource:(NSString*)s options:(MTLCompileOptions*)o completionHandler:(void (^)(id,NSError*))h {
+    if(!h)return;id owner=self;[context(self)->backend newLibraryWithSource:s options:o completionHandler:^(Native540Library *p,NSError *e){(void)owner;h(p,e);}];
+}
 - (id)newComputePipelineStateWithFunction:(id)f error:(NSError**)e{return [context(self)->backend newComputePipelineStateWithFunction:f error:e];}
+- (id)newComputePipelineStateWithFunction:(id)f options:(MTLPipelineOption)o reflection:(MTLComputePipelineReflection**)r error:(NSError**)e{return [context(self)->backend newComputePipelineStateWithFunction:f options:o reflection:r error:e];}
+- (id)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor*)d options:(MTLPipelineOption)o reflection:(MTLComputePipelineReflection**)r error:(NSError**)e{return [context(self)->backend newComputePipelineStateWithDescriptor:d options:o reflection:r error:e];}
+- (void)newComputePipelineStateWithFunction:(id)f completionHandler:(void (^)(id,NSError*))h {
+    if(!h)return;id owner=self;[context(self)->backend newComputePipelineStateWithFunction:f completionHandler:^(Native540ComputePipeline *p,NSError *e){(void)owner;h(p,e);}];
+}
+- (void)newComputePipelineStateWithFunction:(id)f options:(MTLPipelineOption)o completionHandler:(void (^)(id,MTLComputePipelineReflection*,NSError*))h {
+    if(!h)return;id owner=self;[context(self)->backend newComputePipelineStateWithFunction:f options:o completionHandler:^(Native540ComputePipeline *p,MTLComputePipelineReflection *r,NSError *e){(void)owner;h(p,r,e);}];
+}
+- (void)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor*)d options:(MTLPipelineOption)o completionHandler:(void (^)(id,MTLComputePipelineReflection*,NSError*))h {
+    if(!h)return;id owner=self;[context(self)->backend newComputePipelineStateWithDescriptor:d options:o completionHandler:^(Native540ComputePipeline *p,MTLComputePipelineReflection *r,NSError *e){(void)owner;h(p,r,e);}];
+}
 - (id)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)d error:(NSError**)e{return [context(self)->backend newRenderPipelineStateWithDescriptor:d error:e];}
+- (id)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)d options:(MTLPipelineOption)o reflection:(MTLRenderPipelineReflection**)r error:(NSError**)e{return [context(self)->backend newRenderPipelineStateWithDescriptor:d options:o reflection:r error:e];}
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)d completionHandler:(void (^)(id,NSError*))h {
+    if(!h)return;id owner=self;[context(self)->backend newRenderPipelineStateWithDescriptor:d completionHandler:^(Native540RenderPipeline *p,NSError *e){(void)owner;h(p,e);}];
+}
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)d options:(MTLPipelineOption)o completionHandler:(void (^)(id,MTLRenderPipelineReflection*,NSError*))h {
+    if(!h)return;id owner=self;[context(self)->backend newRenderPipelineStateWithDescriptor:d options:o completionHandler:^(Native540RenderPipeline *p,MTLRenderPipelineReflection *r,NSError *e){(void)owner;h(p,r,e);}];
+}
 - (id)newCommandQueue{return [context(self)->backend newCommandQueue];}
 - (int)retireResources{return [context(self)->backend retireResources];}
 - (NativeMetal540SessionRetirement::Record)retirementResult{return [context(self)->backend retirementResult];}

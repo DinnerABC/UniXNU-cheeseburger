@@ -66,7 +66,20 @@ int main(int argc,char **argv){@autoreleasepool {assert(argc==2);NSData *real=[N
             assert(![d newComputePipelineStateWithFunction:v error:&error]);
             auto pd=[MTLRenderPipelineDescriptor new];pd.vertexFunction=(id<MTLFunction>)(id)v;pd.fragmentFunction=(id<MTLFunction>)(id)f;
             pd.colorAttachments[0].pixelFormat=MTLPixelFormatRGBA8Unorm;
-            auto p=[d newRenderPipelineStateWithDescriptor:pd error:&error];
+            pd.label=@"solid";MTLRenderPipelineReflection *reflection=nil;
+            auto p=[d newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionNone reflection:&reflection error:&error];
+            assert(!reflection&&[p.label isEqualToString:@"solid"]&&[p supportsVertexAmplificationCount:1]&&![p supportsVertexAmplificationCount:2]);
+            assert(![d newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionArgumentInfo reflection:&reflection error:&error]&&error&&!reflection);
+            __block unsigned callbacks=0;dispatch_semaphore_t ready=dispatch_semaphore_create(0);
+            [d newRenderPipelineStateWithDescriptor:pd completionHandler:^(Native540RenderPipeline *async,NSError *failure){
+                assert(async&&!failure&&[async.label isEqualToString:@"solid"]&&async.device==d);assert(![d currentAllocatedSize]);++callbacks;dispatch_semaphore_signal(ready);
+            }];
+            pd.rasterSampleCount=4;pd.label=@"changed";
+            assert(dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&callbacks==1);
+            [d newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionArgumentInfo completionHandler:^(Native540RenderPipeline *async,MTLRenderPipelineReflection *r,NSError *failure){assert(!async&&!r&&failure);++callbacks;dispatch_semaphore_signal(ready);}];
+            assert(dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&callbacks==2);
+            [d newRenderPipelineStateWithDescriptor:pd completionHandler:nil];assert(!m.submits&&!m.next);
+            pd.rasterSampleCount=1;pd.label=@"solid";error=nil;
             if(!p)fprintf(stderr,"pipeline %s sample%lu raster%d vd%p vl%p fl%p mask%lu/%lu\n",error.localizedDescription.UTF8String,(unsigned long)pd.rasterSampleCount,pd.rasterizationEnabled,(__bridge void*)pd.vertexDescriptor,(__bridge void*)pd.vertexLinkedFunctions,(__bridge void*)pd.fragmentLinkedFunctions,(unsigned long)pd.colorAttachments[0].writeMask,(unsigned long)pd.colorAttachments[1].writeMask);
             assert(p&&!error);
             pd.rasterSampleCount=4;assert(![d newRenderPipelineStateWithDescriptor:pd error:&error]);pd.rasterSampleCount=1;

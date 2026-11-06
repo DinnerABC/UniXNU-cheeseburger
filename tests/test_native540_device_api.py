@@ -32,7 +32,7 @@ class DeviceAPI(unittest.TestCase):
         original=Path('/Users/dinnerabc/unixnu-p21/native540/protocol-audit-21h461-20261106T1223/protocols.json')
         protocols=json.loads(original.read_text());methods={m['selector']:m['type'] for p in protocols for m in p['methods']}
         rows=re.findall(r'\{"([^"]+)","([^"]+)"\}',(R/'tests/native540_device_api_model.mm').read_text())
-        self.assertEqual(len(rows),28)
+        self.assertEqual(len(rows),42)
         for selector,encoding in rows:self.assertEqual(methods[selector],encoding,selector)
     def test_arm64(self):
         for name in ('NativeMetal540DeviceAdapter','NativeMetal540ProtocolAudit'):

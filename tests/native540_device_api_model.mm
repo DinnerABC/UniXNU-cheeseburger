@@ -69,6 +69,22 @@ static const struct {const char *name,*types;} target[]={
     {"setMetalAssertionsEnabled:","v20@0:8B16"},
     {"singleFPConfig","Q16@0:8"}
 };
+static const struct {const char *name,*types;} factories[]={
+    {"newLibraryWithFile:error:","@32@0:8@16^@24"},
+    {"newLibraryWithURL:error:","@32@0:8@16^@24"},
+    {"newDefaultLibrary","@16@0:8"},
+    {"newDefaultLibraryWithBundle:error:","@32@0:8@16^@24"},
+    {"newLibraryWithSource:options:error:","@40@0:8@16@24^@32"},
+    {"newLibraryWithSource:options:completionHandler:","v40@0:8@16@24@?32"},
+    {"newComputePipelineStateWithFunction:options:reflection:error:","@48@0:8@16Q24^@32^@40"},
+    {"newComputePipelineStateWithDescriptor:options:reflection:error:","@48@0:8@16Q24^@32^@40"},
+    {"newComputePipelineStateWithFunction:completionHandler:","v32@0:8@16@?24"},
+    {"newComputePipelineStateWithFunction:options:completionHandler:","v40@0:8@16Q24@?32"},
+    {"newComputePipelineStateWithDescriptor:options:completionHandler:","v40@0:8@16Q24@?32"},
+    {"newRenderPipelineStateWithDescriptor:options:reflection:error:","@48@0:8@16Q24^@32^@40"},
+    {"newRenderPipelineStateWithDescriptor:completionHandler:","v32@0:8@16@?24"},
+    {"newRenderPipelineStateWithDescriptor:options:completionHandler:","v40@0:8@16Q24@?32"}
+};
 int main(){@autoreleasepool {
     Class cls=NSClassFromString(@"Native540AdapterMethods");assert(cls);
     unsigned ownCount=0;Method *own=class_copyMethodList(cls,&ownCount);
@@ -81,6 +97,11 @@ int main(){@autoreleasepool {
         for(NSUInteger i=0;i<wanted.numberOfArguments;++i)
             assert(NativeMetal540ProtocolTypesMatch([wanted getArgumentTypeAtIndex:i],[actual getArgumentTypeAtIndex:i]));
     }free(own);
+    for(const auto &entry:factories){Method m=class_getInstanceMethod(cls,sel_registerName(entry.name));assert(m);
+        auto a=[NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(m)],w=[NSMethodSignature signatureWithObjCTypes:entry.types];
+        assert(a.numberOfArguments==w.numberOfArguments&&NativeMetal540ProtocolTypesMatch(w.methodReturnType,a.methodReturnType));
+        for(NSUInteger i=0;i<w.numberOfArguments;++i)assert(NativeMetal540ProtocolTypesMatch([w getArgumentTypeAtIndex:i],[a getArgumentTypeAtIndex:i]));
+    }
     id<Native540NegativeDeviceAPI> d=[cls new];assert(![d conformsToProtocol:objc_getProtocol("MTLDevice")]);
     for(NSUInteger n:{0ul,1ul,2ul,NSUIntegerMax})assert([d supportsVertexAmplificationCount:n]==(n==1));
     __block unsigned deallocations=0;unsigned char input[32];memset(input,0x5a,sizeof input);

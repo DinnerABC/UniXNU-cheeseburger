@@ -1,3 +1,13 @@
+## 2026-11-07：标准 Metal 创建契约第二批实机通过并按轮提交
+
+- 当前设备 root Recovery `3b25cc7c`／唯一ADB5037，无monitor或未回收启动。最新boot **`0x3d869cc1`**，日志 **`out/p21/persistent-logs/20261106T170445Z`**，窗口 SHA `457b7ecd37a1027dd5315111d5fb0ded162ca803fcce83e6b1860b368ad58290`，34rounds／0errors。
+- 第一批资源契约与此前累计GPU/Metal改动已提交 **`fb08a2f`**，随后本批在此干净基线改8个source/test文件及文档：新增14个标准library file/URL/default、compute/render options/descriptor与async创建入口，复用固定sagitownership，exact21H461encodings逐项比对；Function/Pipeline属性来自固定reflection/descriptor，runtime source/reflection/unsupported功能明确拒绝。文件同fd有界read，拒绝symlink/FIFO；async复制输入、adapter强持publicdevice、锁外callbackonce。未改BoardRuntime/ABI/ISA/安全/seed/power。
+- 当前成功candidate **`out/p21/p21-sagit-factory-contract-20261106T165722Z/uefi/boot-p21-up1.img`**，SHA **`5a6c83c02d9db0ad2fc4edec26410ad5df7f674b332392ff61f4c7593383401d`**；复用前轮verified kernel97ae7084…（完整BoardRuntime/native/build check，不假称XNU重编），新plugin `eb08f720…`、FD `2d193626…`、expandedpayload `e4c99e6a…`；actualEFI3pins／gate `20261106T170019Z`，same225s/697Bargs/seed/ADT/DTB/power/wire。
+- **本轮actual initialized device新URL→sync options→async pipeline完成**：持久 `DC identity1 callback1 allocated45056 fc1 cb1`；随后真实四色 `RC frames4 reuse1 allocated45056`／RX red-green-blue-red／`OR free7 view6 proof1 left0`，DP0/type0、DRmatch1、RG/RA pixelsbad0、compute/transform/AIR/SF/SR与GICACHE5/5/errors0保持。userGPU12sub/fence/wait及free12。6displaytransfers snapshot不是本轮用户桌面报告或systemGPUUI合成。
+- 单次boot `logs/boot-once-20261106T170037Z`，239.582s观测rootRecovery；misc32Bcommand同步回读/其他保持，BCB预置、无host帮助；没有刷boot/recovery/firmware/GPT、没有重复boot。冻 **`out/p21/gpu-cp/rounds/20261106T170538Z-sagit-metal-factory-four-color-pass`**，INDEX／device-result/source142pins/boot/monitor/raw对应。100tests PASS，actualObjCASanUBSan/arm64、原compute/27graphicsmodes/19退休故障；补asyncfailure/nohandler/defaultlibrary/symlink/FIFO test3PASS，post-build-tests-only.json注明仅测试后补、产品hash未漂移。所有初始compile/夹具失败保留并修正。
+- **下一步**：剩余继承abstract factory与device/resource required契约按真实IMP分类、queue容量/跨帧依赖及逐资源生命周期；尚无长期资源池、多ABIclient、generalshader/sampling/blend、fullBGRA/display-reader/presentation。principal仍nil，不能以DP0或14wrapper宣称systemdefaultMetal完成；系统自然注册须真实闭包，不能adoptfakeprotocol或MTLAddDevice强塞。继续GPU/Metal，不旁支壁纸/其他硬件。
+- 第一轮/第二轮均按用户新要求获取日志后分别commit，不push；私有logs/OSinputs/镜像/签名保持本机。详 **`docs/P21_METAL_FACTORY_CONTRACT_20261107.md`**。下一候选从本完整成功基线起，先offlinegate再singleboot，保留本轮sourcepins和历史镜像。
+
 ## 2026-11-07：接续资源契约批次实机通过；按用户要求回收后提交
 
 - 当前设备 root Recovery `3b25cc7c`，唯一 ADB `5037`；本轮仅一次临时启动，日志已回收、监视器结束。最新 boot **`0x3d7f4997`**，日志 **`out/p21/persistent-logs/20261106T163705Z`**，窗口 SHA `ddd48b4502199bd72c16ba9ad84774a56ac2578dcf2858a14c2ee5aab637ceb3`，34 rounds／0 write errors。UTC 仍为 11-06，本地已 11-07。

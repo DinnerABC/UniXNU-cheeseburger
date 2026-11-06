@@ -52,12 +52,26 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable Native540Buffer *)newBufferWithLength:(NSUInteger)length options:(MTLResourceOptions)options;
 - (nullable Native540Buffer *)newBufferWithBytes:(const void* _Nullable)bytes length:(NSUInteger)length options:(MTLResourceOptions)options;
 - (nullable Native540Library *)newLibraryWithData:(dispatch_data_t)data error:(NSError **)error;
+- (nullable Native540Library *)newLibraryWithFile:(NSString *)path error:(NSError **)error;
+- (nullable Native540Library *)newLibraryWithURL:(NSURL *)url error:(NSError **)error;
+- (nullable Native540Library *)newDefaultLibrary;
+- (nullable Native540Library *)newDefaultLibraryWithBundle:(NSBundle *)bundle error:(NSError **)error;
+- (nullable Native540Library *)newLibraryWithSource:(NSString *)source options:(nullable MTLCompileOptions *)options error:(NSError **)error;
+- (void)newLibraryWithSource:(NSString *)source options:(nullable MTLCompileOptions *)options completionHandler:(void (^ _Nullable)(Native540Library * _Nullable, NSError * _Nullable))handler;
 - (nullable Native540ComputePipeline *)newComputePipelineStateWithFunction:(Native540Function *)function error:(NSError **)error;
+- (nullable Native540ComputePipeline *)newComputePipelineStateWithFunction:(Native540Function *)function options:(MTLPipelineOption)options reflection:(MTLComputePipelineReflection * _Nullable * _Nullable)reflection error:(NSError **)error;
+- (nullable Native540ComputePipeline *)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor *)descriptor options:(MTLPipelineOption)options reflection:(MTLComputePipelineReflection * _Nullable * _Nullable)reflection error:(NSError **)error;
+- (void)newComputePipelineStateWithFunction:(Native540Function *)function completionHandler:(void (^ _Nullable)(Native540ComputePipeline * _Nullable, NSError * _Nullable))handler;
+- (void)newComputePipelineStateWithFunction:(Native540Function *)function options:(MTLPipelineOption)options completionHandler:(void (^ _Nullable)(Native540ComputePipeline * _Nullable, MTLComputePipelineReflection * _Nullable, NSError * _Nullable))handler;
+- (void)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor *)descriptor options:(MTLPipelineOption)options completionHandler:(void (^ _Nullable)(Native540ComputePipeline * _Nullable, MTLComputePipelineReflection * _Nullable, NSError * _Nullable))handler;
 - (nullable Native540Texture *)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor;
 - (nullable Native540Texture *)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor iosurface:(IOSurfaceRef)surface plane:(NSUInteger)plane;
 - (nullable Native540RenderPipeline *)newRenderPipelineWithVertexFunction:(Native540Function *)vertex
     fragmentFunction:(Native540Function *)fragment error:(NSError **)error;
 - (nullable Native540RenderPipeline *)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor error:(NSError **)error;
+- (nullable Native540RenderPipeline *)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor options:(MTLPipelineOption)options reflection:(MTLRenderPipelineReflection * _Nullable * _Nullable)reflection error:(NSError **)error;
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor completionHandler:(void (^ _Nullable)(Native540RenderPipeline * _Nullable, NSError * _Nullable))handler;
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor options:(MTLPipelineOption)options completionHandler:(void (^ _Nullable)(Native540RenderPipeline * _Nullable, MTLRenderPipelineReflection * _Nullable, NSError * _Nullable))handler;
 - (Native540CommandQueue *)newCommandQueue;
 - (NSUInteger)currentAllocatedSize;
 // Session stores a weak identity; created resources retain it independently.
@@ -90,6 +104,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)new NS_UNAVAILABLE;
 @property(readonly, copy) NSArray<NSString *> *functionNames;
 @property(readonly) id device;
+@property(nullable,copy) NSString *label;
 // Hashes include input, ISA, full 621-word reflection, constants metadata.
 @property(readonly, copy) NSDictionary<NSString *, NSString *> *snapshotHashes;
 - (nullable Native540Function *)newFunctionWithName:(NSString *)name;
@@ -100,7 +115,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property(readonly, copy) NSString *name;
 @property(readonly) id device;
 @property(readonly) MTLFunctionType functionType;
+@property(nullable,copy) NSString *label;
+@property(readonly,copy) NSArray *vertexAttributes;
+@property(readonly,copy) NSArray *stageInputAttributes;
+@property(readonly) MTLPatchType patchType;
+@property(readonly) NSInteger patchControlPointCount;
+@property(readonly) MTLFunctionOptions options;
 @property(readonly, copy) NSDictionary *functionConstantsDictionary;
+- (nullable id)newArgumentEncoderWithBufferIndex:(NSUInteger)index;
 @end
 @interface Native540ComputePipeline : NSObject
 - (instancetype)init NS_UNAVAILABLE;
@@ -108,6 +130,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(readonly) NSUInteger threadExecutionWidth;
 @property(readonly) id device;
 @property(readonly) NSUInteger maxTotalThreadsPerThreadgroup;
+@property(readonly) NSUInteger staticThreadgroupMemoryLength;
+@property(readonly,copy) NSString *label;
+- (NSUInteger)imageblockMemoryLengthForDimensions:(MTLSize)dimensions;
 @end
 @interface Native540CommandQueue : NSObject
 - (instancetype)init NS_UNAVAILABLE;
@@ -164,6 +189,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 @interface Native540RenderPipeline : NSObject
 @property(readonly) id device;
+@property(readonly,copy) NSString *label;
+- (BOOL)supportsVertexAmplificationCount:(NSUInteger)count;
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;
 @end

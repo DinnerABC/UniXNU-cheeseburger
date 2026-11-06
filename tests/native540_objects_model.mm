@@ -10,6 +10,8 @@ static constexpr char trustedEntry[]="padding_gradient";
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <unistd.h>
+#include <sys/stat.h>
 struct Model {
     NSMutableDictionary *sizes=[NSMutableDictionary new],*views=[NSMutableDictionary new];
     std::atomic<int> submits{0},waits{0},flushes{0},closed{0};
@@ -80,7 +82,12 @@ static Native540CommandBuffer *encode(Native540Device *d,Native540Library *lib,N
     const uint32_t values[]={0,260,3,1,256,1,1,2,2,1,1,0};if(params)memcpy(params.contents,values,sizeof(values));
     NSError *error=nil;auto f=[lib newFunctionWithName:@(trustedEntry)];
     assert(f.functionType==MTLFunctionTypeKernel&&f.functionConstantsDictionary.count==0);
-    auto p=[d newComputePipelineStateWithFunction:f error:&error];assert(p&&!error);
+    auto pd=[MTLComputePipelineDescriptor new];pd.computeFunction=(id<MTLFunction>)(id)f;pd.label=@"padding";
+    MTLComputePipelineReflection *reflection=nil;
+    auto p=[d newComputePipelineStateWithDescriptor:pd options:MTLPipelineOptionNone reflection:&reflection error:&error];assert(p&&!error&&!reflection);
+    assert(p.staticThreadgroupMemoryLength==0&&p.maxTotalThreadsPerThreadgroup==64&&[p.label isEqualToString:@"padding"]);
+    assert(!f.vertexAttributes.count&&!f.stageInputAttributes.count&&f.patchType==MTLPatchTypeNone&&!f.patchControlPointCount&&!f.options);
+    assert(![f newArgumentEncoderWithBufferIndex:0]);
     auto q=[d newCommandQueue];auto b=[q commandBuffer];auto e=[b computeCommandEncoder];
     [e setComputePipelineState:p];[e setBuffer:input offset:0 atIndex:0];[e setBuffer:out offset:badOffset?1:0 atIndex:1];
     [e setBuffer:params offset:0 atIndex:2];
@@ -104,7 +111,33 @@ int main(int argc,char **argv) {
             NSMutableData *corrupt=[real mutableCopy];((uint8_t *)corrupt.mutableBytes)[99]^=1;
             data=dispatch_data_create(corrupt.bytes,corrupt.length,nullptr,DISPATCH_DATA_DESTRUCTOR_DEFAULT);
             assert(![d newLibraryWithData:data error:&error]&&error);
-            auto lib=library(d,real);auto output=[d newBufferWithLength:1024 options:0];
+            auto lib=library(d,real);NSError *factoryError=nil;
+            auto fromFile=[d newLibraryWithFile:@(argv[1]) error:&factoryError];assert(fromFile&&!factoryError&&fromFile.device==d);
+            assert([d newLibraryWithURL:[NSURL fileURLWithPath:@(argv[1])] error:&factoryError]&&!factoryError);
+            assert(![d newLibraryWithURL:[NSURL URLWithString:@"https://example.invalid/library.metallib"] error:&factoryError]&&factoryError);
+            NSString *fixture=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+            assert(symlink(argv[1],fixture.fileSystemRepresentation)==0);
+            assert(![d newLibraryWithFile:fixture error:&factoryError]&&factoryError);assert(unlink(fixture.fileSystemRepresentation)==0);
+            assert(mkfifo(fixture.fileSystemRepresentation,0600)==0);
+            assert(![d newLibraryWithFile:fixture error:&factoryError]&&factoryError);assert(unlink(fixture.fileSystemRepresentation)==0);
+            assert(![d newLibraryWithSource:@"kernel void unsupported(){}" options:nil error:&factoryError]&&factoryError.code==MTLLibraryErrorUnsupported);
+            auto function=[lib newFunctionWithName:@(trustedEntry)];auto descriptor=[MTLComputePipelineDescriptor new];descriptor.computeFunction=(id<MTLFunction>)(id)function;
+            MTLComputePipelineReflection *reflection=nil;
+            descriptor.maxTotalThreadsPerThreadgroup=32;assert(![d newComputePipelineStateWithDescriptor:descriptor options:0 reflection:&reflection error:&factoryError]&&factoryError&&!reflection);
+            descriptor.maxTotalThreadsPerThreadgroup=64;
+            __block unsigned callbacks=0;dispatch_semaphore_t ready=dispatch_semaphore_create(0);
+            [d newComputePipelineStateWithDescriptor:descriptor options:0 completionHandler:^(Native540ComputePipeline *p,MTLComputePipelineReflection *r,NSError *e){assert(p&&!r&&!e&&p.device==d);++callbacks;dispatch_semaphore_signal(ready);}];
+            descriptor.maxTotalThreadsPerThreadgroup=32;
+            assert(dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&callbacks==1);
+            [d newLibraryWithSource:@"unsupported" options:nil completionHandler:^(Native540Library *l,NSError *e){assert(!l&&e.code==MTLLibraryErrorUnsupported);++callbacks;dispatch_semaphore_signal(ready);}];
+            assert(dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&callbacks==2);
+            [d newComputePipelineStateWithFunction:function options:MTLPipelineOptionArgumentInfo completionHandler:^(Native540ComputePipeline *p,MTLComputePipelineReflection *r,NSError *e){assert(!p&&!r&&e);++callbacks;dispatch_semaphore_signal(ready);}];
+            assert(dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&callbacks==3);
+            [d newComputePipelineStateWithFunction:function completionHandler:nil];
+            [d newLibraryWithSource:@"unsupported" options:nil completionHandler:nil];
+            assert(![d newDefaultLibraryWithBundle:NSBundle.mainBundle error:&factoryError]&&factoryError.code==MTLLibraryErrorFileNotFound);
+            assert(!m.submits&&!m.waits);
+            auto output=[d newBufferWithLength:1024 options:0];
             auto b=encode(d,lib,output);assert(b.status==MTLCommandBufferStatusNotEnqueued);
             // Read the distinct modeled transport value. This is an observed
             // HOST-model write, not proof of executing the AIR algorithm/GPU.

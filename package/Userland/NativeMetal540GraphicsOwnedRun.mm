@@ -50,13 +50,19 @@ int NativeMetal540RunOwnedGraphics(unsigned service){@autoreleasepool {
             protocolAudit.missing,protocolAudit.mismatched,protocolAudit.first);record(c,auditText);
         NSData *bytes=[NSData dataWithContentsOfFile:@"/System/Library/Frameworks/SpriteKit.framework/default.metallib"];
         if(!d||!bytes){record(c,"RG missing-device-library");return -5491;}
-        auto data=dispatch_data_create(bytes.bytes,bytes.length,nullptr,DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-        auto lib=[d newLibraryWithData:data error:&error];auto vs=[lib newFunctionWithName:@"SolidColor_VertexFunc"];
+        auto lib=[d newLibraryWithURL:[NSURL fileURLWithPath:@"/System/Library/Frameworks/SpriteKit.framework/default.metallib"] error:&error];auto vs=[lib newFunctionWithName:@"SolidColor_VertexFunc"];
         auto fs=[lib newFunctionWithName:@"SolidColor_FragFunc"];
         auto pd=[MTLRenderPipelineDescriptor new];pd.vertexFunction=(id<MTLFunction>)(id)vs;pd.fragmentFunction=(id<MTLFunction>)(id)fs;
         pd.colorAttachments[0].pixelFormat=MTLPixelFormatRGBA8Unorm;
-        auto p=[d newRenderPipelineStateWithDescriptor:pd error:&error];
-        if(!p){record(c,"RG library-pipeline-error");return -5492;}
+        MTLRenderPipelineReflection *reflection=nil;
+        auto p=[d newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionNone reflection:&reflection error:&error];
+        __block unsigned factoryCallbacks=0;__block bool factoryValid=false;dispatch_semaphore_t factoryReady=dispatch_semaphore_create(0);
+        [d newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionNone completionHandler:^(Native540RenderPipeline *created,MTLRenderPipelineReflection *r,NSError *e){
+            factoryValid=created&&created.device==initialized&&!r&&!e;++factoryCallbacks;dispatch_semaphore_signal(factoryReady);
+        }];
+        bool factoryWait=dispatch_semaphore_wait(factoryReady,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0;
+        char factoryText[64]={};snprintf(factoryText,sizeof factoryText,"FC url%u sync%u async%u cb%u",(unsigned)(lib!=nil),(unsigned)(p&&!reflection&&!error),(unsigned)(factoryWait&&factoryValid),factoryCallbacks);record(c,factoryText);
+        if(!p||reflection||!factoryWait||!factoryValid||factoryCallbacks!=1){record(c,"RG library-pipeline-error");return -5492;}
         auto desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:64 height:64 mipmapped:NO];
         desc.storageMode=MTLStorageModeShared;desc.usage=MTLTextureUsageRenderTarget;desc.hazardTrackingMode=MTLHazardTrackingModeTracked;
         const uint32_t v[]={0xbf400000,0xbf400000,0,0x3f800000,0x3f400000,0xbf400000,0,0x3f800000,0,0x3f400000,0,0x3f800000};
@@ -83,7 +89,7 @@ int NativeMetal540RunOwnedGraphics(unsigned service){@autoreleasepool {
             target.resourceOptions==MTLResourceHazardTrackingModeTracked&&vertex.resourceOptions==MTLResourceHazardTrackingModeTracked&&
             [target setPurgeableState:MTLPurgeableStateKeepCurrent]==MTLPurgeableStateNonVolatile&&
             [vertex setPurgeableState:MTLPurgeableStateKeepCurrent]==MTLPurgeableStateNonVolatile;
-        char contract[64]={};snprintf(contract,sizeof contract,"DC identity%u callback%u allocated%lu",(unsigned)identity,completed,(unsigned long)[d currentAllocatedSize]);record(c,contract);
+        char contract[64]={};snprintf(contract,sizeof contract,"DC identity%u callback%u allocated%lu fc%u cb%u",(unsigned)identity,completed,(unsigned long)[d currentAllocatedSize],(unsigned)(factoryWait&&factoryValid),factoryCallbacks);record(c,contract);
         uint32_t pixels[4096]={};Native540Render::Pixels observed{};
         bool read=identity&&completed==1&&b.status==MTLCommandBufferStatusCompleted&&!b.error;
         if(read){@try{[target getBytes:pixels bytesPerRow:256 fromRegion:MTLRegionMake2D(0,0,64,64) mipmapLevel:0];}

@@ -9,10 +9,26 @@
 #import <CommonCrypto/CommonDigest.h>
 #include <atomic>
 #include <memory>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <errno.h>
 
 static NSError *failure(NSString *text, NSInteger code=MTLCommandBufferErrorInvalidResource) {
     return [NSError errorWithDomain:MTLCommandBufferErrorDomain code:code
                           userInfo:@{NSLocalizedDescriptionKey:text}];
+}
+static NSError *creationFailure(NSString *text) {
+    return [NSError errorWithDomain:MTLLibraryErrorDomain code:MTLLibraryErrorUnsupported
+                          userInfo:@{NSLocalizedDescriptionKey:text}];
+}
+static bool emptyLinkedFunctions(MTLLinkedFunctions *f) {
+    return !f||(!f.functions.count&&!f.binaryFunctions.count&&!f.groups.count&&!f.privateFunctions.count);
+}
+static bool pipelineOptions(MTLPipelineOption options, NSError **error) {
+    if(options==MTLPipelineOptionNone)return true;
+    if(error)*error=creationFailure(@"Pipeline reflection, archives and validation options are not provided");
+    return false;
 }
 static bool textureDescriptor(MTLTextureDescriptor *d) {
     if(![d isKindOfClass:MTLTextureDescriptor.class])return false;
@@ -62,20 +78,20 @@ static NSString *digest(NSData *data) {
 @end
 @interface Native540Library () {
 @public Native540Session *_session;id _deviceIdentity;NSData *_input, *_code, *_reflection, *_constants;
-    NSDictionary *_hashes;bool _graphics;
+    NSDictionary *_hashes;NSString *_label;bool _graphics;
 }
 - (instancetype)initOwned;
 @end
-@interface Native540Function () { @public Native540Library *_library;NSString *_name;MTLFunctionType _type; }
+@interface Native540Function () { @public Native540Library *_library;NSString *_name,*_label;MTLFunctionType _type; }
 - (instancetype)initOwned;
 @end
-@interface Native540ComputePipeline () { @public Native540Function *_function; }
+@interface Native540ComputePipeline () { @public Native540Function *_function;NSString *_label; }
 - (instancetype)initOwned;
 @end
 @interface Native540Texture () { @public Native540Buffer *_backing;id _surfaceOwner;IOSurfaceRef _surface;bool _completed,_submitted;uint64_t _generation; }
 - (instancetype)initOwned;
 @end
-@interface Native540RenderPipeline () { @public Native540Function *_vertex,*_fragment; }
+@interface Native540RenderPipeline () { @public Native540Function *_vertex,*_fragment;NSString *_label; }
 - (instancetype)initOwned;
 @end
 @interface Native540CommandQueue () { @public Native540Session *_session;id _deviceIdentity; }
@@ -252,12 +268,94 @@ static Native540Buffer *allocate(Native540Session *s,NSUInteger length,uint32_t 
     lib->_hashes=@{@"input":digest(input),@"code":digest(shaderBytes),@"reflection":digest(reflection),@"constantMetadata":digest(constants)};
     return lib;
 }
+- (Native540Library *)newLibraryWithFile:(NSString *)path error:(NSError **)error {
+    if(error)*error=nil;
+    if(![path isKindOfClass:NSString.class]||!path.length){if(error)*error=creationFailure(@"A local metallib path is required");return nil;}
+    return [self newLibraryWithURL:[NSURL fileURLWithPath:path] error:error];
+}
+- (Native540Library *)newLibraryWithURL:(NSURL *)url error:(NSError **)error {
+    if(error)*error=nil;
+    if(![url isKindOfClass:NSURL.class]||!url.isFileURL){if(error)*error=creationFailure(@"A local metallib URL is required");return nil;}
+    int fd=open(url.fileSystemRepresentation,O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);struct stat before{},after{};
+    if(fd<0){if(error)*error=[NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];return nil;}
+    bool valid=fstat(fd,&before)==0&&S_ISREG(before.st_mode)&&
+        (before.st_size==Native540ObjectsRegistry::InputBytes||before.st_size==92788);
+    NSMutableData *bytes=valid?[NSMutableData dataWithLength:(NSUInteger)before.st_size]:nil;size_t readBytes=0;
+    while(valid&&readBytes<bytes.length){ssize_t n=read(fd,(uint8_t*)bytes.mutableBytes+readBytes,bytes.length-readBytes);
+        if(n<0&&errno==EINTR)continue;
+        if(n<=0){valid=false;break;}readBytes+=size_t(n);
+    }
+    valid=valid&&fstat(fd,&after)==0&&after.st_size==before.st_size&&after.st_ino==before.st_ino&&after.st_dev==before.st_dev;
+    if(close(fd))valid=false;
+    if(!valid){if(error)*error=creationFailure(@"A stable regular registered metallib file is required");return nil;}
+    auto data=dispatch_data_create(bytes.bytes,bytes.length,nullptr,DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+    return [self newLibraryWithData:data error:error];
+}
+- (Native540Library *)newDefaultLibrary {return [self newDefaultLibraryWithBundle:NSBundle.mainBundle error:nullptr];}
+- (Native540Library *)newDefaultLibraryWithBundle:(NSBundle *)bundle error:(NSError **)error {
+    if(error)*error=nil;
+    NSString *path=[bundle isKindOfClass:NSBundle.class]?[bundle pathForResource:@"default" ofType:@"metallib"]:nil;
+    if(!path){
+        if(error)*error=[NSError errorWithDomain:MTLLibraryErrorDomain code:MTLLibraryErrorFileNotFound
+            userInfo:@{NSLocalizedDescriptionKey:@"No default metallib in the requested bundle"}];
+        return nil;
+    }
+    return [self newLibraryWithFile:path error:error];
+}
+- (Native540Library *)newLibraryWithSource:(NSString *)source options:(MTLCompileOptions *)options error:(NSError **)error {
+    (void)source;(void)options;
+    if(error)*error=creationFailure(@"Runtime source compilation is not provided; use a registered metallib");return nil;
+}
+- (void)newLibraryWithSource:(NSString *)source options:(MTLCompileOptions *)options completionHandler:(void (^)(Native540Library *,NSError *))handler {
+    if(!handler)return;source=[source copy];options=[options copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {
+        NSError *error=nil;Native540Library *library=[self newLibraryWithSource:source options:options error:&error];handler(library,error);
+    }});
+}
 - (Native540ComputePipeline *)newComputePipelineStateWithFunction:(Native540Function *)function error:(NSError **)error {
     if(error)*error=nil;
     if(![function isKindOfClass:Native540Function.class]||function->_library->_session!=_session||function->_type!=MTLFunctionTypeKernel) {
         if(error)*error=failure(@"Foreign or missing trusted compute function");return nil;
     }
     Native540ComputePipeline *p=[[Native540ComputePipeline alloc] initOwned];p->_function=function;return p;
+}
+- (Native540ComputePipeline *)newComputePipelineStateWithFunction:(Native540Function *)function options:(MTLPipelineOption)options reflection:(MTLComputePipelineReflection **)reflection error:(NSError **)error {
+    if(error)*error=nil;if(reflection)*reflection=nil;
+    if(!pipelineOptions(options,error))return nil;
+    return [self newComputePipelineStateWithFunction:function error:error];
+}
+- (Native540ComputePipeline *)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor *)d options:(MTLPipelineOption)options reflection:(MTLComputePipelineReflection **)reflection error:(NSError **)error {
+    if(error)*error=nil;if(reflection)*reflection=nil;
+    if(!pipelineOptions(options,error))return nil;
+    if(![d isKindOfClass:MTLComputePipelineDescriptor.class]){if(error)*error=creationFailure(@"A native compute descriptor is required");return nil;}
+    d=[d copy];auto stage=d.stageInputDescriptor;
+    bool valid=(!stage||[stage isEqual:[MTLStageInputOutputDescriptor stageInputOutputDescriptor]])&&
+        !d.supportIndirectCommandBuffers&&!d.binaryArchives.count&&!d.preloadedLibraries.count&&
+        emptyLinkedFunctions(d.linkedFunctions)&&(d.maxTotalThreadsPerThreadgroup==0||d.maxTotalThreadsPerThreadgroup==64);
+    for(unsigned i=0;i<31&&valid;++i)valid=d.buffers[i].mutability==MTLMutabilityDefault;
+    if(!valid){if(error)*error=creationFailure(@"Unsupported compute descriptor features");return nil;}
+    auto pipeline=[self newComputePipelineStateWithFunction:(Native540Function*)d.computeFunction error:error];
+    if(pipeline)pipeline->_label=[d.label copy];return pipeline;
+}
+- (void)newComputePipelineStateWithFunction:(Native540Function *)function completionHandler:(void (^)(Native540ComputePipeline *,NSError *))handler {
+    if(!handler)return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {
+        NSError *error=nil;auto pipeline=[self newComputePipelineStateWithFunction:function error:&error];handler(pipeline,error);
+    }});
+}
+- (void)newComputePipelineStateWithFunction:(Native540Function *)function options:(MTLPipelineOption)options completionHandler:(void (^)(Native540ComputePipeline *,MTLComputePipelineReflection *,NSError *))handler {
+    if(!handler)return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {
+        NSError *error=nil;MTLComputePipelineReflection *reflection=nil;
+        auto pipeline=[self newComputePipelineStateWithFunction:function options:options reflection:&reflection error:&error];handler(pipeline,reflection,error);
+    }});
+}
+- (void)newComputePipelineStateWithDescriptor:(MTLComputePipelineDescriptor *)d options:(MTLPipelineOption)options completionHandler:(void (^)(Native540ComputePipeline *,MTLComputePipelineReflection *,NSError *))handler {
+    if(!handler)return;d=[d copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {
+        NSError *error=nil;MTLComputePipelineReflection *reflection=nil;
+        auto pipeline=[self newComputePipelineStateWithDescriptor:d options:options reflection:&reflection error:&error];handler(pipeline,reflection,error);
+    }});
 }
 - (Native540Texture *)newTextureWithDescriptor:(MTLTextureDescriptor *)d {
     if(!textureDescriptor(d))return nil;
@@ -301,16 +399,39 @@ static Native540Buffer *allocate(Native540Session *s,NSUInteger length,uint32_t 
 }
 - (Native540RenderPipeline *)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d error:(NSError **)error {
     if(error)*error=nil;
-    auto emptyLinked=[](MTLLinkedFunctions *f){return !f||(!f.functions.count&&!f.binaryFunctions.count&&!f.groups.count&&!f.privateFunctions.count);};
-    bool valid=d&&d.rasterSampleCount==1&&d.depthAttachmentPixelFormat==MTLPixelFormatInvalid&&
+    if(![d isKindOfClass:MTLRenderPipelineDescriptor.class]){if(error)*error=creationFailure(@"A native render descriptor is required");return nil;}
+    d=[d copy];
+    bool valid=d.rasterSampleCount==1&&d.depthAttachmentPixelFormat==MTLPixelFormatInvalid&&
         d.stencilAttachmentPixelFormat==MTLPixelFormatInvalid&&d.rasterizationEnabled&&
-        !d.alphaToCoverageEnabled&&!d.alphaToOneEnabled&&emptyLinked(d.vertexLinkedFunctions)&&emptyLinked(d.fragmentLinkedFunctions);
+        !d.alphaToCoverageEnabled&&!d.alphaToOneEnabled&&emptyLinkedFunctions(d.vertexLinkedFunctions)&&emptyLinkedFunctions(d.fragmentLinkedFunctions)&&
+        !d.supportIndirectCommandBuffers&&!d.binaryArchives.count&&!d.vertexPreloadedLibraries.count&&!d.fragmentPreloadedLibraries.count&&
+        d.maxVertexAmplificationCount==1;
+    for(unsigned i=0;i<31&&valid;++i)valid=d.vertexBuffers[i].mutability==MTLMutabilityDefault&&d.fragmentBuffers[i].mutability==MTLMutabilityDefault;
     for(unsigned i=0;i<31&&valid;++i)valid=!d.vertexDescriptor||d.vertexDescriptor.attributes[i].format==MTLVertexFormatInvalid;
     for(unsigned i=0;i<31&&valid;++i)valid=!d.vertexDescriptor||d.vertexDescriptor.layouts[i].stride==0;
     for(unsigned i=0;i<8&&valid;++i){auto a=d.colorAttachments[i];
         valid=a.pixelFormat==(i?MTLPixelFormatInvalid:MTLPixelFormatRGBA8Unorm)&&!a.blendingEnabled&&a.writeMask==MTLColorWriteMaskAll;}
     if(!valid){if(error)*error=failure(@"Unsupported graphics descriptor");return nil;}
-    return [self newRenderPipelineWithVertexFunction:(Native540Function*)d.vertexFunction fragmentFunction:(Native540Function*)d.fragmentFunction error:error];
+    auto pipeline=[self newRenderPipelineWithVertexFunction:(Native540Function*)d.vertexFunction fragmentFunction:(Native540Function*)d.fragmentFunction error:error];
+    if(pipeline)pipeline->_label=[d.label copy];return pipeline;
+}
+- (Native540RenderPipeline *)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d options:(MTLPipelineOption)options reflection:(MTLRenderPipelineReflection **)reflection error:(NSError **)error {
+    if(error)*error=nil;if(reflection)*reflection=nil;
+    if(!pipelineOptions(options,error))return nil;
+    return [self newRenderPipelineStateWithDescriptor:d error:error];
+}
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d completionHandler:(void (^)(Native540RenderPipeline *,NSError *))handler {
+    if(!handler)return;d=[d copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {
+        NSError *error=nil;auto pipeline=[self newRenderPipelineStateWithDescriptor:d error:&error];handler(pipeline,error);
+    }});
+}
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d options:(MTLPipelineOption)options completionHandler:(void (^)(Native540RenderPipeline *,MTLRenderPipelineReflection *,NSError *))handler {
+    if(!handler)return;d=[d copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {
+        NSError *error=nil;MTLRenderPipelineReflection *reflection=nil;
+        auto pipeline=[self newRenderPipelineStateWithDescriptor:d options:options reflection:&reflection error:&error];handler(pipeline,reflection,error);
+    }});
 }
 - (void)setPublicDeviceIdentity:(id)device {_session->publicDevice=device;}
 - (int)retireResources {
@@ -374,6 +495,8 @@ static Native540Buffer *allocate(Native540Session *s,NSUInteger length,uint32_t 
 - (NSArray *)functionNames {return _graphics?@[@(Native540RenderAIRFixture::vsEntry),@(Native540RenderAIRFixture::fsEntry)]:@[@(Native540ObjectsRegistry::Entry)];}
 - (id)device {return _deviceIdentity;}
 - (NSDictionary *)snapshotHashes {return _hashes;}
+- (NSString *)label {return _label;}
+- (void)setLabel:(NSString *)label {_label=[label copy];}
 - (Native540Function *)newFunctionWithName:(NSString *)name {
     MTLFunctionType type=MTLFunctionTypeKernel;
     if(_graphics){
@@ -389,6 +512,14 @@ static Native540Buffer *allocate(Native540Session *s,NSUInteger length,uint32_t 
 - (NSString *)name {return _name;}
 - (id)device {return _library.device;}
 - (MTLFunctionType)functionType {return _type;}
+- (NSString *)label {return _label;}
+- (void)setLabel:(NSString *)label {_label=[label copy];}
+- (NSArray *)vertexAttributes {return @[];}
+- (NSArray *)stageInputAttributes {return @[];}
+- (MTLPatchType)patchType {return MTLPatchTypeNone;}
+- (NSInteger)patchControlPointCount {return 0;}
+- (MTLFunctionOptions)options {return MTLFunctionOptionNone;}
+- (id)newArgumentEncoderWithBufferIndex:(NSUInteger)index {(void)index;return nil;}
 // Fixed export has no unsatisfied function constants. Specialization not exposed.
 - (NSDictionary *)functionConstantsDictionary {return @{};}
 @end
@@ -397,6 +528,11 @@ static Native540Buffer *allocate(Native540Session *s,NSUInteger length,uint32_t 
 - (NSUInteger)threadExecutionWidth {return Native540ObjectsRegistry::Info.subgroupSize;}
 - (id)device {return _function.device;}
 - (NSUInteger)maxTotalThreadsPerThreadgroup {return 64;}
+- (NSUInteger)staticThreadgroupMemoryLength {return Native540ObjectsRegistry::Info.sharedBytes;}
+- (NSString *)label {return _label;}
+- (NSUInteger)imageblockMemoryLengthForDimensions:(MTLSize)dimensions {
+    (void)dimensions;[NSException raise:NSInvalidArgumentException format:@"Imageblocks are not provided by this backend"];return 0;
+}
 @end
 @implementation Native540Texture
 - (instancetype)initOwned {return [super init];}
@@ -463,6 +599,8 @@ static Native540Buffer *allocate(Native540Session *s,NSUInteger length,uint32_t 
 @implementation Native540RenderPipeline
 - (instancetype)initOwned {return [super init];}
 - (id)device {return _vertex.device;}
+- (NSString *)label {return _label;}
+- (BOOL)supportsVertexAmplificationCount:(NSUInteger)count {return count==1;}
 @end
 @implementation Native540CommandQueue
 - (instancetype)initOwned {return [super init];}
