@@ -9,6 +9,7 @@
 // kernel diagnostics rely on this; do not weaken it.
 #pragma once
 #include <stdint.h>
+#include "CheeseburgerGpuClock540.h"
 
 namespace CheeseburgerGpu {
 
@@ -123,8 +124,7 @@ template <class R> class Startup {
         wr(0x820 * 4, 0x80000060); wr(0x81f * 4, 0x40201b16);
         wr(0xd00 * 4, (0x400u << 11) | (0x300u << 22));
         wr(0xe81 * 4, 1u << 29); wr(0x833 * 4, 0x02000000); wr(0x94 * 4, 0xa6ffffff);
-        // hardwareClockGating(true) deliberately omitted: it only adds per-block
-        // gating; the reset default keeps functional clocks running.
+        hardwareClockGating540(r,true);
         wr(0x95 * 4, 0x3f); wr(0xf02 * 4, 2u << 7); wr(0xcc6 * 4, 2u << 1); wr(0xe8f * 4, 2);
         wr(CPProtectCntl, 7);
         wr(0xe60 * 4, rd(0xe60 * 4) | (1u << 10) | (1u << 23));
@@ -305,7 +305,7 @@ public:
     }
 
     // Upload the GPMU firmware after CP_ME_INIT, before ZAP, as sagit does.
-    bool gpmu(uint64_t commandsVA, uint32_t words, uint32_t microvolts, uint32_t frequency, Record &rec) {
+    bool gpmu(uint64_t commandsVA, uint32_t words, uint32_t microvolts, uint32_t frequency, Record &rec,bool powerCollapse=true) {
         if (!runningFlag || !ringPtr || ringCursor != 9 || !commandsVA || (commandsVA & 3) || !words || words > 0x1021) {
             fail(rec, -20, 4); return false;
         }
@@ -319,8 +319,10 @@ public:
         wr((payload + 34) * 4, (1u << 24) | (1u << 17) | (2u << 8));
         wr((payload + 35) * 4, ~0x303u); wr((msg + 3) * 4, 36 * 4);
         wr((0x9800 + 5) * 4, 0xbabeface);
-        wr(GPMUPwrColInterFrameCtrl, 0x7f); wr(GPMUPwrColBinningCtrl, 0);
-        wr(GPMUPwrColInterFrameHyst, 0xa0080); wr(GPMUPwrColStaggerDelay, 0x600040);
+        if(powerCollapse){
+            wr(GPMUPwrColInterFrameCtrl, 0x7f); wr(GPMUPwrColBinningCtrl, 0);
+            wr(GPMUPwrColInterFrameHyst, 0xa0080); wr(GPMUPwrColStaggerDelay, 0x600040);
+        }
         unsigned c = ringCursor;
         ringPtr[c++] = packet7(0x5f, 1); ringPtr[c++] = 0;
         ringPtr[c++] = packet7(0x3f, 3); ringPtr[c++] = uint32_t(commandsVA);

@@ -1,3 +1,473 @@
+## 2026-11-07：接续资源契约批次实机通过；按用户要求回收后提交
+
+- 当前设备 root Recovery `3b25cc7c`，唯一 ADB `5037`；本轮仅一次临时启动，日志已回收、监视器结束。最新 boot **`0x3d7f4997`**，日志 **`out/p21/persistent-logs/20261106T163705Z`**，窗口 SHA `ddd48b4502199bd72c16ba9ad84774a56ac2578dcf2858a14c2ee5aab637ceb3`，34 rounds／0 write errors。UTC 仍为 11-06，本地已 11-07。
+- 上会话未完成的 **`out/p21/p21-sagit-resource-contract-20261106T155155Z`** 已收尾。镜像 `uefi/boot-p21-up1.img` SHA **`7d63a577c0dc8c6a74c7f2cdba674c05cf3e89ac1e0806e6626dfc4565ecc09a`**；最终 kernel `97ae7084ca8a690b738bf847fc6fc335fb93f07900a69710da4a6abcb402298b`，FD `d6394d38…`，expanded payload `4a735426…`，plugin `38086f04…`。复用本候选哈希一致的 local XNU／插件构建，完成 prelink、panic-screen、kernel check、payload、实际 VM UEFI 重编与三项 EFI pin scan；新 gate `gate-20261106T163232Z.json` PASS。原 seed／697B args／225s／ADT／DTB／ABI／power 保持。
+- **实机新结果**：`DP n468 missing0 type0`；`RC frames4 reuse1 allocated45056`，`RX ff0000ff/ff00ff00/ffff0000/ff0000ff`，`OR rc0 free7 view6 proof1 left0`；DI real initialized device、DC identity1/callback1、DR registry match1、RG/RA pixel bad0、旧 compute/transform/AIR 与 SF/SR 均保持。GPU user sub12/fence12/wait12/free12；GICACHE pub5/acq5/163840B/errors0。新 Tracked／资源拒绝与锁内上传契约实际进入本候选；**DP0仍仅方法／签名，不是完整 MTLDevice/SPI 语义或系统注册**。
+- boot receipt `logs/boot-once-20261106T163254Z`；16:33:03Z 开始，241.295s 观测返回 Recovery。misc 仅已授权32B command 同步回读，其余保持；BCB预置、无host reboot帮助。不刷 boot/recovery/固件/GPT，不据返回扩展为所有异常自动恢复。display transfers2；用户未独立报告本轮桌面，不复制旧450轮用户报告。
+- 冻结 **`out/p21/gpu-cp/rounds/20261106T163806Z-sagit-resource-contract-four-color-pass`**；INDEX同步，`logs/device-result.json`、sourcepins、boot/monitor/retrieval独立对应。100项Python/实际ObjC ASanUBSan/arm64回归、9核心模型和额外quiesce/importcache/direct/SMMU/历史bplist模型PASS。初始字体路径与额外模型include/link命令失败保留；复用既有 `drivers/p9/Font.h` 的相同hash缓存后补丁成功。ZAP模型首跑cwd导致私有输入SKIP，仓库cwd重跑actual MDT/b00/b01/b02全部PASS，不把SKIP算验证。
+- 首次提交包括此前GPU/Metal成批源码、模型、文档和保留的其他agent历史cache工作；不启用 `sgac`／`launchd_unsecure_cache`（本轮GCACHE stage0）。`tools/gpu-native540/evidence`的日志/中间产物保持本机，仅编译所需 immutable AIR fixture header显式跟踪，Apple原输入/签名/私有日志/镜像不提交。另修正构建器trust模块顺序注释，不改变产品行为。用户现授权要求：**本轮获取日志后提交一次，后续每轮也必须提交；不push。**
+- **下一批**：标准library file/URL/default、compute/render options/descriptor与异步wrapper落真实后端、Function/Pipeline/queue契约及继承abstract分类，复用固定sagit/QcomMTL的ownership/错误行为但不借iOS18 ABI。当前principal仍返回nil，单ABI客户端、64RGBA/固定AIR/session退休限制保持；自然system registration、长生命周期资源池、全屏BGRA/display-reader/presentation及系统UI GPU合成未完成。先 coherent batch/offline gate再必要的单次验证，不log-only重复boot、不旁支壁纸/其他硬件。
+
+## 2026-11-06：连续四色真实Metal AIR与资源复用集中验收实机通过
+
+- **设备当前rootRecovery3b25cc7c唯一ADB5037、无monitor或未回收实验；最新boot `0x3d7c55c7`**。log `out/p21/persistent-logs/20261106T152547Z` rawSHA `4338b3472d83f707011aa3a7fc166c4717f12764e54eef6f3e1ef9cae9509234`34rounds/0errors。
+- **RC frames4 reuse1 allocated45056；RX ff0000ff/ff00ff00/ffff0000/ff0000ff；OR rc0 free7 view6 proof1 left0**。同actual_MTLDevice/SpriteKitAIR/同importedtexture读color四帧red→green→blue→red正确，workspace复用无新增BO（7resources/45056B），4真实fence完成后逐资源回收proof，旧视图/lost拒访问。userGPUsub12fence12wait12/free12/BO47；原AIR/compute/DI/DC/DR/RG/SF/SR保持、GICACHEpub5acq5/163840B/error0。非FPS/并行/concurrent或系统UIGPU合成宣称。
+- 当前成功镜像 **`out/p21/p21-sagit-continuous-metal-20261106T151639Z/uefi/boot-p21-up1.img`** SHA `f298150bd1e00889581d54a8ac7be0427846dcfb2aace65682b32b5b9168bfda`，kernelfdd11bd0…/FD4cef1672…/payload188144b0…；gate20261106T152106ZactualEFI3pins，全localXNU/plugin/payload/UEFI匹配，same225s/seed/ADT/DTB/power/wire。singleboot `logs/boot-once-20261106T152137Z`、241.164sreturn，BCB32B回读/其他保持，无hosthelp；userdesktop确认仍只prior450boot。
+- 冻 **`out/p21/gpu-cp/rounds/20261106T152721Z-sagit-continuous-four-color-metal-pass`**，candidate/device-result.json/sourcepins/raw独立对应。hostgraphics/oldcompute/arm643+27modes19failures、renderAIR4/compute7/retire7/Surface5/cap4/heartbeat12/evidence17通过。source当前与successfulcandidate一致，无再改硬件/壁纸/OSidentity。
+- 本批确实成批功能+安全+验收、一张候选一次boot；generation拒预编oldcommand、成功coherence才workspace复用、不循环分配，CPUinflight/lost拒绝，资源geometry/storage/cache/hazard/allocated/IOSurface/label对应backing。旧fiveBOretire兼容、fullsessionretireproof保留。
+- **下一快速GPU/Metal批次**：target剩余28device/SPI接口与合法unsupported错误行为、MTLResource/Function/Pipeline协议实际契约、真实systemdevice注册/跨帧依赖与presentation。当前still initializedactual_MTLDevice notdefaultregistered，readonlyDPmissing28type0，不能adoptfullprotocolcheckbox替代implementation；没有systemUIGPU合成。不要逐log-onlyboot，先coherentbatch/完整offlinegate再集中一次设备。保留旧证据/其他agent改动、不push或刷分区。
+
+## 2026-11-06：连续Metal四色帧/工作区复用集中候选singleboot验证中
+
+- 用户要求快速成批解决，不慢速逐接口尝试。本批一次合并texturegeneration/成功fence后复用、oldcommand拒绝、同sessionIB/VS/FS/scratchworkspace复用（纯identity不循环强引用）、std资源geometry/cache/hazard/allocated/IOSurface/label、inflight/lost CPUcontents拒绝以及四帧改变color实际oracle。原225s不变，无旁支壁纸/hardware。
+- 新候选 **`out/p21/p21-sagit-continuous-metal-20261106T151639Z/uefi/boot-p21-up1.img`** SHA `f298150bd1e00889581d54a8ac7be0427846dcfb2aace65682b32b5b9168bfda`，kernelfdd11bd0…/FD4cef1672…/payload188144b0…，gate20261106T152106ZactualEFI3pinsPASS、fullsame-roundlocalXNU/plugin/trust/payload/UEFI。sameSeed/697Bargs/ADT/DTB/power/wire；sourcepins logs/continuous-source-evidence.json。
+- **singleboot/被动monitor进行中** `candidate/logs/boot-monitor-host.log`，不争用/reboot/重复boot。启动前rootRecovery3b25cc7c唯一ADB5037、prior3d701cdc完整回收。misc32B仅command回读/fastbootboot，无partitionflash。
+- 预期RCframes4/reuse1/allocated45056、RXred/green/blue/redactualpixel、ORfree7view6proof1left0；onlyoriginalSpriteKitVS/FS实际AIR，不改reflection/ISA。每帧fence严格递增，hostfixed17mock错误修正为monotonic未放宽clientgate。workspace只genuinecomplete/cache后清scratch/reuse，未成功占用/资源保持。
+- hostactualObjCASanUBSangraphics/oldcompute/arm643tests、27mode含19retirefaults和四色无allocationgrowth、oldrenderAIR4/compute7/retire7/Surface5/cap4/heartbeat12/evidence17全部PASS；错误测试logs保留。NoFpsclaim/no systemregistry，28requiredmethods仍不dummy，stdresourceattrs不是fullMTLprotocol。docs/P21_METAL_CONTINUOUS_20261106.md。
+
+## 2026-11-06：Metal对象session七资源完整退休实机成功，225秒候选新基线
+
+- **设备当前rootRecovery3b25cc7c/唯一ADB5037、无monitor或未回收启动，最新boot `0x3d701cdc`**。log `out/p21/persistent-logs/20261106T144855Z` rawSHA `ab9140460da7cfdab7f3742c01a5ed5a54bf3f7553e06fee47ae17e55e9243df`，34rounds/0writererrors。
+- **OR rc0 free7 view6 proof1 left0**：actualinitialized_MTLDevice委托SpriteKit/IOSurface图形session，7BO/6ownedCPUview/19callbacks全部真实ack，success后ledger/allocated0，旧view拒绝，失败stickyhold不重free、不close再complete。GPSVCfree12=对象7+旧privateprobe5，原RGbad0/RA/RIguard/DIready/DCidentity1callback1/DRmatch1/SF/SR全通过。仍DPmissing28type0未systemregister。
+- 当前匹配image **`out/p21/p21-sagit-session-retire225-20261106T143918Z/uefi/boot-p21-up1.img`** SHA `6d46f6cbff58d40c24e3152f2677806065aa42be42654dfd373946a7bdd94bfe`，kernel98174c2a…/FDfdd2a3f2…/payloadd9414286…；gate20261106T144356ZactualEFI3pins，fulllocalXNU/plugin/payload/EFI匹配，sameSeed/697Bargs/ADT/DTB/power/wire。225=此前用户确认450boot桌面＋日志firstpaint209.709s后约15s，非timer-onlyboot。
+- singleboot `logs/boot-once-20261106T144445Z`，14:44:53Z开始、240.9348s观测Recovery，BCB32B同步回读其他保持/无hosthelp；此225boot2displaytransfer但用户未独立报告桌面，不能把prior450用户确认复制为本boot。冻 **`out/p21/gpu-cp/rounds/20261106T145005Z-sagit-metal-session-retire225-pass`**，INDEX和candidate/logs/device-result.json含独立限界。
+- 新sessioncapacity64/192ops预检，默认5probe兼容，pendingcommands/lost拒retire/activeCPUowner保留、partial失败no retries，后续资源取contents/getBytes不得读已退view。hostactualObjCgraphics/oldcompute/arm643tests+19faultpoints、oldretirement7/Surface5/cap4/heartbeat12/evidence17PASS，所有失败syntax/testcallbackpointlogs保留。docs/P21_METAL_SESSION_RETIREMENT_20261106.md。
+- **下一GPU/Metal里程碑**：per-resource可复用lifetime/fence依赖、标准MTLResource/pipeline/command接口真实契约和剩余28device/SPI方法、系统注册及全屏IOSurfaceBGRA/readerfence/presentation。当前是完整session停机退休，不是跨帧pool/APIfullconformance，不能adoptfakeprotocol/给unsupporteddummy。无壁纸/其他hardware工作、无AMFI/secure削弱、无分区刷写、无push，旧inputs和其他agent全部改动保留。
+
+## 2026-11-06：Metal对象session七资源退休225秒候选singleboot验证中
+
+- 新候选 **`out/p21/p21-sagit-session-retire225-20261106T143918Z/uefi/boot-p21-up1.img`** SHA `6d46f6cbff58d40c24e3152f2677806065aa42be42654dfd373946a7bdd94bfe`，kernel `98174c2acf8119bcd152a990f909e443dcfdda73b987d9ffb1a5518d12d13d34`、FDfdd2a3f2…/payloadd9414286…，gate20261106T144356ZactualEFI3pinsPASS、sameSeed/697Bargs/ADT/DTB/power/wire。完整localXNU/plugin/payload/UEFI同轮不是旧FD。
+- **本条时singleboot/被动monitor进行中** `candidate/logs/boot-monitor-host.log`（taskexec_8aceba22-a67c-484d-a967-9122ef2f2385），不可争用/reboot/重复boot。启动前rootRecovery3b25cc7c唯一ADB5037、prior450boot3ccb2dfc完整回收并用户确认桌面。只已授权misc32Bcommand回读/fastbootboot，不刷系统/GPT/firmware。
+- 本批不是timer-onlyboot：oldfiveBOretirement默认接口保持，Metal对象session扩64ledger，真实graphics7BO/6CPUviews/19callbacks逐ack→proof→allocated0/oldviews拒绝；pendingcommand/lost不retire，partialfailurestickyhold不close再complete，不retry成功free。OR期望rc0/free7/view6/proof1/left0；RGpixel/DI/DC/AIR/SF/SR原回归。225deadline=日志firstpaint209.709s+约15s，用户真实桌面确认，不称光学firsttimestamp精确。
+- hostactualObjCASanUBSan graphics/oldcompute/arm643tests、19retirementfailurepoints、oldretirement7/Surface5/cap4/heartbeat12/evidence17PASS，initialivar C++syntax/test20thcallback错误保存修正。sourcepins logs/session-retirement-source-evidence.json，docs/P21_METAL_SESSION_RETIREMENT_20261106.md。
+- 当前未device全session回执，不claim系统Metal注册/跨帧资源池或GPUUI合成；28requiredmethods仍真实缺失不fakeprotocol，后续继续GPU/Metal，不旁支壁纸/hardware。
+
+## 2026-11-06：用户确认450轮正常进入桌面；225秒与Metal对象session退休合并构建
+
+- 用户最新报告**boot0x3ccb2dfc正常进入桌面**，并授权按日志firstframe后十几秒设计deadline继续GPU/Metal。firstsurfacepaint内核209.709s，firstsnapshot219.555s已2frames；后续候选采用**225s（约+15s）**，不是独立timer-onlyboot。用户未测firstvisibleUI精确时间，不把日志时钟当光学测量；但桌面实际进入现已confirmeduser。旧candidate/device-result.json补用户确认。
+- 当前设备rootRecovery3b25cc7c、唯一ADB5037、prior450日志140743Z已回收，未boot新候选/无monitor。范围仍GPU/Metal，不做壁纸/其他hardware，旧数据全部保留。
+- 本批按sagitbuffer completionfailed保留＋officialNativeAdrenoUserTest顺序扩展退休ledger为template固定容量（默认5/15ops保持，session64/192ops），actualownedgraphics7资源中6ownedCPUview+1importtarget=19ops。session成功fence/cache/commandsnone才retire→逐view/CPUunmap/BoFreeACK；proof后clearledger、currentAllocated0、旧CPUview/texture读拒绝、新allocation/submission拒绝，失败stickyhold不close/不重新complete。旧五BO/privateprobe兼容。
+- GraphicsOwnedRun在realGPU pixelbad0之后真实sessionretire，OR记录rc/free7/view6/proof1/left0，原SF/SR仍独立。29之前missing协议功能未虚报，systemMetal注册/presentation仍未完成。
+- hostgraphics/compute/arm643tests＋19retirementfailurepoints、oldRetirement7/Surface5通过，初始ObjCivar初始化syntax及测试多一个callbackpoint失败保存修正；source实际失败保护已加。不放宽idle/TLB/secure/AMFI/ABI。
+- 新候选 **`out/p21/p21-sagit-session-retire225-20261106T143918Z`**完整localXNU/plugin/trust/payload构建与回归中，sameSeed/697Bargs/ADT/DTB/power/wire，boot仍false；不要引用旧gate或源码为新成功。后续实际EFIpins/gate后仅一次临时启动，先核OR真实回执＋RG/pixel/DC/DI旧回归与桌面。
+
+## 2026-11-06：450秒单变量轮已回收，GPU/Metal对象通过，六次显示传输；用户界面观察待确认
+
+- **设备当前rootRecovery3b25cc7c/唯一ADB5037，无monitor或未回收实验。最新boot `0x3ccb2dfc`**，日志 `out/p21/persistent-logs/20261106T140743Z` rawSHA `a33b4712d6e2ce12e64c0f7547d6a12a617f08bc96603e85f560562ba5ad416b`，79rounds/0writererrors。
+- display159clients/**6frames**、SWAPcheck6/reject0/transfer6；firstsurfacepaint内核209.709s，firstsnapshotwriter-relative166s/实际kernelcounter219.555s已2frames，后续3/4/5/6在writer196/253/314/369s。**未获用户锁屏/桌面是否可见与时间报告**，transfer不等系统界面或GPU UI合成证明。
+- DIrealinitializeddevice/DPmissing28type0、DCidentity1callback1/DRregistrymatch1、真实RGbad0、RA/RIguard与SF/SRprivate5BOproof全部保持；GIMPORT2/complete2/error0、GICACHEpub2acq2/65536/errors0。没有kernel/用户GPU回归证据；systemMetal注册仍未开启，frame6是既有display消费链不是systemMetaldevice完成。
+- 当前450观察候选 **`out/p21/p21-sagit-surface-wait450-20261106T135632Z/uefi/boot-p21-up1.img`** SHA `fae5069307d4547b38a0b4af7ba83f7c2b1689a2e67fc2b5535e66bc784c1a8a`，samekernel12e8aa83…/plugin/ADT/seed/DTB/trust逐SHA，新FDaeb67155…/payloaddccccc0c7…；gate20261106T135851ZactualEFI3pins，**唯一600→450**，其他代码参数未改。singleboot13:59:57.539Z（北京时间21:59:57），accepted14:00:09.536Z，465.7478s观测Recovery（约22:07:43），无hostreboothelp，BCB预置；本轮用户手动与否未报告，不能单据时间断言PSCI路径。
+- 冻结 **`out/p21/gpu-cp/rounds/20261106T140910Z-sagit-wait450-six-transfers`**，INDEX与candidate/logs/device-result.json保存时间归属与局限。暂保留450秒，不因firsttransfer约210s直接缩短；等用户firstvisibleUI后设计timer。230debug候选未构建/未启动，600历史人工恢复注明。
+- **用户最新范围保持：GPU渲染/Metal＋进入系统界面阻塞，不扩壁纸/其他硬件；没有实施壁纸metadata/安全绕过/Apple代码/OSidentity改动。** Data副本只读取证已卸载，报告不同历史slide不能混本轮；未能确认唯一UI根因。下一先取得本轮用户画面时间，继续真实systemdevice/requiredAPI与presentation，不重复旧电源猜测/同镜像boot或自动循环。保留全部其他agent和historicalinputs，无push/partitionflash。
+
+## 2026-11-06：任务收束GPU/Metal；450秒单变量观测镜像已单次启动
+
+- 用户最新明确：继续GPU渲染/Metal，当前仅排查未进入系统界面，不扩展壁纸/其他硬件；未确认根因则450s多等并依据实际界面出现时间再调整。因此**未实施壁纸元数据改造/Apple代码修改/系统身份修改/新硬件适配**，后续不要沿此前分析旁支开展功能。
+- 600秒轮 `boot0x3d7dbf9e` 已完整回收 `out/p21/persistent-logs/20261106T133101Z`，rawSHA `9fa9b72f7117a8a3798e1fed95f526428715c94676b85be78e419e347609958a`、81rounds/0writererrors。DI/RG/RA/RI/IOSurface对象导入成功，GIMPORT2/GICACHE2/65536B/errors0、DCidentity1callback1和DRmatch1、DPmissing28/type0；但display179clients/0frames、swaps0，SpringBoard/backboardd在。不能把未观察系统画面归GPU导入失败。
+- **用户手动恢复Recovery**，host476.53s观测返回，早于requested600s。monitor.json已添加manualattribution；main/guard未观察fired，不当automaticreset验证。冻 **`out/p21/gpu-cp/rounds/20261106T133520Z-sagit-wait600-manual-return-framezero`**。当前所有前轮已回收。
+- 只读取证本机Data副本已保留 `native540/data-crash-20261106T1338`，head/bitmap稳定device无写，报告私有out/private-analysis/p21-wait600-crash-20261106T1338/reports；**报告混历史不同slide/PID，不能当全部本轮或唯一根因**。发现WallpaperKitCollections异常并上游已有案例，但scope收束后未适配；只记录证据，GPU/Metal检测本身通过，系统呈现仍未验证。独立挂载disk31已卸载，不触碰其他取证卷。
+- 新候选 **`out/p21/p21-sagit-surface-wait450-20261106T135632Z/uefi/boot-p21-up1.img`** SHA `fae5069307d4547b38a0b4af7ba83f7c2b1689a2e67fc2b5535e66bc784c1a8a`，samekernel12e8aa83…/ADT/plugin/addon/trust/seed/DTB逐SHA保留；**唯一参数600→450**，args697B不变；newFDaeb67155…/expandedpayloadccccc0c7…，gate20261106T135851ZactualEFI3pinsPASS，payload/EFI重编未复用旧绑定。
+- **只一次临时启动** receipt `logs/boot-once-20261106T135949Z`：13:59:57.539Z（北京时间21:59:57）开始，14:00:09.536Zfastboot接受，BCBcommand32B同步回读/其他保持，无刷系统/固件/GPT。本条写入时被动monitor进行中 `logs/boot-monitor-host.log`（任务exec_e88a60ec-99a4-4098-a029-7bdd6671ed7b），不可争用/重启/重复boot。
+- 用户负责记录首次系统锁屏/桌面时间或停留照片；bluebar/menu/kerneltext不算系统界面。Recovery后自动读新boot/window，分开userobservedinterface/hosttransport/logswap/returnattribution，再决定deadline；450按kernelclock，不等hostwallseconds。panic-hold仍开，hostmax900s，不循环重启。额外230debug候选保留未构建/未启动，只是恢复配置草案。
+
+## 2026-11-06：按用户要求仅延长auto-reset230→600，新候选singleboot进行中
+
+- 用户报告上一轮似乎未进系统就重启，明确要求延长自动重启再试一次。本批只改 `cheeseburger-auto-reset=230` 为 `600`（kernel单调时钟，guard+10s），其他所有参数/长度697B、内核/ADT/DTB/userlandaddon/trust/plugin/seed逐项同SHA；不混入新的Metal功能或诊断修改。panic-hold默认仍开，panic画面可能阻止自动返回；hostmonitor最多900s，不循环boot。
+- 前轮boot `0x3d7c2375` log `out/p21/persistent-logs/20261106T131405Z` rawSHA `79c0970b66a3c37170070aaf85adb1a8091c7f7462dc840185c46803d7801ce7` 34rounds/0errors、GPUuseropen0/pluginmpn0/displayclients0。内核GPUstartup/clear/copy/bigbo成功但未观察用户态入口，不能称IOSurface导入失败；已冻结 **`out/p21/gpu-cp/rounds/20261106T131651Z-sagit-surface-objects-no-user-open`**，INDEX同步。kernel/ADT/args/seed与上一registry成功输入一致，launchdsharedregion/wake警告亦在成功轮出现，不能独指根因。
+- 新候选 **`out/p21/p21-sagit-surface-wait600-20261106T131823Z/uefi/boot-p21-up1.img`** SHA `77b9ef9fe140e0cd0e545ced2b987f904db07a6da9aa9946014d3422271c59c1`；samekernel `12e8aa83937800196bae2f8e64e0285393dd590d61b1dd3338acde62e7b02562`（复用verified）、newFD `b645ac5cc77e5b556c9be0154ae91be211b5fcfd5d01d40df3e1401c0ae54fd4`/expandedpayload4f7c9110…；gate20261106T132219ZactualEFI3pinsPASS。payload/EFI同新参数重建，未复用旧FD。精确inputhashes/参数唯一变化在candidate/logs/preparation.json。
+- **本条时singleboot/被动monitor进行中** `candidate/logs/boot-monitor-host.log`，不可争用/reboot/重复启动。启动前rootRecovery3b25cc7c、唯一ADB5037无其他等待进程，priorlog已回收。misc仅授权32Bcommand同步回读其他保持，fastbootboot不刷系统/固件/GPT。下一Recovery后自动读取新boot/log，比较实际elapsed/requested600、用户进程/display/Metal入口和本轮新结果；不把命令接受称runtime成功。
+
+## 2026-11-06：standardIOSurface texture对象候选singleboot验证中
+
+- 新候选 **`out/p21/p21-sagit-surface-objects-20261106T130524Z/uefi/boot-p21-up1.img`** SHA `73aa30e92cccdbbb0fb032d1e0397313274d0728e11f8f0eeeb4ddf8b634a0da`，samekernel12e8aa83…沿registryverifiedinput复用（BoardRuntimecheck一致）、FD2e801c16…/payloadaa422ef8…重建匹配；gate20261106T130909ZactualEFI3pinsPASS、sameSeed/697Bargs/ADT/DTB/power/wire。
+- **singleboot/被动monitor当前运行中** `candidate/logs/boot-monitor-host.log`，不得争用/重复boot。启动前rootRecovery3b25cc7c唯一ADB5037，prior3d829f9b日志已回收，仅misc32Bcommand回读/fastbootboot。
+- standardnewTextureWithDescriptor:iosurface:plane:接actualBoImportcallingVA/16384，strict64RGBA/getters/plane0alignment/oneimportperconn，owner/session保持、无CPUtoken；write/readlock+unlock检查、成功kernelcacheAcquire后readback，不DSB伪cache。真实_MTLDevice→SpriteKitVSFS→importedtexture→pass→encoder/submit/fence→pixels，hostactualIOSurface8modes/compute/callback/arm643testsPASS。
+- 同批目标protocol审计不再使用newSDK编译@protocol，改targetobjc_getProtocol并恢复原21H461supportsFamilyq；opaque同名C++struct指针type兼容但signedness/pointerlevel/byvalues严格拒绝，ASan类型模型PASS。旧registryDPtype2属于前版本报告，不能当本轮误差。
+- 下一检查RGread1bad0/DCidentity1callback1/DRmatch1、GIMPORT/GICACHE包含新import和原privateprobe、DPtype收敛、原回归；尚未本轮device成功。仍no systemregistry/presentation，缺heap/sparse/indirect等不dummy。
+
+## 2026-11-06：registry标准资源上传实机通过，IOSurface texture对象候选构建中
+
+- **当前rootRecovery3b25cc7c唯一ADB5037、最新boot `0x3d829f9b`已回收，无monitor/未回收实验。** log `out/p21/persistent-logs/20261106T124129Z` rawSHA `0b4dfd98e3b8b1af9f6bf07fc1659e89a0b01b55cf913537eba51ed13a6de7cf` 35rounds/0writererrors。**DR registry1000002dc expected1000002dc match1、DCidentity1callback1 allocated45056、RGbad0**及DI/RA/RI/SF/SR原回归通过；actualregistry/retain＋standardnewBufferWithBytes输入真实上传成功。
+- 成功image `out/p21/p21-sagit-device-registry-20261106T123058Z/uefi/boot-p21-up1.img` SHA05c35bfe…/kernel12e8aa83…/FDda4c1271…，gate20261106T123549Zactual3pins，singleboot246.003sRecoveryreturn/BCB预置无hosthelp。冻 **`out/p21/gpu-cp/rounds/20261106T124244Z-sagit-real-registry-buffer-input-pass`**，INDEX同步、device-result.json绑定原raw。
+- DP缺项降29，但报告type2：后续静态核对原21H461protocolsupportsFamily为q（不是之前Q，恢复q），另compileropaqueC++pointer与公开fieldpointer同ABI，不应字符串误判。protocolaudit已改objc_getProtocol目标运行时定义，不用newSDK @protocol；同名opaque-pointer可比，不放宽scalar/pointerdepth/qualifier/byvalue类型；ASan模型通过。不要以旧DPtype数推断注册通过。
+- 后续standardtextureIOSurfaceObject已适配：actualcallerBoImportVA/bytes、strict64RGBApitch256allocation16384/gettersplane0、owner/session保持、oneimportconn、notCPUtoken，actualMetaldevice→SpriteKitpipeline→importtarget→锁内sentinel/writeunlock→kernelcache→fence→readlock/readback。hostactualIOSurface8mode/旧compute/arm643testsPASS，失败不retryfree/不释owner。
+- 新候选 **`out/p21/p21-sagit-surface-objects-20261106T130524Z`**构建中，仅userland/payload/EFI，exactsamekernel/BoardRuntime核对复用（来源preparation.json），sameSeed/697Bargs/ADT/DTB/power/wire。尚未gate/boot，不引用旧结果；docs/P21_A540_SURFACE_OBJECTS_20261106.md。
+- 当前真实initialized_MTLDevice与图形但未systemdefaultregistry，29required功能如heap/sparse/indirect仍真实缺失，不adoptfakeprotocol。presentation/fullscreenBGRA/readerfence/UI合成未完成，完整日志和其他agent改动保留。
+
+## 2026-11-06：真实registry/标准newBuffer输入候选singleboot验证中
+
+- 新候选 **`out/p21/p21-sagit-device-registry-20261106T123058Z/uefi/boot-p21-up1.img`** SHA `05c35bfec2738d22e64c86f8c9315298c99919858a54b0177da8a7b411e4e63d`，kernel12e8aa83…/FDda4c1271…/payload4eec205b…，gate20261106T123549ZactualEFI3pinsPASS。完整localXNU/plugin/payload/UEFI同轮，sameSeed/697Bargs/ADT/DTB/power/wire保持。
+- **singleboot/被动monitor正在运行** `candidate/logs/boot-monitor-host.log`，不得争用/再boot。启动前rootRecovery3b25cc7c唯一ADB5037，prior3d7eac9d日志回收。misc32B仅command回读其他保持，不刷系统分区。
+- 本批真实IORegistryEntryGetRegistryEntryID/acceleratorPort/service独立retain，deviceproperties/sharedmemory预算/sample1、standardnewBufferWithBytes真正copy原vertices/color；supportsFamilypublicprotocolunsigned修正。预计DRregistryexpectedmatch1/DPtype0missing下降/DCidentity1callback1/RGbad0旧回归。host3graphics/compute/callback/arm64PASS，nullable空输入仍拒绝。
+- targetprotocol完整静态清单已保存 `/Users/dinnerabc/unixnu-p21/native540/protocol-audit-21h461-20261106T1223/protocols.json`，未知heap/sparse/indirect等不返回dummy不虚协议完成，systemMetal注册/presentation未进行。详docs/P21_A540_DEVICE_REGISTRY_20261106.md。
+
+## 2026-11-06：真实设备归属callback实机通过，registry/标准buffer补齐候选构建中
+
+- **当前rootRecovery3b25cc7c唯一ADB5037，无未回收启动/monitor。最新boot `0x3d7eac9d`** log `out/p21/persistent-logs/20261106T121623Z` rawSHA `dd2492461d2e19c431180b5020e11a0cbbdc97939027267107cb1692a89515a1`，35rounds/0writererrors。**DC identity1 callback1 allocated45056** 与DIready/RGbad0、原AIR/privateIOSurface/SRproof同轮通过。
+- DP真实requiredprotocol审计 `n468 missing37 type1 missing:registryID`，系统注册保持blocked不adoptfakeprotocol。签名type1已静态定位supportsFamily公开协议Q而base旧q；adapter改准确NSUInteger。原目标protocol metadata从`__objc_protolist`读取（method stride含低2flags），完整清单私有 `/Users/dinnerabc/unixnu-p21/native540/protocol-audit-21h461-20261106T1223/protocols.json`。
+- 成功image `out/p21/p21-sagit-device-contract-20261106T120610Z/uefi/boot-p21-up1.img` SHA161f7456…/kernel750e930a…/FDcf6ce0d0…，gate20261106T121048Zactual3pinsPASS、单次boot245.765sreturn/BCB预置无hosthelp；冻 **`out/p21/gpu-cp/rounds/20261106T121733Z-sagit-device-identity-callback-pass`**，INDEX更新、device-result.json绑定原raw。
+- 后续补registryID/acceleratorPort从实际服务读取、独立retain/release、physicalunified/nonheadless/nonremovable与sample1查询、standardnewBufferWithBytes（真实boundedcopy，不伪upload）、supportsFamily签名修复。host3graphics/oldcompute/callback/arm64通过；空输入nullable声明修正，运行拒绝原样。未入上一已启动image。
+- 新候选 **`out/p21/p21-sagit-device-registry-20261106T123058Z`** local完整XNU/plugin/payload构建进行中；sameSeed/697Bargs/ADT/DTB/power/wire，未新boot。下一核对DRactualregistry expectedmatch1、DPtype0/missing减少、DCidentity1callback1/RGbad0旧回归。Remainingheap/sparse/indirect/sampler/depth/IOSurfacetexture等真实缺功能继续blocked，不返回dummy。
+- 目前actualinitialized_MTLDevice但未systemdefaultregistered；真实presentation/UI合成未完成。保留旧成功候选和其他agent所有改动，不刷系统/GPT/firmware、不改seedidentity、未push。
+
+## 2026-11-06：真实设备归属／callback／协议审计候选singleboot进行中
+
+- 当前新候选 **`out/p21/p21-sagit-device-contract-20261106T120610Z/uefi/boot-p21-up1.img`** SHA `161f74562718e938b1e3e0bf034cd3560842834797611c025e83397c6fc3f409`，kernel750e930a…/FDcf6ce0d0…/payloadb1092c3c…，gate20261106T121048ZactualEFI3pinsPASS、完整localXNU/plugin/payload/UEFI匹配。sameSeed/697Bargs/ADT/DTB/power/wire保持，sourcepins logs/device-contract-source-evidence.json。
+- **singleboot/被动monitor运行中** `candidate/logs/boot-monitor-host.log`，不争用/重启/重复boot。启动前rootRecovery3b25cc7c唯一ADB5037，priorboot3d98392e完整回收。只已授权misc32Bcommand回读/fastbootboot，不刷系统或固件分区。
+- objectscreatedresources真实持有.device，sessionweakidentity防cycle；callbackonce/error/latehandler/reentrantwait在locks外调用，wait等callback完成；真实allocatedsize由ledger累计。host3actualObjCASanUBSan/arm64原compute回归通过，不关fences/safety。
+- 新targetprotocol审计DP逐requiredselector/type/首缺项，只读不adoptprotocol；DCexpectedidentity1/callback1＋RGbad0和原DI/SF/SR回归验收。当前初始化成功baseline仍前boot，未新结果。缺项不得以classconform伪造完成。docs/P21_A540_DEVICE_CONTRACT_20261106.md。
+
+## 2026-11-06：真实_MTLDevice初始化实机成功，资源归属/回调/协议审计候选构建中
+
+- **当前rootRecovery3b25cc7c、唯一ADB5037，无未回收启动或monitor。最新boot `0x3d98392e`** log `out/p21/persistent-logs/20261106T114954Z` rawSHA `eb772c0511b77075828356503d30a3c13ffe05a7a6dfcace39dcc45f371f0c86`，35rounds/0writererrors。**DI real-MTLDevice features-ready no-system-register**，actualframeworksuperinit/original195queryfeatureconstruct及realownedbackenddelegate通过，后续RGbad0/RA/RI/SF540/SRproof原回归保持。
+- 成功image `out/p21/p21-sagit-device-init-20261106T113852Z/uefi/boot-p21-up1.img` b71f6dc1…/kernelcfae8528…/FDe2ea735d…，gate20261106T114422Zactual3pins，singleboot246.196sreturn/BCB预置无hosthelp，冻 **`out/p21/gpu-cp/rounds/20261106T115108Z-sagit-real-mtl-device-init-pass`**、INDEX同步。device-result.json已绑定raw/限界，未systemregistry。
+- 后续objects新增createdresource持有deviceidentity（sessionweak防cycle，resource独立strong），buffer/library/function/pipeline/texture/queue/CB `.device`真实对应；completioncallbackonce/error/latehandler与reentrantwait同步，失败不放资源。hostgraphics/oldcompute/arm643testsPASS。
+- 新只读runtimeprotocolaudit检查actualMTLDevice/MTLDeviceSPI requiredmethod+types、不adoptprotocol，不以method存在代表实际语义完成。DP记录缺项/签名，DC记录identity/callback/currentAllocatedSize；真实allocatedsize基于sessionledger，不伪值。
+- 新候选 **`out/p21/p21-sagit-device-contract-20261106T120610Z`**完整localXNU/plugin/payload已构建，EFI/pins/gate进行中、未boot。sameSeed/697Bargs/ADT/DTB/power/wire保持。下一看DI/DCidentity1callback1+RGbad0及DP阻塞清单，不跳过capabilities或systemregister检查。
+- 当前仍有限initialized_MTLDevice未systemdefaultdevice，fullresourceprotocol/requiredSPI与presentation/UI合成未完成。旧成功所有镜像/其他agent改动保留；不刷boot/recovery/GPT/firmware、不改seedidentity、未push。
+
+## 2026-11-06：真实_MTLDevice初始化与195查询策略候选单次验证中
+
+- 本次继续latest标准descriptor成功baseline，设备启动前rootRecovery3b25cc7c唯一ADB5037、priorboot3f177281日志已回收，无monitor争用。新增actualNativeMetal540DeviceAdapter：自身freshdynamicdirect_MTLDevice subclass无ivar，associated真实backend/limitscontext绑定allocated实例后superinit，原frameworkfeaturequeries幂等调用，自有exact21H46165field264Blimits。profile中性无Applefamily，不adopt完整MTLprotocol、不调用MTLAddDevice、不systempublish。
+- 固定NativeMetal540Capabilities表195exacttargetname/encoding/IMPpins，安装前全195和base536B/fresh未注册class/evidence检查，失败discard自身class，绝不修改frameworkbase。仅truthfulrestrictedRenderToLinearTexturespositive，其他逐query当前backendnotprovided，unknown不自动false，未把fixedAIRcopy/guards当一般readwritearguments/bounds保证。host4testsPASS/arm64production；测试TestCase.run冲突已修command，deprecatedFeatureSet兼容处理，失败logs保留。
+- 新候选 **`out/p21/p21-sagit-device-init-20261106T113852Z/uefi/boot-p21-up1.img`** SHA `b71f6dc1cd076a7f1163a7126d207d6a04b2acdc5e9629d70165eea3ebc5e592`；kernel `cfae85284e585694a9bab87c428d9efd65cdc6d7457f6aa54bb1c84328a6e3f5`、FD `e2ea735d3990368ad9afc56e9204ad54cad09704d16302decd8067eadf0a91a0`、payload18cc06f2…；gate20261106T114422ZactualEFI3pinsPASS。完整localXNU/plugin/payload/UEFI同轮，697Bargs/sameSeed/ADT/DTB/power/wire保持。
+- **本条时singleboot/被动monitor进行中** `candidate/logs/boot-monitor-host.log`，不争用/重复boot。预期DIbegin→DIrealfeaturesready→RGbad0→SF/SR原回归，init成功不等systemMetal注册。misc32B仅command回读其他保持，无刷系统分区。sourcepins `logs/device-init-source-evidence.json`，docs/P21_A540_DEVICE_INIT_20261106.md。
+- 下一依据本轮DI第一失败或真实初始化+图形结果，补requiredresource/deviceidentity/协议真实实现；未presentation/UI合成，不虚报systemdefaultdevice，旧完整成功镜像仍保留。
+
+## 2026-11-06：标准Metal图形descriptor真实对象链实机通过，最新完整成功基线
+
+- **设备当前rootRecovery3b25cc7c、唯一ADB5037、无monitor/未回收实验。最新boot `0x3f177281`**，log `out/p21/persistent-logs/20261106T111119Z`，rawSHA `dc30feed45890598f8f57360fe25cbf4f24f5f6ebb5b1df45a11c2419a657cc7`，35rounds/0writererrors。
+- **RG status4 read1 pxff0000ff/ff000000 bad0**：真实SpriteKitLibrary→VS/FS→标准pipelineDescriptor→Texture→标准renderPassDescriptor→encoder→draw/commit/wait→标准texturegetBytes(region)→oracle全部成功；64RGBA/3triangle/singleattachment，仍有限NSObjectowneddevice。RA/RI12/1012+4/1020/ts1,2,3、M540、SF540bad0和SR5BoFreeproof1原回归保持。GPUuserBO47/map47/unmap47/sub9fence9wait9/open5close5/free5。
+- 当前完整成功镜像 **`out/p21/p21-sagit-graphics-descriptors-20261106T110242Z/uefi/boot-p21-up1.img`** SHA `8db1208f44f70d7d10ecce82b1177935d653e4829d1ace562ecd10b65fae1e1d`；kernel75fcfab6…沿旧verifiedcompile复用（BoardRuntime一致）、FD09a860d2…/payload92d5f0f7…重建匹配，gate20261106T110626ZactualEFI3pinsPASS，697Bargs/seed/ADT/DTB保持。单次boot `logs/boot-once-20261106T110704Z`，244.577sreturn、BCB32B同步回读其他保持，无hosthelp。candidate/logs/device-result.json绑定rawhash。
+- 冻结 **`out/p21/gpu-cp/rounds/20261106T111250Z-sagit-standard-render-descriptors-pass`**，INDEX更新；本任务四个新success里程碑retirement/AIRgraphics/ownedgraphics/standarddescriptors均保存完整证据，未重复同镜像。原其他agent/旧候选全部保留。
+- 本轮补descriptor空对象内容准入/defaultarray0singlelayer、prepare内texture占用复核防预先两command同target、标准region readback；hostactualObjCASanUBSangraphics+oldcompute+arm643testsPASS，旧slowprepare/timeoutsafety不变，初始SDK/OUT/defaultdescriptor错误log保留。详docs/P21_A540_GRAPHICS_OBJECTS_20261106.md/P21_A540_RENDER_AIR_20261106.md/P21_A540_RETIREMENT_20261106.md。
+- **系统Metal注册仍未完成**：当前controlledNative540Device不是_MTLDevice，标准调用只是有限subset，不虚报fullMTLDevice/MTLResourceprotocol。目标195supports实际读self+0x160未初始化featurequery，必须独立真实querypolicy；querypins已落盘native540/factory-query-audit-20261106T1005。下一先补owner/session/resourceidentity/standardMTLrequiredmethods+targetlimits/SPI真实adapter，缺功能拒绝；不要emptycallbacks/Applefamilywaiver。
+- **presentation/UI合成仍未完成**：对象texture未IOSurfaceimport、全屏BGRA/readerfence/displayseq/实际panel未接，64RGBA不能直套1080×1920consumer；GPUrenderdone/readerdone/panel/retirement分开。precloseprivate5BOACK已证明，不扩大为整个graphicsconn或surface析构独立观测。未改安全/seed/GPT/boot/recovery/firmware分区，未push。最新sagitfetch仍673f85070fe9f7872793015eb230a5c3987d4a8c，与旧pin相同，sailfish60Hz并非60fps。
+
+## 2026-11-06：标准Metal图形descriptor入口候选单次验证中
+
+- 新候选 **`out/p21/p21-sagit-graphics-descriptors-20261106T110242Z/uefi/boot-p21-up1.img`** SHA `8db1208f44f70d7d10ecce82b1177935d653e4829d1ace562ecd10b65fae1e1d`，kernel `75fcfab61f1336700080ed66a838b514bf4a5d3aaeefe9c297ce9279a456f53a`与上一owned成功完全同一compiledinput；FD09a860d2…/payload92d5f0f7…，gate20261106T110626ZactualEFI3pinsPASS、697Bargs/sameSeed。仅userlandobject和standarddescriptor/readback/sessionraceguard改动，check-kernel确认BoardRuntime未漂移，复用内核/prelink来源记录在preparation.json，不假称重编。
+- **本条时singleboot/被动monitor运行中** `candidate/logs/boot-monitor-host.log`；启动前rootRecovery3b25cc7c唯一ADB5037，prior3d912a16日志回收，misc32Bcommand预置回读/其他保持；不争用/重复boot。下一原RGstatus4read1pixelsbad0必须保持才成功，不引用旧logs。
+- 新标准入口 `newRenderPipelineStateWithDescriptor:`、`renderCommandEncoderWithDescriptor:`、texture getBytes:bytesPerRow:fromRegion:mipmapLevel:用于同真实SolidColor受限pipeline，仍NSObjectowned未systemdevice。默认frameworkvertex/linked descriptor非nil但empty，按内容检查，arraylength0视singlelayerdefault；非empty、MSAA/depth/resolve/错误region拒绝。prepare内再次检查texture提交占用防提前创建两command竞态，13之前的image未包含而本candidate已带。
+- hostactualObjCASanUBSan graphics+oldcompute/slowprepare/timeout+arm643tests全部PASS，多次初始错误默认descriptor/array0拒绝记录保留、修正后通过。新candidate日志固定source哈希，系统Metal195querypolicy/protocol与presentation仍未实施，不虚报能力。
+
+## 2026-11-06：owned图形对象真实实机成功；标准descriptor入口修复候选构建中
+
+- **设备当前rootRecovery3b25cc7c/唯一ADB5037、最新boot `0x3d912a16`日志已回收，monitor退出，无未回收实验。** 日志 `out/p21/persistent-logs/20261106T104817Z` rawSHA `e0f4733b599b41da738bac65520d3e3072ac7106ace3892fb0c30993bbb60484`，35rounds/0writererrors。
+- **真实owned graphics成功：RG status4 read1 pxff0000ff/ff000000 bad0**。原SpriteKitmetallib→VS/FSfunction→GraphicsPSO→64RGBAtexture→renderencoder→commit/wait→getBytes/oracle实际执行。userBO47/map47/unmap47/sub9fence9wait9/open5close5/free5，RA/RI12/1012+4/1020、M540/SF540/SRproof原回归同时保持。
+- 镜像 `out/p21/p21-sagit-graphics-owned-20261106T103931Z/uefi/boot-p21-up1.img` SHA `37e85ac7493e3c582102b6f53d001f33c2ce14be807a4aabf641816c180f0b55`，kernel75fcfab6…/FDbb47d57d…/gate20261106T104329ZactualEFI3pinsPASS。只boot一次，246.156s返回、BCB32B回读保持其他、无hosthelp。冻 **20261106T104924Z-sagit-owned-spritekit-graphics-pass**，INDEX同步。
+- 后续源码已补standardpipeline/passdescriptor/getBytesregion有限入口和prepare内texture占用复核，**尚未入上述成功image**，post-build-source-change.json记录。host3testsASan/arm64/compute通过；空默认descriptor不等nil、array0默认只需singlelayer、内容非空拒绝；失败logs保留。
+- 新候选 **`out/p21/p21-sagit-graphics-descriptors-20261106T110242Z`**构建中，仅userland/payload/EFI；同完整kernel/BoardRuntime已check复用，不重编无变化内核。gate/单次device尚未完成，不引用旧gate。详docs/P21_A540_GRAPHICS_OBJECTS_20261106.md。
+- 目前仍有限NSObjectowneddevice，未systemMetal注册；195targetsupports需自己truthfulquerypolicy，标准resourceidentity/protocol/SPI及完整renderpass尚缺；不做family虚报。presentation/fullscreenBGRA/displayreader/实际UI合成未完成。当前成功边界真实AIRraster+ownedgraphics+privateimport+preclose5BOack；不是CAMetalLayerframe或vblank。保留旧镜像/其他agent改动，不刷系统/GPT/firmware、不改seedidentity、不push。
+
+## 2026-11-06：真实AIR图形已成功；owned图形对象候选单次验证中
+
+- **最新已回收boot `0x3db27254`**：log `out/p21/persistent-logs/20261106T103310Z`，rawSHA `e281de9a2d8e9d3805978e6487745bdf1960fe1f2d7cbaf55e8af5e8e403cc2c`，35rounds/0writererrors。真实 `RA s12 e0 f13 pxff0000ff/ff000000 bad0`、`RI v12/1012 c4/1020 ts1/2/3`，SolidColorVS/FS actualMetalAIR→A540读取顶点及fragmentcolor并光栅；原M540/SF540/SRproof与compute保持。不是GLSL冒充Metal/CPUexpected。
+- 成功image `out/p21/p21-sagit-render-air-20261106T102403Z/uefi/boot-p21-up1.img` dcf4e3f9…/kernel1d3bd3ce…/FDbef243f8…，gate20261106T102823Z，246.04s自行Recoveryreturn/BCB预置；冻 `out/p21/gpu-cp/rounds/20261106T103439Z-sagit-real-spritekit-air-raster-pass` INDEX已更新。
+- 本批新增ownedgraphics：真实SpriteKitlibrary/functiontypes+same-sessionPSO、64RGBAtexture、renderencoder／singletriangle、command同步prepare/asyncsubmitwaitcache/getBytes；原computeobjects保持。有限自有API不是完整MTLprotocol，NSObjectcontrolled不直接注册systemMetal。hostactualObjCASanUBSan graphics+oldcompute+arm643testsPASS，renderer4/surface5/retirement7/heartbeat12/evidence17通过。
+- **新候选 `out/p21/p21-sagit-graphics-owned-20261106T103931Z/uefi/boot-p21-up1.img`** SHA `37e85ac7493e3c582102b6f53d001f33c2ce14be807a4aabf641816c180f0b55`，kernel75fcfab6…/FDbb47d57d…/payloadaee99938…；gate20261106T104329ZactualEFI3pinsPASS、args697B/seed/ADT/DTB同原。local完整kernel/plugin/payload/UEFIbuild并实际FDexporthash。
+- **本条写入时singleboot/被动monitor进行中** `candidate/logs/boot-monitor-host.log`，不得争用/重启，设备启动前rootRecovery3b25cc7c唯一ADB5037，prior3db27254已回收。下一查RGstatus4/read1/pixelsbad0及RA/SF/SR原回归；无新ownedgraphics实机结论。docs/P21_A540_GRAPHICS_OBJECTS_20261106.md与candidate/logs/graphics-objects-source-evidence.json。
+- 系统Metal注册/featurequerypolicy与真实presentation/UI合成仍未完成；195targetsupports全依赖self+0x160featurequeries，必须真实adapter而不能直接继承。持久SR是precloseBoFreeproof，postcloseownerrelease尚无独立runtime标记。未刷任何系统分区，未push，其他agent改动保留。
+
+## 2026-11-06：真实SpriteKit AIR VS/FS最小图形适配已构建，单次实机验证中
+
+- 当前新增候选 **`out/p21/p21-sagit-render-air-20261106T102403Z/uefi/boot-p21-up1.img`** SHA `dcf4e3f9279bc6ae5a9a9363b9b41551076436b9178934a227f781314f01214f`；kernel `1d3bd3ce7136a04ee1d05135db9dfb92819088567bafa85a97b96035ab5678a6`，FD `bef243f8610acd73e986a275d5357e0a20c1a0a82ad5d764444cc3ef6b226464`，payload3b6a4d58…；gate20261106T102823Z PASS/actualEFI3pins。localXNU/prelink/plugin/trust/payload/UEFI完全重建，原seed/697Bargs/ADT/DTB/电源/安全门禁保持。
+- **单次boot/被动monitor进行中** `candidate/logs/boot-monitor-host.log`；设备启动前rootRecovery3b25cc7c、唯一ADB5037，priorboot3cd7d3d5日志已回收，无其他实验。只已授权misc32Bcommand回读和fastbootboot，无刷其他分区；不得争用/重复启动。
+- AIR renderer新增distinctAIRProgram/planAIR/encodeAIR，真实SpriteKitpair（VS160/FS96words）readonlyVS48B/FS16B两binding，graphicsblock14、bank0/8、sizeconstant96/104、SSBOENABLE；FSprefix132保留windowmetadata，ordinarybasewindowflag128=0走真实guardedSSBOfallback，未改ISA/metadata。原simpleGLSLstream逐字不变。newNativeMetal540RenderAIRProbe7NEWBO(offsetstart+0x200000)，onlyIB单SubmitWait，CPU仅vertices/color输入+targetsentinel，成功才oracle+guards；RA/RI独立持久行。
+- 新renderer4/ASan2945case/arm64/原fullupstreamPM4差分PASS，allgraphicsdescriptors/寄存器相同，仅上游optionalwindowproducer/flag差异明确记录。runtime2/surface5/retirement7/compute7/heartbeat12/evidence17回归PASS；失败SDK/include及既有OUT目录拒绝记录保留，修正后PASS。
+- 源/fixture冻结 `/Users/dinnerabc/unixnu-p21/native540/render-air-20261106T100335Z/renderer-verification.json`，candidate/logs/render-air-source-evidence.json；详docs/P21_A540_RENDER_AIR_20261106.md。当前device实际AIRraster尚未验收，不称systemMetaldevice/objectpipeline/presentation完成。下一看RA正确像素、RI12/1012+4/1020/ts1/2/3及后续owned/surface/retirement回归。
+
+## 2026-11-06：private IOSurface 逐BO真实退休回执实机成功，继续真实AIR图形适配
+
+- **设备当前rootRecovery3b25cc7c、唯一ADB5037；最新boot `0x3cd7d3d5` 已回收，单次boot/monitor退出。** 日志 `out/p21/persistent-logs/20261106T100422Z`，rawSHA `702b652cc58517bdb35a42ed4750ea1812c3a7a0bc5c833dbad196757a27e4c9`，35rounds/0writererrors。
+- **真实pre-close退休proof**：`SR s7 e0 raw0 free5 map5 proof1`；provider `GPSVC free=5`，五个BoFree同步成功，四ownedCPUviewunmap/四CPUwireunmap；import无CPUtoken，map5是五对象“无pendingview”状态总数，不是五CPUunmap。原SF540bad0/968inside2744outside/ts1,2,3、GICACHEpub1acq1/errors0及compute/AIR/owned/NEWBO全保持。
+- 镜像 `out/p21/p21-sagit-retirement-20261106T095432Z/uefi/boot-p21-up1.img` SHA `e7b1b1c5bfff3d109aa884ae72522e140138649a3ffd49589d20f553aadc052d`，kernel9d896233…/FD594035ea…/payload30e86aec…；gate20261106T095930ZactualEFI三pinsPASS，单次receipt `logs/boot-once-20261106T100008Z`，244.927s返回，BCB32B回读其他保持/无host复位帮助。冻结 **`out/p21/gpu-cp/rounds/20261106T100511Z-sagit-private-surface-bofree-retirement-pass`**，INDEX更新；candidate/logs/device-result.json绑定rawhash与证据限制。
+- 本批新增独立retirement ledger、success-onlyresourcesfree→proof→closeonce→ownerrelease，no retry/partialfailure保留；kernelquarantine先idle再unmap已统一。**SR在close前写入；postcloseconfirm/ownerrelease只有note，尚无独立持久runtime标记**，不可把precloseproof扩大为独立观测surface析构。7retirement/surface5/arm64/render4/compute7/heartbeat12/evidence17通过。详docs/P21_A540_RETIREMENT_20261106.md。
+- 新targetMetal证据已落盘 `/Users/dinnerabc/unixnu-p21/native540/factory-query-audit-20261106T1005/queries.json`：真实privatefeaturequeryinitializer11524B内195supports，全8B/B16@0:8，读self+0x160再tailcall，**不能直接继承给初始化中的featurequery调用**；validate实际ret。缺真实querypolicy/能力closure仍不放行systemfactory。doc补目标证据；旧provider报tokenratelimit失败不作为结果。
+- 真正图形pair已找到并实际compile：targetSpriteKit SolidColor_VertexFunc160words＋SolidColor_FragFunc96words、zero textures/user varying、linkcompatible；VSreadonlybuffer0 stride16/FSreadonlyu_color16B(bank8)，需要stageSSBO/sizeconstants。私有fullmetadata/variants `native540/render-air-20261106T100335Z/matching-solidcolor`，export15testsPASS、currentEncoder:false不假执行。新的最小Render SSBO适配子任务进行中，主agent还未整合/启动该graphics路径。
+- 最新sagitfetch成功HEAD=origin673f85070fe9f7872793015eb230a5c3987d4a8c，authorcommit声明2096nativejobs/0failures的ControlCenter/lock-wake测试，不是FPSbenchmark。仍MetalPartial；sailfish最高60Hz/UI20–40fps/GLESNoMetal，保留主线。下一从真实AIRmatchingpair/ownedgraphics/querypolicy继续，不跑旧电源猜测或重复已成功镜像。
+
+## 2026-11-06：上游最新仍673f8507；逐BO退休确认候选单次验证中
+
+- 用户要求重新拉取sagit、分析完善计划并执行。通过已有proxy7897 `git fetch origin`成功；upstream/ios_sagit clean、HEAD/originmain均 `673f85070fe9f7872793015eb230a5c3987d4a8c`，没有checkout更新。最新commit2026-11-03T15:54:19-08:00 Preserve pending IOSurface access across display transitions。Metal仍Partial/systemcompositingtested作者报告，无持续同比FPS；sailfish最高60Hz、UI20–40FPS/NoMetal，未切换路线。
+- 已写执行计划 `docs/P21_A540_NEXT_PHASES_20261106.md`，顺序退休确认→真实graphicsobjects→21H461systemfactory→reader同步/fullscreenpresentation→UI合成；不借A530电压/Pixelpanel/20H392EAGLoffset或A740命令。全部其他agent改动保留。
+- 实现 `NativeMetal540Retirement.h`独立最多5BO/15callback账本、7项ASanUBSan+arm64测试；Surface成功run后liveconnection四view精确unmap/CPUunmap＋5BoFreeACK→proof→closeonce→confirm释放owner。无proofcallback不得bypass；失败粘性保留、不retry。kernelquarantine调为先idle确认再unmap/TLB/complete，正常free规则不放宽。SR独立持久记录；未改wireABI/PM4/seed/电源。
+- **新候选 `out/p21/p21-sagit-retirement-20261106T095432Z/uefi/boot-p21-up1.img`** SHA `e7b1b1c5bfff3d109aa884ae72522e140138649a3ffd49589d20f553aadc052d`；kernel `9d8962339b493a42bd54c888faf0c4be2da58666b62e3a9758bbe9573ffa519e`，FD594035ea…，payload30e86aec…；gate20261106T095930Z PASS/actualEFI3pins。localXNU/prelink/plugin/trust/payload/UEFI均匹配重建，args697B和原seed保持。
+- retirement7/surface5/arm64/render4/compute7/heartbeat12/evidence17回归PASS；当前 **单次boot/被动monitor进行中** `candidate/logs/boot-monitor-host.log`，不要争用或重启。此前最新boot3d640a05日志已回收，无其他待回收。设备身份3b25cc7c/唯一ADB5037，misc32B仅command更新回读，其他保持，不刷分区。
+- systemfactory分析新结果：真正featureQueries allocation facade返回_private类；validate0x187aa4cdcret；真实私有initWithDevice11524B包含195supports查询，目标全B16@0:8。中性profile允许emptyfamilies但仍执行查询，尚未完成195语义闭包，不放行systemregistration。来源已有privatehelpers原cacheUUID；结果尚未可靠落盘，新保存分析agent受provider tokenrate失败，不假称文件完成。图形真实AIR准入另在独立工具任务中，尚未完成。
+
+## 2026-11-06：私有 IOSurface 真实 VS/FS raster＋物理缓存阶段实机通过
+
+- **设备当前 root Recovery `3b25cc7c`，唯一ADB5037；本次新候选只boot一次，新日志已完整回收，观察器已退出。** 最新 boot `0x3d640a05`，日志 `out/p21/persistent-logs/20261106T091648Z`，window SHA `f61ccb59b0136e734baedb3b039e3e17f8498f860e5f5948184c8ce1fc45a266`，35rounds/0writererrors。
+- **私有IOSurface成功**：`SF540 s24 e0 f14 pxff0000ff/ff000000 bad0`；`SP in968 out2744 edge384 ts1/2/3 c3`。64×64RGBA8、pitch256、16384B实际getters准入，独立BoImport；968内部+2744外部正确，384边缘仍不比较。背景GPU2Dclear、颜色来自真实VS/FS，CPU仅sentinel。`GICACHE pub=1 acq=1 bytes=32768 errors=0`，真实WaitFence前物理Invalidate完成；不是DSB或fence替代pixel证明。
+- 原constant256、dualSSBOtransform、真实AIR、ownedmetallib链和NEWBO三角形同时通过：T540v256/guards、A540v256g768、M540status4、R540bad0；GPSVCopen4close4/BO33map33unmap33/sub7fence7wait7。CPUdisplayclients25/frames2、Dataerr0。DPU/原fullscreensurface仍旧未完成，`SURF match0/4`不能当本privateprobe回归结果；无CAMetalLayer/systemUI GPU合成。
+- 当前成功镜像 **`out/p21/p21-sagit-iosurface-cache-20261106T090305Z/uefi/boot-p21-up1.img`**，SHA `8aa8e4fa2ee73e356cb7422c010c0a4cefbf502b536db5a0b7835337701fc038`，kernel30494d56…/FD36fb7dd2…/payloadbcbbd096…，gate20261106T091208Z PASS/actualEFI三pins；单次receipt `logs/boot-once-20261106T091234Z`，09:12:42Zboot，245.41s观测Recovery，BCB32B同步回读/其余保持，无hostreboot帮助。返回不证明所有异常复位路径。
+- 成功记录 `candidate/logs/device-result.json`绑定本轮rawhash；冻结 **`out/p21/gpu-cp/rounds/20261106T091751Z-sagit-iosurface-physical-cache-raster-pass`**；旧2874mismatch轮也已冻/index同步，全部历史镜像保留。
+- 本轮修复只针对importcache：复用已有官方物理primitive，全量DRAM页检查，publishCleanInvalidate→matchingfence acquireInvalidate；cache-pending/failed防重复publish/free/close释放，timeout不post读。wrapperAcquireSurface只ordering。hostASanUBSan+surface5/render4/compute7/heartbeat12/evidence17及arm64通过；源/构建/失败记录在candidate logs与docs/P21_A540_SURFACE_PORT_20261106.md。
+- **retirement仍独立未确认**：GIMPORTpersistent1/complete1/errors0不是wireack；wrappernilconfirmation持有surface/context至boot结束。不能扩展为共享surface/pool/并发CPU写安全证明。原2874错误在此适配后消失，是适用修复证据，不证明所有cache问题统一根因。
+- **下一阶段**：真实21H461Metaldevice/factory/capability与graphicalobjects，或格式匹配全屏私有IOSurface→displayreaderfence/ownedretirement→实际presentation；当前RGBA64×64不能直套BGRA1080×1920consumer。先按固定sagit/sheng和本机layout补齐前提，不重新做旧no-write、电源盲改或复用失败镜像。仍无systemdefaultMetaldevice。
+- 本次不再读取会话上下文；保留所有其他agent未提交改动，未push/刷boot、recovery、固件或GPT，未改seedidentity。源码提交需用户明确要求；未把其他agent现有整批改动擅自纳入提交。
+
+## 2026-11-06：IOSurface 首轮像素失败已回收；物理 cache 阶段修复候选单次验证中
+
+- 本次直接依据 HANDOFF/源码/设备证据推进，不再读取会话上下文。设备启动前为 root Recovery `3b25cc7c`，唯一 ADB5037，无旧监视/构建争用。
+- 先补回最新实际轮：`out/p21/p21-sagit-iosurface-20261106T080923Z` image `5ff26eebf88c6c06191b26bad2c988d8a3acbe984ca1006c91203abf2f229ae5`，boot `0x3dee963b`；日志 `out/p21/persistent-logs/20261106T082241Z`，window `3f05514fbaa9ae94bf8c7d080296bf0b13b40072c2ea6b24c9e6d4ab4e8e6f65`，35rounds/0writererrors，245.99s观测Recovery，BCB预置/无主机复位帮助。**SF540 s22/-5461/f14、ts1/2/3但2874pixels mismatch**；NEWBO render、AIR、owned/compute仍通过。不能称整块没写或IOSurface成功。
+- 原失败轮完整冻结 `out/p21/gpu-cp/rounds/20261106T090421Z-sagit-iosurface-fence-pixels-mismatch`。getter准入实测id1/base1005d1000/16384B/pitch256；import persistent1/complete1/completeerrors0；用户态retirement确认仍nil，不冒充已确认。
+- 修复 `CheeseburgerGpuImportCache.h`、`CheeseburgerGpuService.cpp`：原未接线maintainImports现submit前publish、genuine matching fence后acquire；**复用已编入的官方NativeAdrenoMaintainPhysicalPages**，完整DRAM页校验，CleanInvalidate→Invalidate。cache-pending/failed阻止再次发布、free及quarantine retirement；fence失败不post维护/补读。userland AcquireSurface只ordering，不再post clean。未改ABI、shader/PM4、电源、安全门禁或seedidentity。
+- 新候选 **`out/p21/p21-sagit-iosurface-cache-20261106T090305Z/uefi/boot-p21-up1.img`**，SHA **`8aa8e4fa2ee73e356cb7422c010c0a4cefbf502b536db5a0b7835337701fc038`**；kernel `30494d56f87c3612c7684b8149d6dd325acb0988bb6e0dcd23fc7e1e7ea2114f`；FD `36fb7dd2954a004efb03b5199246c33247cb5a16a31340e126468c0c3292047d`；payload `bcbbd0961c632b4c8dc33a915eaaf33c8ff5d6b47bc1d340bea34029794ccef4`。gate20261106T091208Z PASS/actualEFI三pins，args697B原样。localXNU完整构建与新plugin/owntrust→payload→Lima同overlay重编→actualFDexport/hash→pack一致。
+- host importcache+BOpolicy ASan/UBSan PASS；surface5/arm64、render4、compute7、heartbeat12、evidence17 PASS。local `native540/import-cache-Y2oVZeKc`/`surface-20261106T090146176298Z`；candidate logs保留font缺失、构建记录标记和未exportFD三处host失败及修正，未重编已通过kernel/EFI。
+- **本条写入时单次boot/被动monitor进行中**，记录 `logs/boot-monitor-host.log`。不得争用设备或再次启动；等rootRecovery后读取脚本自动回收新boot再判pixel结果。缓存仍是明确缺口适配、不是已证根因。详 `docs/P21_A540_SURFACE_PORT_20261106.md`。尚无systemMetaldevice/presentation/UI GPU合成。
+
+## 2026-11-06：真实 VS/FS 三角形＋owned metallib 对象链同轮成功，当前完整 GPU 基线
+
+- **设备当前rootRecovery `3b25cc7c`，唯一ADB5037，最新boot `0x3e2b9cf1`**。最新日志 `out/p21/persistent-logs/20261106T071927Z`，窗口SHA `39f1baa7c2547e0d8d1de6eef4fa7095138267e4d71f284c486500eb33cc1d5c`，35rounds/0writererrors。两轮本任务boot均已回收，被动monitor均退出，无待回收实验。
+- **当前完整成功候选 `out/p21/p21-sagit-triangle-prepare-20261106T070830Z/uefi/boot-p21-up1.img`**，SHA `b4a31d04d6b3ff70150369f2c1e8bdbef8ded7c182dd8e04ec946eb9e90359b4`；kernel `771ebc9cf8816adddfc6b7be7f1f70b2c868f50715354b838b98c33c6c838dc2`、FD `43b9183bdc39e4a97df0dd220dfaf7fbed463f9a073948a4be8c3addea5d51a9`、expandedpayload1bc67c61…，gate20261106T071433Z PASS/actualEFI kernelADTpayload pins。只boot一次，logs/boot-once-20261106T071511Z，246.01s观测Recovery，BCB32B预置且回读/其他字节保持，无hostreboot帮助。
+- **真实raster**：`R540 s12 e0 f12 pxff0000ff/ff000000 bad0`；`RP in968 out2744 edge384 ts1/2/3`。3vertexTRI_LIST、VS64words/FS32words、64×64RGBA8linear/sysmem16KiB，968内部＋2744外部正确，384边缘不比较；CPU只sentinel、背景GPU2Dclear、red真实FS，不是CPU/compute填图。
+- **随后真实原metallib对象链**：`M540 status4 v256 in780 px3f01b6b5/3f4e5da8`，新第六次submit/fence/wait均成功；GPSVC BO28/map28/unmap28/sub6/fence6/wait6/open3close3。P1、constant256、双SSBOtransform、真实AIR＋guards全部保持。owned对象本身仍只逻辑长度oracle，不声称自己的tailguard。
+- 本轮修复：commit同步prepare内部BO/encode/beforeflush，异步worker只submit/原200msGPUwait/afterflush；原2shostwait不放宽。逐项fail-fast/原rc/phase，ME独立首错不被retirement覆盖。首轮race原因未记录精确时间，此修复后全链恢复，是适用修复证据而非所有设备延迟根因证明。没有改PM4、安全检查或NativeAdrenoABI。
+- host actualObjCASan/UBSan含slowprepare2300ms与真waitTimeout保留owner通过；arm64iOS17.7Objects/OwnedRun通过；12heartbeat/17evidence/7compute与render4tests/原PM4差分保持。第一次构建遗漏dev-seed.dbr正确名称导致payload失败，修正为已验SHA的同seed链接后续构建通过；失败log保留，未重跑已patchedkernel、未改seed内容。
+- 冻结 **`out/p21/gpu-cp/rounds/20261106T072009Z-sagit-triangle-and-owned-pass`**；candidate `logs/device-result.json`绑定本轮rawhash。首轮trianglePASS/ownedpending冻结以及旧compute/AIR/owned成功镜像全部保留。详 `docs/P21_A540_RENDER_PORT_20261106.md`、`docs/P21_A540_OBJECT_PREPARATION_20261106.md`。
+- **下一直接里程碑**：私有64×64IOSurface BoImport→准确cachedrangeflush→真实raster/fence/readback，来源/差异/ownerretirement及失败门禁已记录 `docs/P21_A540_IOSURFACE_PREREQUISITES_20261106.md`。当前仅NEWBO；没有IOSurfaceraster或presentation验证。实际batchPTE固定RW，RO为请求；现DSB不能作cachedimportcoherence证明。
+- 系统Metal仍未注册；有限NSObject对象不是_MTLDevice。目标21H461factory/264Bnamedlimits/initializer/conformance研究在 `docs/P21_METAL_FACTORY_21H461_20261106.md`，真capability/featurequeries/nativeGPUfamily/完整renderobjects仍待实现，不能伪报profile发布设备。无CAMetalLayer或系统UI GPU合成。
+- 原launchd-cache与其他agent未提交改动保留；无刷boot/recovery/固件/GPT，无commit/push。接手先读上述currentcandidate/device-result与新retrieval，勿以旧HANDOFF小节或历史gate为当前状态；新boot须从完整回收后新candidate门禁开始，不自动重复本镜像。
+
+## 2026-11-06：真正 VS/FS 三角形已实机通过；owned提交前准备竞态修复验证中
+
+- **最新已回收 boot `0x373b45df`，设备rootRecovery `3b25cc7c`、唯一ADB5037。** 新日志 `out/p21/persistent-logs/20261106T064951Z`，32MiB窗口SHA `12275c8227d17a5412305b0de711bc1cbc7445592458ca205768db997dc8ff3f`，36rounds/0writererrors。上一轮不再是最新，所有已启动实验已回收。
+- **真实GPU raster PASS**：`R540 s12 e0 f12 pxff0000ff/ff000000 bad0`；`RP in968 out2744 edge384 ts1/2/3`。GLSL430实际VS64words/FS32words、TRI_LIST3vertex、64×64RGBA8sysmemtarget16KiB；968内部和2744外部正确，384边缘未比较。背景GPU2Dclear，红色真实FS输出，CPU只sentinel，非compute填图或CP写expected。constant256、transform和真实AIR前置回归均通过。
+- 候选 `out/p21/p21-sagit-triangle-20261106T062852Z/uefi/boot-p21-up1.img` SHA `de16dee05f351cc67f9e2ee7b56b22046a3c7ec89a711d8e698ed5c5d287efb2`，kernel345a204a…/FDfd490c17…，gate20261106T063937Z PASS/actualEFI pins。单次回执logs/boot-once-20261106T064535Z；245.52s自行回Recovery，BCB32B预置/回读且其他字节不变，无hostreboot帮助。冻结 `20261106T065210Z-sagit-vsfs-triangle-pass-owned-pending`。
+- **本轮owned链未通过**：M540 retirement-pending，sub5/fence5/wait5无第六次ownedsubmit；总bo26/map26对应三个binding和内部IB准备，不能称执行compute失败。旧成功owned候选3645553b…保留，不覆盖。
+- 已查sagit dispatch及Mesa fd5compute，核心CS切换符合；定位本机2s hostwait与async内部BO准备race。最小修复为commit同步prepare/encode/flush，worker仅submit/200msGPUwait/afterflush；原2s不放宽、错误仍lost/retirement。独立ME保存首错避免retirement文本覆盖。该race已host验证但尚不是设备唯一根因证明。
+- 实际ObjCASan/UBSan模型含slowIBprepare2300ms通过，真正wait2300ms仍hostTimeout/owners保留；Objects/OwnedRun arm64iOS17.7编译通过，证据local `native540/objects-prepare-20261106T0700`。新修复候选 **`out/p21/p21-sagit-triangle-prepare-20261106T070830Z`**正构建；本条写入时尚未第二启动，不能引用旧gate为新候选证明。
+- 详 `docs/P21_A540_RENDER_PORT_20261106.md`、`docs/P21_A540_OBJECT_PREPARATION_20261106.md`。已核对privateIOSurface下一前提，记录 `docs/P21_A540_IOSURFACE_PREREQUISITES_20261106.md`；cachedimport需要准确range维护和ownerretirement，现DSB不能替代。当前请求RO而实际batchPTE仍RW，勿声称shader物理RO保护。
+- 目标21H461systemfactory实际semantic/limits研究见 `docs/P21_METAL_FACTORY_21H461_20261106.md`；_MTLDevice baseacceleratorinit为abstract，系统注册需真实MTLDevice/SPI与capability。当前仍无systemMetaldevice、IOSurface raster/presentation或UI GPU合成。
+- 所有原launchd-cache/其他agent未提交文件与旧证据保留；无刷boot/recovery/GPT/固件、无seedidentity改动、无commit/push。下一步只验证新匹配修复候选，不重试旧镜像或扩大安全门禁。
+
+## 2026-11-06：真实 Metal AIR 与固定 metallib 受控对象链已实机执行成功（未注册系统Metaldevice）
+
+- **设备当前rootRecovery `3b25cc7c`，唯一ADB5037，最新boot `0x3dcf0e86`**；最新日志 `out/p21/persistent-logs/20261106T060111Z/`，SHA `a39b4fd28cd1117db28eeac7103dc0f3e00bec4779a1e98ed689930e1cfd58e2`，35rounds/0writererrors，全部实验已回收，monitor退出。
+- 当前成功候选 **`out/p21/p21-sagit-owned-metal-20261106T054458Z/uefi/boot-p21-up1.img`**，SHA `3645553b3bf1bd866d7763e92928b6b03539607a21489231a6c0318bc5eb8f4f`，内核d7da2d09…、FD5534249f…、gate20261106T055619Z PASS/actualEFI pins命中；单次bootlogs/boot-once-20261106T055658Z，244.3s自行回Recovery，无hostreboot帮助，BCB预置。
+- 实际fixedmetallib对象链 **`M540 status4 v256 in780 px3f01b6b5/3f4e5da8`**：原始MLCompute库哈希准入→Library→Function padding_gradient→ComputePSO→Buffer→Queue→Encoder→commit/wait→contents，256floatbits复制正确、780input保持。GPUuserBO23/map23/sub5/fence5/wait5/open3close3代表旧回归+新独立连接，非CPU写expected。
+- 自有 `NativeMetal540Objects.{h,mm}` Device派生NSObject，explicitcontrolledinit，**不是_MTLDevice、不宣称完整MTL协议、不注册systemdefaultdevice**；只固定库/entry/params/3bindings/4×64，未知metallib/GLSLmanifest/外部IR3拒绝。所有resources/session/context持有直到真实fence或kernelfailedconnretirement。`NativeMetal540OwnedRun` 在旧probeconnclose后newexclusiveconn，ObjCcontext共同持有避免asyncdangling。
+- 对象链**未检查allocation尾guard**，只有logicallength与input780/output256；前置真实AIRprobe另行检查完整guards，不能混称对象链guardPASS。
+- 真实AIRprobe此前候选 **p21-sagit-air-20261106T052553Z**，镜像1e4ca2bf…、gate20261106T053112Z PASS，245.5s返回，新log **20261106T053602Z boot3de5f0a3** SHA97c19f33…35rounds/0errors；`A540 s12 e0 f11 i780/244 p12/1012 v256 g768`，AI/AX四点复制bit一致，P1/constant256/dualSSBOtransform均回归通过。
+- 固定真实21H461库 `MLCompute.framework/default.metallib`653424B SHA `fa9101b5c07bd91720de2cbbcb170b3acd061d8eae4bf13bc6f9f7fc07794e9b`；entrypadding_gradient AIR4080B，固定sagitAIR→NIR→A540IR3实际416words/instrlen13/constlen36/full6half4、mask7write2/flags0400008c，无specialization/shared，driver112+12 immediate128+10。ISA SHA `8786fdb358bab5ee91dc7b79b26d6e736aa1fb79cec6bd7799fe36b94e1c528b`。原AIR/LLVM仅privateout；tools保留publichelper/type/code/sourcepins。
+- 参数48B `{0,260,3,1,256,1,1,2,2,1,1,0}`，source780floats/read3120B、output256/write1024B、params48B，oracle复制source[x+262]到out[x]。6NEWBO、oneSubmitWait、source780+guard244、params12+guard1012、out256+guard768；`NativeMetal540AIRProbe`无free/import/retry。
+- 目标21H461实际objc证据：_MTLDevicesuperNSObject,size536，initWithAcceleratorPort@20@0:8I16，initLimits/FeatureQueries/Workarounds/GPUFamilySupport为void；limits77char完整型串 **`r^{?=IIIIIIIIIIIIIIIIIIIIIIIIIIffIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIQ}16@0:8`**。只证明类型/存在，不含semanticfields/offsets，不套sagit22H374264Blayout。
+- 冻结新增 **20261106T050812Z-sagit-dual-ssbo-transform-pass**、**20261106T053710Z-sagit-real-air-padding-pass**、**20261106T060239Z-sagit-owned-metallib-object-chain-pass**，详细来源/应用/实证和边界在 **`docs/P21_A540_AIR_OBJECTS_20261106.md`**，双BO另详docs/P21_A540_TRANSFORM_20261106.md。
+- host5transform/5AIRprobe/5probe/7compute、真实ObjCASan/UBSanwronghash/state/lifetime及arm64iOS17.7对象编译PASS。hostobservedc0decafe不是设备AIRproof；设备记录单独归属。
+- **下一边界**：系统Metalfactory/SPI/limits、generalmetallib/functions、图形PSO/VSFS/IOSurface/CAMetalLayer/系统合成仍未完成。下一阶段从这些成功基线做版本匹配和boundedgraphics，不再把oldno-write当当前问题。
+- 无刷boot/recovery/firmware/GPT、无改变seedidentity；原launchdcache未跟踪文件及其他agent改动保留，无commit/push。
+
+## 2026-11-06：A540 双 BO 真实读取／XOR加法／写入已实机成功；进入真实 AIR／受控 Metal 对象阶段
+
+- 最新完整日志 **`out/p21/persistent-logs/20261106T050642Z/` boot `0x3de130df`**，SHA `64f55ed0d26219ad91090d72aeefed7763dabc3f7f2839f8f59a4b6f2f980f08`，35rounds/0写错；设备rootRecovery `3b25cc7c`，唯一ADB5037，已回收、观察器退出，无未回收实验。
+- 新 `compile_transform.cpp` 以固定sagit/MesaA540后端实际编译 **SSBO0读取→XOR0x5a5a1234→加globalID→SSBO1写入**；ISA96words/instrlen2/constlen32/full4half1/groupID192/local0，immediates112起[0,5a5a1234]。SHA `537aaf4d6e5c73e0922b1b815d8f099c7657bfbbf8d642b5f7d3dd74d6db4920`，原backend/final621reflection保留，未造metadata。
+- 新 `NativeMetal540Transform.{h,cpp}` 在同连接P1及constant256成功后只提交一次，5NEWBO从start+0x20000起，IB8192、shader/input/out/scratch4096，输入只CPUinit pattern、输出只sentinel，oracle只比较。不import/free/unmap/retry，kernel负责安全retirement。
+- **实机 `T540 s12 e0 f10 in256/768 v256 g768`**：256input保持、256output全部符合 `(src^5a5a1234)+i`、双guard各768完整。`TI a5c30f17/d8466dd0/3c813050/13579bdf`、`TX ff991d23/821c8063/66db2363/13579bdf` 是0/127/255/256采样。GPUuserBO11/map11/sub3/fence3/wait3，P1及旧constant256同时通过；不是仅写常量。
+- 候选 **`out/p21/p21-sagit-transform-20261106T045353Z/uefi/boot-p21-up1.img`**，SHA `7ea447de4c82913db587617aab8436fb17785c5595a68572a72dbd5c4deb554a`，内核09f48c4d…、FDf770d1c8…，gate20261106T050156Z PASS，实际EFI pins命中；单次bootlogs/boot-once-20261106T050229Z，245.2s自行回Recovery，BCB预置。冻结 **20261106T050812Z-sagit-dual-ssbo-transform-pass**。
+- 5transformtests/7compute/5probe回归、ASan/UBSan24failureinjections和arm64compilePASS；source/IR3/JIT/reflection及tests在tools/gpu-native540/evidence/transform-glsl-20261106T044414Z。详 **docs/P21_A540_TRANSFORM_20261106.md**。
+- 新只读 `NativeMetal540RuntimeABI.mm` 通过现有Metadata保留target21H461类签名：_MTLDevicesuperNSObject,size536；init@16@0:8、deallocv16@0:8、initWithAcceleratorPort@20@0:8I16，initLimits/initFeatureQueries/initWorkarounds/initGPUFamilySupportvoid；MTLDeviceSPI存在。limits型串原64B行截断，新代码分段（尚未新boot），不能套sagit22H374limits264布局。
+- plugin仍nil，未发布systemMetaldevice。正适配固定原始metallib哈希→trustedofflineAIRcompiledregistry→有限library/function/PSO/buffer/queue/encoder对象，不装手机LLVM、不用GLSL假装AIR。
+- 已找到真实21H461 MLCompute **padding_gradient**：原metallib653424B SHAfa9101b5…，AIR4080B，固定AIR→NIR→A540IR3实际416words SHA8786fdb3…，严格621wordexporter原样通过；无functionconstants/dynamicshared，48Bparams源260×3×1/pad2,1→out256，oracle复制src[x+262]floatbits。工具compile_air_fixture.py及typedfixture/evidence已保存，**仅host验证尚未device**。AppleAIR/LLVM输入仅privateout，不随tools发布。
+- 编码器头globals重复定义导致第一次bundlelink失败，用户态build启用NATIVE540_ENCODER_ONLY extern-only后修复，kernel日志定义未弱化；失败log保留。
+- 下一候选将验证真实AIR编译artifact参数/三SSBO/driverconstant数据流和完整目标limits型串，保留已成功compute基线；无commit/push，原agentlaunchd-cache改动保持。
+
+## 2026-11-06：A540 多工作组真实 shader 已成功；恢复默认 SPTP collapse 仍256/256，当前成功基线
+
+- **设备当前rootRecovery `3b25cc7c`，唯一ADB5037，最新boot `0x3e354557`**；最新完整日志 `out/p21/persistent-logs/20261106T043106Z/`，SHA `d3d2cfadc87cb2c3494723bc9da1a8dc26b4d5180b7eb03cae52ec04cc1c1733`，35rounds/0写错。所有本轮实验已回收，观察器退出，无等待中的Fastboot。
+- WIDTH修复成功后，沿sagit原生路线扩到真实global-ID编译程序 **4groups×64threads**，1024B output、768guard。新fixture `tools/gpu-native540/probe_global_fixture.h` 为旧固定编译ISAe836dfd6…＋匹配reflection，仅改变runtimeworkload；未把local程序当global、未改机器码。`P21_PROBE_GLOBAL=1`明确构建选择，默认单组fixture保留。
+- 第一次4组候选 `out/p21/p21-sagit-global256-20261106T040312Z/`，镜像 `b7647b3e67d1159ebc5638727f63734a8b48acf11d91b26f3dc5a9dce999aded`，gate20261106T041011Z PASS；单次boot回执logs/boot-once-20261106T041358Z，245.4s自行回Recovery，新日志20261106T041812Z boot **0x3ddb3237**，**v256/g768、e0**。冻结 `20261106T041912Z-sagit-global256-shader-write-pass`。
+- 当前成功候选 **`out/p21/p21-sagit-global256-pc-20261106T042018Z/uefi/boot-p21-up1.img`**，SHA **`8aea697c619633847b590f0282c1cde586ddc9ee6adfcc8fa18acf1735996717`**；内核 `b216819da6803968fb87a3fc26d4e57b4fc8851b7a78ed76be1d0b3db5b23ebb`，FD `3c5d5bce39280da6e41594605776b563a93689fb1be627994dbf9155b635a122`，payload c2fd27db…，gate20261106T042543Z PASS；同轮UEFI重建/actualEFI pins命中。
+- 此候选保留完全同一签名plugin/ISA，**仅移除pc0恢复上游默认collapse1**，参数恢复697B（runtime池参数需照旧计入）。单次boot回执logs/boot-once-20261106T042653Z，244.4s自行返回，新boot **0x3e354557**。
+- **真实结果**：`GPSTXT P540 GLSL430/A5xx s12 r0 e0 ff v256 g768`；`GPPIX PX deadbeef/deadbeef/deadbeef/13579bdf`（0、127、255和256位置）；`GPSTATE PS 1000816/1/1/5/4012000/fcfcc0/100/1`。P1后同connectionBO6/map6/sub2/fence2/wait2，shader输出256/256，guard768/768，未CPU写expected。
+- powercollapse=1/inter7f，pre/afterZAPcorebit20均off；**该idleoff状态下仍成功执行4组shader**，证明不能继续把off当本workload的必然阻塞。保留manualdomainresume工程opt-in，不再恢复强制halt/domainwrite路径。
+- 最新冻结 **`out/p21/gpu-cp/rounds/20261106T043200Z-sagit-global256-defaultpc-write-pass/`**；64单组、256pc0和256默认pc三张成功镜像/原始证据全部保留。BCB预置且host无reboot帮助，不据返回证明全部异常复位独立可用。
+- 5probe宿主tests（单组与四组ASan/UBSan＋20失败注入）/7dynamiccompute/17evidence等回归PASS；descriptor测试现解码WIDTH字段而非仅比raw错值。`p21-build-adrenoprobed.py`后续buildJSON补profile/fixturehash，本轮历史build记录未覆盖。
+- sailfish研究已完：`upstream/ios-sailfish` HEAD6f27e41f…，实际A530 GLES/EAGL+Freedreno/SweetGPU系统路线、非Metal；GPU/IOSurface/cache/64-bitoffset可参考，A530专属寄存器、20H392SPI不套21H461/A540。详 `docs/P21_SAILFISH_GPU_REFERENCE_20261106.md`。
+- **完成边界**：已证明用户态GLSL→NIR→A540IR3的单组/多组compute、真实fence与DRAM写入；尚非Metallib/AIR runtime、Metaldevice/library/commandqueue、VS/FS/IOSurface或系统合成。下一阶段以本成功基线做有界多BO读写与Metal/graphics桥接，不能再沿旧no-write结论盲改电源。
+- 详记录 **`docs/P21_A540_SSBO_WIDTH_20261106.md`**。原upstream/历史镜像/其他agentlaunchd-cache改动保留；无commit/push。
+
+## 2026-11-06：A540 用户态 shader 写入已实机成功；SSBO WIDTH 漏编码是本探针阻塞，sailfish已拉取
+
+- **当前设备rootRecovery `3b25cc7c`，最新boot `0x3dd67607`**；日志 `out/p21/persistent-logs/20261106T035117Z/`，SHA `b89af1f3cc4154c68a0de4f5199503a7265a9f63c4f7fbaad67fa60b977aea3e`，35rounds/0写错。此轮已回收，监视器退出。
+- 查固定sagit `673f850... AdrenoPipeline.h::buffers` +Mesa24.3.4 `769e514... fd5_emit.c::emit_ssbos/a5xx.xml`，确认本机漏用 **A5XX_SSBO_1_0_WIDTH**：256B原写word0=100（WIDTH0/FMT1），正确应1000000（WIDTH256/FMT0）。已修UserlandCompute和kernelCompute两处尺寸宏，保留同一shader、constants、BO、工作组及所有认证/SMMU门禁。
+- 宿主模型新增实际descriptor位域解码与静态断言，原host仅比错误raw值的盲点修正。4probe/7dynamiccompute tests、ASan/UBSan、arm64及包边界模型PASS。
+- **实机GPSTXT `P540 GLSL430/A5xx s12 r0 e0 ff v64 g960`**：用户P1完成后真实compiledA540 shader写入64/64值0xdeadbeef，guard960/960保持0x13579bdf，stageComplete12/error0/fence15。不是CPU写expected、不是仅fence。当前GPUuser BO6/map6/sub2/fence2/wait2；err6包含markeropen计数不应当shader错误。
+- 成功候选 `out/p21/p21-sagit-ssbo-width-20261106T025811Z/uefi/boot-p21-up1.img`，SHA **`b210832a986f4e700688d995ede53e7d8c74366f000884d12f65d40daf6e5a8b`**，内核e2cb675c…、FD414d2599…、gate20261106T034424Z PASS。单次boot回执logs/boot-once-20261106T034703Z，245.1s自行回Recovery，预置BCB；无刷写boot/recovery/GPT/固件。
+- 冻结 **`out/p21/gpu-cp/rounds/20261106T035233Z-sagit-ssbo-width-shader-write-pass/`**。详文 **`docs/P21_A540_SSBO_WIDTH_20261106.md`**。所有历史no-write证据保留，只是此前寄存器readback未覆盖内部descriptor错误。
+- 用户请求拉取 `https://github.com/joranv1/ios-sailfish`，已普通浅clone（无大子依赖）到 **`/Volumes/NAS-MacData/Project/IOS/upstream/ios-sailfish`**，HEAD **`6f27e41ff249f2680540ebe8ee5ab982c5e641c9`**，clean。详文 **`docs/P21_SAILFISH_GPU_REFERENCE_20261106.md`**。
+- sailfish目标MSM8996Pro/A530，实际路线CoreAnimationGLES→EAGLshim→MesaFreedreno/IR3→SweetGPU→IOSurface/显示，不是Metal。其WIDTH同高16位，A5xxoffset64bit高寄存器初始化与BOcache/retirement可参考；A530专属SP_DBG_ECO、板级地址、SPI20H392不能套21H461/A540。
+- **边界**：目前是单组GLSL430-NIR-A540IR3用户态写入成功，非Metaldevice/metallib runtime、VSFStriangle、IOSurface或系统合成。正沿sagit原生路线准备真实globalID4工作组/256output独立验证，不能因此宣称全部GPU完成。
+- 所有原agent改动、seedidentity及私有产物保留，无commit/push。
+
+## 2026-11-06：sagit无人值守迁移本批完成；真实用户态A540程序已提交，shader仍0/64，内部状态证据阻塞
+
+- 完整来源/应用/九轮设备结果记录：**`docs/P21_SAGIT_UNATTENDED_20261106.md`**。本批所有启动均先前轮回收、有明确源码/证据变量、完整kernel/payload/FD/实际pins、新gate、单次fastbootboot，不自动重试同镜像；无刷boot/recovery/GPT/固件。
+- **当前设备rootRecovery `3b25cc7c`，最后boot `0x3ddd47c0`；最新日志 `out/p21/persistent-logs/20261105T193115Z/`**，SHA `9fc660049d3b764bdbf32ca256685fb1a34f2d62b58bd9345dc4e9d023f256cf`，35rounds/0写错。所有9轮日志均已回收、hostmonitor退出，无未回收实验。
+- 最后候选 `out/p21/p21-sagit-ssbo-count-20261106T0320/uefi/boot-p21-up1.img`，SHA **`f0a8cd55a911fa528968b41f18740d37f0929fe53062ec2ffaebf08dc08e2004`**，内核 `331a05dbed837f1cd632d4db870f75cf14bfae4d89fb2861cad1be69ebbffe56`，gate20261105T192633Z PASS。回执logs/boot-once-20261105T192702Z，245.9s自行回Recovery，BCB预置，host无复位帮助。
+- 实际GPUuser chain：P1写入值正确后，同连接新IB/shader/output/scratch4BO；totalBO6/map6/sub2/fence2/wait2，输出 **0/64、guard960/960**。不是没有用户提交；CPUdisplayclients25/frames2，其他system仍运行。
+- **实际CP DMA状态** `GPSTATE PS 1000816/1/1/3/4012000/fcfcfc/40/1`，CSctrl/config/HLSQconfig/instrlen1+SSBO/objIOVA/localonlysysvals/grid64/addressmode1符合预期。只是这些寄存器的读回，不是所有内部shaderstate/constant验证，不算shader执行。
+- global真实GLSL430A540编译ISA→local-ID编译ISA→sameISA直接装载→Mesa按最高启用槽NUMUNIT1均无写。已排除这些单变量作为充分修复，不应重复它们。新fixture **local-ID trueA5xxstgb** code SHA `9eefeefa2b94619209fad900a6a21f8bd21ae91d30be0c70aef76465f17e8b05`，64words/instrlen1/constlen28/full2half1/branch1/thread0/subgroup64/local0/group252/flags04000008，raw/final反射与实际GLSL源独立保存。
+- globalID与localID realcompiled source保存`tools/gpu-native540/evidence/probe-glsl-20261106T0100/`、`probe-glsl-local-20261106T0300/`；独立CLI严格准入两exactGLSL430源、45不支持failure保留；source/frontend maskstride与rawbackendallocation按sagitcompileEntries组合。4probe tests/ASan/20失败注入和arm64compilePASS，7dynamiccompute回归PASS。
+- 最新UserlandCompute支持上游directShaders有限code≤512，objectcount6TYPE4，SSBO描述符count=最高activebit（fixedMesa emit_ssbos）；未引入新IOGPU/Metal私有ABI，plugin始终nil，不声称系统Metaldevice。
+- kernel旧A6xxstib.b探针在活动config `cheeseburger-gpu-compute=0` 停用；错误historicalsource仍作记录（未继续执行）。`cheeseburger-gpu-pc=0` 是vendor可选collapse实验，真实pre/afterZAP域140000已排除简单off原因，默认source仍pc1，config才optout。payload参数719B、runtime753B，kernel尾部arg解析目前正常观察但应避免继续增长。
+- 最新内部HLSQ/constant通道未证明：sagit CP crashdumper要求empty、全idle、健康kernelcontext和资源持有；本机现normal status含idle兼容bits，不能放宽guard执行另一DMAengine。**本批到此停止追加无依据启动**，下一修复先核对上游内部快照准入/安全通道、constant真实值或编译backendresource语义，不能CPU写expected、关secure/AMFI或松mask。
+- 冻结新增：`20261105T183556Z-sagit-real-a5xx-glsl-no-write`、`20261105T184827Z-sagit-cp-state-confirmed-no-write`、`20261105T190610Z-sagit-local-id-no-write`、`20261105T191711Z-sagit-real-direct-no-write`、`20261105T193525Z-sagit-ssbo-count-no-write`；此前4轮freeze同样保留，INDEX同步。
+- 源码和文档修改全部保留，原launchd-cache未跟踪文件未覆盖；未Gitcommit/push。当前task已实现迁移并完成验证，但shaderhardware/Metaldevice未完成，不能把fence当成功。
+
+## 2026-11-06：实际 A540 编译探针与状态 DMA 写回已实机；写入仍0，local-ID对照编译进行中
+
+- 最新已回收 `out/p21/persistent-logs/20261105T184616Z/`，boot **`0x3dcc5538`**，35rounds/0写错，设备rootRecovery，无监视/待回收启动。本会话继续用户授权的sagit无人值守迁移，无Turnip。
+- 已明确旧探针 `stib.b` 是MesaA6xx(min600)ISA，不能当A540。新增真实 `compile_probe.cpp` 用固定sagit `qgpu_compile_glsl` +Mesa24.3.4实际生成GLSL430→NIR→A540 IR3。450不被固定前端支持，失败证据保留；采用同义430明确标记，不是AIR/Metalcompiler。
+- 新64word/instrlen2/constlen28/full2/half1/branch1/thread0/subgroup64/local0/group192/flags04000008/SSBO0 uint的编译ISA实际反汇编为A5xx **stgb**。SHA `e836dfd6496b140abbaf969400d3dfd63f1e5f4defc5436e66cc5391dd8863f2`。真实metadata不是旧ScanBand猜值；按sagitcompileEntries把源声明反射与backend分配组合，保留raw/final621worddiff。新fixture与host4tests/ASan/arm64PASS，已实际发布。
+- 候选 **p21-sagit-glsl-a5xx-20261106T0215**：镜像 `7047e41882e6c44e3978cc9f576527a3dfd5f4676e534b6882e5e30f77e80c03`，内核 `996a5c55…`，gate20261105T182415Z PASS；单次boot回执logs/boot-once-20261105T182443Z，244.7s返回，日志20261105T182854Z boot3dcd5756 SHA14fecdbd…。
+- 此轮kernel旧A6xxISA测试通过compute0停用，user真实compiledprobe实际BO6/map6/sub2/fence2/wait2，**v0/64 guard960/960**，域pre/afterZAP均140000，CPUframes2。不能称shader执行成功。冻结 **20261105T183556Z-sagit-real-a5xx-glsl-no-write**。
+- 候选 **p21-sagit-state-20261106T0235**：上游CP_REG_TO_MEM(op3e)在同一IBshader之后向自己的scratch写回关键配置，仍仅一次提交；CPU不读高SP/HLSQ MMIO。metadata PS独立锁存GPSTATE，不覆盖首次probeerror。
+- 镜像 `7e3d587561d910bb457dd0ced1a196da53629d925ee6d1a9ca0dfcb4cf72f1d9`，内核 `1fa3aded…`，gate20261105T184137Z PASS；单次boot20261105T184204Z，244.8s返回，新日志 **20261105T184616Z boot3dcc5538** SHA `935d7332a868c007bdeea5f101dd133dae960a2005ab458fc24c4f64a8c33451`。
+- **实际CP写回** `GPSTATE PS 1000816/1/1/5/4012000/fcfcc0/40/1`：CSctrl1000816/config1/HLSQconfig1/cnt5(2units+SSBO)/obj4012000/IDmappingfcfcc0/grid64/addressmode1，与新反射和用户BO符合。不能再把失败归因这些registerpacket没写进去；v0/64guard960，P1仍正确。冻结 **20261105T184827Z-sagit-cp-state-confirmed-no-write**。
+- 新 `Encoder540::regs` 对齐sagitcount6TYPE4对象配置；kernel/user两处对象地址包已改，hostmodelPASS。CPstateprobe只在成功fence后CPU读自有内存，失败不补读GPU/SMMU。该核对不代表所有state/descriptor验证。
+- 正生成另一个真实GLSL430对照，只把globalID→localID（单group64意义相同），保持BO/constants/store/fenceguard，排除workgroupreg/全局索引影响；不手改metadata/ISA、不CPU写expected。这一新fixture尚未boot。
+- 待上游继续调查：SP/HLSQ shader初始化/descriptor/securecontext等实际缺证据；已排除简单domainoff、plugin未发布、CP未submit以及A6xxISA错配作为唯一原因。保留所有原失败证据，无commit/push，不覆盖其他agent文件。
+
+## 2026-11-06：无人值守 sagit 迁移推进中；实际插件发布已通，确认旧 Probe ISA 是 A6xx 错配
+
+- 用户明确停止Turnip适配，采用sagit方案，授权临时启动/日志等待后按上游修复，无需提问；仍不刷boot/recovery/GPT/固件、不循环同失败镜像、不动seedidentity。所有运行保持唯一ADB5037，rootRecovery `3b25cc7c`。
+- 本会话新增4个独立候选，按前轮回收→源码依据→修改→host测试→完整kernel/payload/UEFI/pins→单次boot顺序进行；最新已回收 **`out/p21/persistent-logs/20261105T175833Z/` boot `0x3dd1722a`**，当前设备Recovery。没有未回收实验。
+- sagit `673f850...` 的 `QcomGPUHardware.cpp:496–497,1279–1341` 证实CPUdomainresume默认opt-in；本机compute改manualresume0，保留ZAP/GPMU/SMMU/engine/fence所有约束，不从已quarantine引擎继续提交。
+- 已逐项精确移植 `AdrenoStartup.h::hardwareClockGating` **96项A540表** 到 `CheeseburgerGpuClock540.h`，startupconfigure调用；host与上游表相等PASS。设备实际 `hwcg=aaa82a00 isdb=182`，不将其称全部配置读回验证。
+- 新 `NativeMetal540Probe.{h,cpp}` +插件worker同一连接：保留P1先完成，分配IB/shader/output/scratch4BO，typedencoder，CPUinhibit，单次Submit/Wait/64输出+960guard。所有退出只关闭连接，资源交现有retirement/quarantine处理，不显式危险free。host模型20失败注入/ASan/UBSan及arm64对象PASS。
+- 实际发布缺口已定位修复：原payload没携带gpuaddon、addon没含plugin，sgai0使Data继续旧bundle。`p21-build-adrenoprobed.py` 现在把完整签名bundle加入NGPUADD2；候选payload实际加入kernel.macho.gpuaddon，ADT添加GpuAddon零16B，DarwinBoot装载协议不变。新增 `0011-cheeseburger-addon-after-data-mount.patch` 支持sgai2，把同validatedinstaller延迟到Data mount returned后、launchd前，复用原write/readback，不改seedidentity/launchdcache/AMFI。
+- 设备 `GADDON files=5 written=1 same=4 failed=0`；后轮均same5。userclient已实际BO6/map6/sub2/fence2/wait2（P1+shaderprobe），GPSTXT `P540 ...v0 g960` 证明shader输出没写但guard完整；这不是完整Metal，现plugin仍nil。
+
+### 四轮候选与结果（均新boot、35rounds/0写错，自行返回Recovery）
+
+| 候选 | 镜像 SHA256 | boot / 日志 | 结果 |
+|---|---|---|---|
+| p21-sagit-hwcg-20261106T0030 | e4d498f9b89d3507e60575a92f0153417ed1bb45fd1c5bdb9eb0ee627402a99f | 3dc789cd / 20261105T170038Z | HWCG+manualresume0；7CS+probe fence但0write，CPUframes2；此轮仍旧Data插件，openobserver1calls0 |
+| p21-sagit-direct-addon-20261106T0120 | 566f844ad58e8a3ff80422f5386a1abaf46005097f45ca4f5f083c704888b695 | 3ddb1b5e / 20261105T172948Z | 上游SS4DIRECT常量probe仍0write；sgai2发布新plugin成功，user2submit/fence，v0/64 guard960/960，CPUframes2 |
+| p21-sagit-cold-core-20261106T0135 | 2c74b929c7157f7dda1ba72ceb1a7ea6bf11ae27b461ec3c372fa9c95beada49 | 3dd05dff / 20261105T174533Z | sagit AdrenoRecovery26–30 reset→mapper→coreblocks→MEINIT；reset后域140000，GPMU后preZAP已1/1，故不能归因PAS；shader仍0write |
+| p21-sagit-no-pc-20261106T0150 | c0ba1c542031367b98634505283b603958d70322c4f1643c836c80b44b3f9937 | 3dd1722a / 20261105T175833Z | vendor a5xx_enable_pc受可选flag控制：pc0不编程SPTPcollapse；preZAP/afterZAP两域140000，上电但shader仍0write；userP1+probe完成、guard960 |
+
+- 回执各候选logs/boot-once-*；镜像与本轮kernel/payload/FD/pins完全同轮，新gate每轮保存。Data写仅已有持久overlay中的owner ngpu addonfiles，host未dd修改userdata，保护日志窗口。
+- 冻结：`20261105T170300Z-sagit-hwcg-cs-fence-no-write`、`20261105T173133Z-sagit-direct-addon-userspace-no-write`、`20261105T175017Z-sagit-cold-core-still-no-write`、`20261105T180416Z-sagit-no-pc-domains-up-no-write`。回Recovery耗时244.4/244.8/244.6/246.0s；预置BCB且未捕获复位mark不能证明特定auto路径。
+
+### 当前确定的 ISA 缺陷及修复进行中
+
+- 固定Mesa24.3.4 `769e514...` 的 `ir3-cat6.xml` 明确 `stib.b` 为A6xx家族（min600），旧A5xx `stib` 为不同编码。旧Probe机器码 `00800001/c7660004` 属代际错配；assembler接受gpu540不证明ISA合法。
+- `scan_band.asm @invocationid` 是localID而非globalID，旧ScanBand多组不会产生整帧全局梯度；不能把该错误与常量probe0write混为一因。
+- 现正用sagit `qgpu_compile_glsl`/实际A540 IR3后端生成最小constant-store和匹配反射，明确producerGLSL不是AIR/Metalcompiler；不手改机器码、不用A6xx编码继续试电源。新fixture需实际compile/hash/hostmodel再device。
+- 对齐上游TYPE4 contiguous6对象地址包到Encoder540::regs，kernelCompute和UserlandCompute均使用；新增CP_REG_TO_MEM只在健康成功路径向自有SSBO记录实际shaderstate，失败不读危险总线。该source修改尚未新boot。
+- 所有原launchd-cache文件与之前未提交改动保持；无commit/push。旧probe失败证据保留，不称GPUshader或Metal完成。下一轮重点实际A540 ISA+reflection，避免再做电源延时试验。
+
+## 2026-11-06：按本机 upstream 查解法并合并动态 compute，电源恢复缺适用案例而保留门禁
+
+- 用户要求所有修复优先查询 `/Volumes/NAS-MacData/Project/IOS/upstream`，记录来源并适配合并。已新增 **`docs/P21_UPSTREAM_MERGE_RECORD_20261106.md`**，逐项区分上游文件/commit、可复用部分、本机差异、实际应用、host/device验证和暂不合并的前提。
+- 已合并sagit `673f85070fe9f7872793015eb230a5c3987d4a8c` 的 `AdrenoPipeline::{dispatch,constants,buffers,shaderObject,loadShader}`、`GPUShaderProtocol` 边界/常量语义、`GPUJITProtocol::validDescription` 有限subset到新增 **`package/Userland/NativeMetal540Compute.h`**。只userland、有类型动态metadata，未改kernel ABI/IOGPU selectors/现有插件。
+- 新 **`tools/gpu-native540/export_program.py`** 验证完整621word反射及fixedsource/ISAhash，拒绝未支持特性与覆盖输出；metadata不是ISA。新增 **`tests/native540_compute_model.cpp` / `tests/test_native540_compute.py`**。
+- 实现动态寄存器/constlen/instrlen/sysval、cached≤32策略、block13常量、block15 16项尺寸+地址、uniform dispatch、动态shared≤32KiB。真实CS三buffer、memoryprefix112、driver112..123、immediate128..138、buffer lengths96..111及64KiB exact-bounds尺寸特例均实际host模型PASS。
+- 7项专用Python测试PASS、ASan/UBSan模型PASS、现有SDK的arm64 iOS17.7 client+生成header对象编译PASS；日志12+17项、真实metallib编译2组测试继续PASS。结构准入不是IR3安全验证；owner需hash/ISA上传、物理别名、映射/lifetime证明，栈>12KiB不可放kernel/panic。
+- **电源顺序未盲合并**：真实sagit halt后同样要求bit30清零，core恢复仍工程opt-in；callback在halt内读GPMU不符合本机约束。Linux/vendorresume/restart前提不同，未找到本板保留环CP-only安全恢复案例。WFI/drawstate已有，A530reset/counter workaround不可套A540；仍拒bit30，不扩大mask、不跳secure、不重复设备试验。
+- `docs/P21_A540_SHADER_20261105.md` 更正3ms→3微秒，移除“PAS必然重置域/Androidauth后必然pm_resume”的无证据因果；GPU源码原因注释同步改为真实安全约束。日志顶部旧窗口注释更正为当前10GiB/32MiB布局。
+- 最近设备仍为下方两轮实机，最后 **Recovery `3b25cc7c`，boot `0x3ddafcd5`**；之后没有新boot。动态encoder未进入设备、未发布Metaldevice，runtime core/shader问题仍未解决。
+- 保留旧证据、所有私有输入和原launchd-cache未跟踪文件；无Git提交/推送。后续从上游合并记录继续核对A540 halt/power交互和21H461私有MetalABI，不把host动态编码通过当shader硬件成功。
+
+## 2026-11-06：日志系统修复、A540 原生 Metal 编译落地；两轮实机定位 halt 后 bit30 busy（未解决 shader 执行）
+
+### 当前状态与任务结果
+
+- 用户要求修复日志、保存有效信息并继续 GPU/Metal 适配，随后询问个人适配 Turnip A540 的可能性。已完成日志/诊断成批修复、真实21H461 AIR→NIR→IR3离线编译及客户端适配；没有发布伪造Metal device，没有修改NativeAdreno ABI。
+- 采用 **sagit A540原生编译/命令路线为主，复用sheng系统接入与资源生命周期**。metal2vulkan作者源码固定 `219f01365dc4c8eb346816c405b5b17403793764` 已调研：runtime依赖Vulkan1.2/timeline，IOSurface/CAMetalLayer/Apple私有ABI由消费者提供。sheng的Turnip固定后端只接6/7/8代，不支持A540；本轮不引入Vulkan ICD。
+- **设备当前 root Recovery `3b25cc7c`，唯一ADB5037，两个单次实验均自行返回，日志观察器已退出。** 后一轮在前一轮完整回收并查明busy后才开展，不重复启动同一镜像；未刷boot/recovery/固件/GPT。每轮misc仅更新前32 B Recovery command并sync回读，其他字节保留。
+- 更正旧时间解释：writer约在内核54 s启动，快照171 s/心跳168 s不是内核171/168 s；对应内核约225/222 s。不能据不同时间原点说日志先停。新LOGTIME使用CNTPCT/CNTFRQ精确归一。
+
+### 实现与验证
+
+- `BootLog.c`、新增 `CheeseburgerGpuDiagnostics.h`：CORE2独立signed rc/fence_rc/stage和有效位，未执行/未采样不再显示成功；DRAIN首次失败锁存及已有寄存器读数；LOGTIME/tick统一时钟；LOGCOMMIT预留256 B、截断/错误计数。窗口仍为10 GiB起32 MiB、247个32块槽+31心跳块，不增加设备写入区域。
+- `CheeseburgerGpuQuiesce.h`/`GpuCp.cpp`：阶段/原因区分初检、ACK、最终idle/游标、resume；不补读失败总线。修正CORE实际返回值，fence字段不再重叠，域恢复失败-6隔离引擎。失败后不域写、不继续提交、不释放DMA资源。
+- `scripts/logging/{read-cheeseburger-log.py,heartbeat_record.py,analyze-cheeseburger-run.py}`：有效boot和提交校验、tick/steps/autoreset共享序列gap、原始窗口/解码保留、新 `EFFECTIVE_EVIDENCE.md/json`。旧CORE标不可信。CRLF标准化误报已修，原报告未覆盖；修正分析另存。
+- GPU六个宿主模型PASS；最新heartbeat12项、evidence17项PASS；native540真实编译/失败输入测试PASS，客户端模型、ASan/UBSan、arm64 iOS17.7对象编译PASS。宿主结果不是设备shader证明。
+- 新 `tools/gpu-native540/`、`scripts/p21-build-native540.py`、`NativeMetal540Client.{h,cpp}`：固定sagit `673f85070fe9f7872793015eb230a5c3987d4a8c`、Mesa24.3.4 `769e51468b49b2a42f0a0eaf71cf9eed5ff4e5de`，在 `/Users/dinnerabc/unixnu-p21/native540/` 完成508-target独立编译。原sagit checkout未改、未安装系统包。
+- 真实21H461 metallib：SpriteKit SolidColor_VertexFunc 160 words/instrlen5/constlen36；FastSingle_FragFunc base/MSAA各128 words/instrlen3/constlen8；MLCompute arithmetic_reduce_gradient_all 960 words/instrlen30/constlen36，均生成IR3及完整621-word反射。非法AIR/缺entry/缺function constant/不支持intrinsic/损坏输出拒绝，不伪造通过。
+- 实际Xcode metal binary存在但运行报告缺Metal Toolchain，未下载；使用的是目标OS已有真实输入。新增client仅复用现有Query/BO/Map/Submit/Fence并编码WAIT_IDLE+NOP，**未适配任意shader pipeline绑定、21H461私有_MTLDevice、IOSurface draw或完整系统Metal**，现有插件仍返回nil。
+- 路线与日志详文：`docs/P21_A540_METAL_ROUTE_20261105.md`、`docs/P21_LOG_GPU_DIAGNOSTICS_20261105.md`；编译紧凑证据在tools/gpu-native540/evidence，本机shader/执行文件保留在local verified-*，不提交私有Apple输入。
+
+### 第一轮：日志修复候选
+
+- 候选 `out/p21/p21-native540-log-20261105T153209Z/`；内核 `d5ad235bc1447442af303b1e433ede8b065a9990093a942ad3ba3822b4254a96`；FD `bfad5c5194d3282ede97b77dff0dab1ffc91fd07e795e88cfa2a9915c173f9bf`；镜像 `36a5e92668f4140ad8779c01c3104bce3bbb9f69b74bc0b96dbf63b125014fc1`；gate20261105T153740Z PASS。
+- 单次boot回执 `logs/boot-once-20261105T153807Z/`，Sending/Booting OKAY，245.4 s首次观测Recovery，无主机复位帮助。
+- 新日志 `out/p21/persistent-logs/20261105T154220Z/`，boot `0x3dda2caa`，SHA `23da5e3c4ee9d5099c28ef7fba455de0f0f9b5cd9f0345aad3d5453b15f1ee14`，35 rounds/0写错，LOGTIME snapshot_errors=0/heartbeat_errors=0，文本截断0。
+- **准确失败：DRAIN stage3/reason8，rptr=wptr=endr=endw=b5，ACK me=f0f/vbif=f000f，status=c00001c1、status3=0。** CORE2 valid5/rc=-4，post/fence未采样。2D/bigbo此前4/4，CPU显示clients23/frames2；用户GPUopen/sub为0。域命令/CS尚未执行。
+- bit30由已核验的A5xx XML标为GPU_BUSY_IGN_AHB_CP，不能扩大mask忽略。旧resetRecord不得当实时drain值。Linux源 `adc218676eef25575469234709c2d87185ca223a` a5xx_gpu.c::_a5xx_check_idle/a5xx_idle/a5xx_pm_resume及引用hash已核验并保存在候选 `logs/analysis-corrected-20261105T155805Z/`；Lineage vendor `d152ec...` 同时保存。Linux延时明确3微秒，不是旧文档3毫秒。
+- 冻结 `out/p21/gpu-cp/rounds/20261105T154334Z-native540-log-drain-status/`。
+
+### 第二轮：有界 pre-idle 功能修复
+
+- 基于Linux“CP环排空后等GPU idle”补充halt前100 ms有界idle/Status3等待；mask原值不变，新增stage7/reason13/14，超时不发halt/域写。模型覆盖busy清除和halt后busy再现仍拒绝。
+- 候选 `out/p21/p21-native540-preidle-20261105T1550/`，内核 `b431809a3e022395d7b8a92ae13d72eb1c6d8292d40a5c47490d3d1f7255421c`，FD `cffa98acb172cf6be701fe6a257f43b83b25228796bc01bb22e9c2687ae73147`，镜像 `12ae023a1e8a5d864bbd01f6f7610c4d6c65c771f0b9dc116884e831f0396cdd`，gate20261105T155555Z PASS。内核/载荷/固件均重建，实际EFI pins命中，本轮未复用旧FD。
+- 单次回执 `logs/boot-once-20261105T155629Z/`，245.5 s自行回Recovery，新日志 `out/p21/persistent-logs/20261105T160041Z/`，boot `0x3ddafcd5`，SHA `cc6f4761d87d15c69ffba3e82221750434d5883e9f0be0dff5261e0c3fa91a46`，35 rounds/0写错。
+- **pre-idle通过，halt后仍stage3/reason8/status=c00001c1**，其他ACK/游标/Status3同上；domain writes、恢复后fence、shader仍未到。说明本次有界等待不足以修复。CPUclients25/frames2；GPUopen/sub0。未做第三轮或扩大mask。
+- 冻结 `out/p21/gpu-cp/rounds/20261105T160232Z-native540-preidle-still-busy/`。
+
+### 构建异常、边界与下一步
+
+- 第一次候选命名误用已存在的p21-warbler：准备assert失败，但复合shell后续编译仍执行，污染其native/kernel.macho、kernel-source-build.json、logs/kernel-compile.log及source-evidence编译记录。旧最终kernel/payload/FD/镜像/boot日志保留，未启动混合候选。已登记 `out/p21/p21-warbler/logs/SOURCE-BUILD-PROVENANCE-NOTICE-20261105T153209Z.json` 并把新产物迁到唯一新目录；不能再引用被替换native/build记录为历史证明。之后使用set-e和唯一候选。
+- 两轮返回均预置BCB；没有持久mark/smc/guard firing，返回事实不能证明特定自动复位路径。现场屏幕/主动触摸没观察；有限窗口不能保证所有早期panic/丢失内容。
+- runtime下一关键问题是 **halt之后出现的GPU busy汇总与core-power transition的交互**，不是AIR编译器。对照适用vendor halt/power模型，保持busy真实清零、失败资源持有和观测通道；不能重复延时试验、写活动CP电源或宽松mask。
+- Metal继续从已经可运行的native540编译产物适配shader-aware binding/pipeline admission、真实21H461私有device/library/queue接口；先受控compute/fence/readback，再VS/FS→IOSurface，最后系统合成。不能把本轮编译成功或NOP/fence当Metaldevice完成。
+- Turnip A540原则上可做，但属A5xx Vulkan新后端加Darwin KMD，非chip-ID改动；熟悉GPU/Vulkan的全职个人粗估2–6个月有限compute/三角形、6–18+个月可用Vulkan1.2子集、12–24+个月广泛正确性/一致性；学习者通常按年计，非工期承诺，且成功后仍需Metal私有ABI/IOSurface。当前sagit直接路线更短。
+- 本轮保留所有原launchd-cache未跟踪内容，未Git commit或push；源码/文档改动待用户明确要求提交。
+
+## 2026-11-05：P21-Wagtail 单次实机完成；GPU 停在 core drain，shader 未执行，CPU 显示继续
+
+### 授权、启动与回收
+
+- 用户明确同意本轮设置并回读 misc Recovery command 后临时启动，要求后续不再询问；该授权不扩大为刷 boot/recovery/固件/GPT 或循环启动。继续按原请求仅做一轮验证和分析，未改运行时代码。
+- 设备 `3b25cc7c` root Recovery、唯一 ADB `tcp:localhost:5037`。先确认上一日志头仍是控制 boot `0x42238bf5`，其完整窗口已回收；无旧监视器/Fastboot/构建争用。
+- 已授权 misc `/dev/block/sda4` 首 4 KiB 读改写：仅更新前 32 B command 为 `boot-recovery\0`，其他字节逐字节保留，sync 后回读完全相同。前块哈希 `ad7facb2…`，写后 `8698abf4…`；实际返回后只读检查为全零 command（Recovery 已消费）。未写其他分区。
+- 镜像 `out/p21/p21-wagtail/uefi/boot-p21-up1-repack-20261105T140243Z.img`，SHA-256 `c7387f79732fd49c6af7848fca83f86d207cf8e15f033f3dbc4b84c7b3073126`，与标准 Wagtail 相同；新 gate `gate-20261105T144409Z.json` PASS。内核 `f8ab89ca…`，源码 HEAD `e635ebd`（另有本会话交接修改）。
+- **仅一次 fastboot boot**：2026-11-05T14:44:48.103Z，Sending/Booting OKAY，14:45:00.127Z 返回命令。14:48:52.265Z 首次观测 Recovery，距命令开始 **244.2 s**；主机未帮助重启或切 Recovery，观察器已在日志回收后退出。
+- 新日志 `out/p21/persistent-logs/20261105T144853Z/`，**boot `0x3de7e608`**，窗口 SHA-256 `c535e9bee248e88b872113d56263fe728a3d98dbc6e09ef56bc873b6b59895c1`，35 rounds、0 写错，与旧控制日志的 boot ID/哈希均不同。
+- 已预置 BCB；虽观测到自行返回，持久记录未捕获 reset mark/smc 或 guard firing，**不能确认是哪条复位路径执行，也不能据此证明异常路径均能独立恢复**。没有现场屏幕或主动触摸观察。
+
+### 第一处新 GPU 失败（已确认）
+
+- 原日志 `decoded/cheeseburger-P21-3de7e608/msgbuf.txt`：441 行真实 args **731 B**（payload args 697 B + 运行期池参数）；compute 开关被解析并进入本轮路径，不能凭长度断言其余参数被截断。
+- 469–499 行：ZAP auth 成功，startup fence/keepalive、2D clear/copy、高地址 CP/BO、2040-run bigbo 均执行；clear、两目标 copy、highpa、bigbo 回读 **4/4**。DPU 仍 `tables=0`，低位显示表页/8 MiB 连续帧旧阻塞没有解决。
+- **508 行，106.314850 s：`CB GPU core: resume rc=-4 rb=1/0 sp=1/0`**；509 行 compute exit=-4。对应 `CheeseburgerGpuCp.cpp:333–335` 的 `drainForTables` 失败，置 `gEngineSubmitFailed` 并 quarantine。
+- 本轮失败在 339–340 行域命令写入之前：**没有执行 core 域恢复写、恢复后 fence、七个 shader variants 或 SSBO/scan-band dispatch**，不能评价 shader 编码是否工作。
+- 510 行后续 live ME/VBIF=`f0f/f000f` 支持 halt 已发出，排除直接停在初始控制检查；无法区分 halt 确认读无效/超时、最终 idle/Status3 或游标检查。现有日志没有保留那一瞬间的失败分支和寄存器。
+- 最后一次 bigbo 提交前 status=`c0000101`，其中 `0x40000000` 不在当前 idle mask 中，可作为候选解释；**这不是提交后/halt 后实时状态，不能当确定根因**。511 行 `st=800001c1 st3=0` 是旧 reset Record，不能替代 drain 读数。
+
+### 回归与诊断缺陷
+
+- GPU user open=0、refused=2、sub/fence=0；后续 `CB GPU surf: engine not ready` / surface paint `rc=-2`。这是 drain 失败后隔离引擎的连锁结果，不是独立的用户态发现根因。
+- CPU framebuffer 继续：DISPLAY clients=31、frames=7，SWAP check=8/reject=0/transfer=7。8 CPUs online，Data err=0；TOUCH stage=4/error=0、HID 有发送，但 contacts=0，未做本轮手指输入验证。
+- **`CORE … rc=0 fence=0/0` 不能当成功**：`native_adreno_resume[0]` 零初始化但没有赋实际返回值，BootLog 仍读取它；post/fence 字段本轮未采样/未执行，`1>0` 不是测到域从 1 变 0。以原 msgbuf 的 `resume rc=-4` 为准。
+- 域写路径的 `IODelay(3)` 实际为 **3 微秒**，旧文档写“各 3 ms”不符；本轮未走到该代码，不能归因此次失败。sagit `enableCoreBlocks` 会轮询各域 bit20，本机延时/恢复后采样并非逐字相同。PAS 导致域重置的因果仍需按实际实现/受控采样验证，不把旧交接解释当本轮证明。
+
+### 证据与后续接手
+
+- 本轮回执、BCB 原块/回读、唯一启动命令、观察器、回收输出与 `analysis.json`：`out/p21/p21-wagtail/logs/boot-once-20261105T144408Z/`。
+- 设备证据冻结：`out/p21/gpu-cp/rounds/20261105T145112Z-p21-wagtail-device-drain-fail/`，含本轮 gate、同哈希标准镜像、boot/monitor/retrieval；旧未启动冻结与重打包冻结全部保留。
+- **设备当前仍在 root Recovery，观察/回收进程已结束，未重复启动，未回滚源码。** 保留三项原有未跟踪 launchd-cache 文件；本次只更新 HANDOFF 与 out 证据，未提交 Git。
+- 如后续明确要求修复：先对照官方/sagit 的 idle/drain 实现，修正 CORE 返回值与未执行字段表达，保留准确 drain 失败阶段/实测寄存器；先用宿主模型验证安全退出。不能仅扩大 idle mask、追加域写或复位来制造通过，不能根据旧 reset 快照猜根因。重新编译/打包的设备测试属于下一轮，当前一轮已完成。
+
+## 2026-11-05：P21-Wagtail 独立重打包与新门禁 PASS；启动受 BCB 逐次授权阻塞（未启动）
+
+- 本次用户要求重读交接、先打包并临时启动一轮。已读根 AGENTS、最新交接及两份 P21 构建指南、20261103 GPU 开发交接；旧指南的候选/分支仅作历史参考。本轮使用当前 `p21-wagtail`，源码 HEAD `e635ebd`。
+- 实际本机编译树的 BootLog、GpuCp、GpuService、Compute540、Quiesce 与 NAS 当前源码哈希一致；native/prelink/最终内核、payload、FD、DTB、Data seed 均与 Wagtail 构建记录一致。本次没有重编内核或固件，也没有改参数、Data seed 或固件池。
+- 使用现有 mkbootimg 参数输出独立镜像，未运行会覆盖旧产物的候选 pack.py：
+  `out/p21/p21-wagtail/uefi/boot-p21-up1-repack-20261105T140243Z.img`，82,800,640 B，SHA-256 `c7387f79732fd49c6af7848fca83f86d207cf8e15f033f3dbc4b84c7b3073126`，与标准成品完全相同。
+- 新门禁 `out/p21/p21-wagtail/gate-20261105T140258Z.json` PASS，args=697 B；从实际 kernel.gz-dtb 解压核对 FD/DTB 相同。门禁的固件 pin 依据仍是原构建 FV/EFI 扫描记录，本次未重扫 VM 模块；直接在压缩 FD 内搜索三个裸哈希未命中，不作为固件不匹配结论。
+- 20261105T140243Z 只读核对设备：`3b25cc7c`、root Recovery、OnePlus5/cheeseburger；仅有 ADB `tcp:localhost:5037`，未发现 Fastboot/构建/日志监视器争用。
+- misc 已确认 `/dev/block/sda4`，1,048,576 B，UFS 逻辑块 4096 B；首 4 KiB 只读回收为全零，SHA-256 `ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7`，command 为空，**不是 boot-recovery**。
+- Wagtail 交接要求 misc command 每轮单独授权、回读成功后才能启动。本轮临时启动请求未单独授权该写入，因此 **misc 未写、未 adb reboot、fastboot boot 次数为 0、未启动新日志读取或监视器**。设备仍在 Recovery；没有当前 shader/CORE/显示回归运行结果。
+- 私有回执及只读 BCB 原块：`out/p21/p21-wagtail/logs/repack-preboot-20261105T140243Z/`。
+- 新冻结：`out/p21/gpu-cp/rounds/20261105T140339Z-p21-wagtail-repack-bcb-blocked/`，保存标准同哈希镜像及本轮 gate，无 boot/retrieval 引用。上一轮日志仍为 `out/p21/persistent-logs/20261105T130600Z/`、控制 boot `0x42238bf5`，不能归给 Wagtail。
+- 继续的必要输入：用户明确授权本轮仅更新已核对的 misc `boot-recovery` 命令字段，保留其余字节、同步并回读；之后重核设备/镜像/gate，再只启动一次本镜像，按下方 Wagtail 字段回收分析。不得自动重复启动、刷 boot/recovery/GPT 或回滚功能。
+- 保留三项原有未跟踪 launchd-cache 文件；本次只更新本交接与 out 下证据，未改代码。用户未要求 Git 提交，本次未执行提交。
+
 ## 2026-11-05：P21-Wagtail（构建完成、**未启动**；SP 域恢复 + A540 shader 执行路径）
 
 > 用户在本轮启动前要求停止设备操作并交接给下一位 agent。**本轮没有 fastboot，

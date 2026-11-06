@@ -19,6 +19,15 @@
 #include <dispatch/dispatch.h>
 #include <atomic>
 #include "NativeAdrenoABI.h"
+#include "NativeMetal540Probe.h"
+#include "NativeMetal540RuntimeABI.h"
+#include "NativeMetal540Transform.h"
+#include "NativeMetal540AIRProbe.h"
+#include "NativeMetal540OwnedRun.h"
+#include "NativeMetal540GraphicsOwnedRun.h"
+#include "NativeMetal540Render.h"
+#include "NativeMetal540RenderAIRProbe.h"
+#include "NativeMetal540Surface.h"
 
 namespace {
 constexpr uint32_t kOpenType = 0x4147;
@@ -176,26 +185,15 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
         note("noopen e%x", (unsigned)c.error);
         return nil;
     }
-    // Release everything on every path: a leaked connection and its BOs kept
-    // the SMMU mappings alive and stressed the client teardown.
+    // All mapped resources survive every failure through connection close.
+    // Retirement/quarantine is owned by the existing engine, not this worker.
     NativeAdrenoAbiBoAllocReply ib = {}, tgt = {};
     uint32_t ibTok = 0, tgtTok = 0;
     mach_vm_address_t ibAddr = 0, tgtAddr = 0;
     struct Guard {
         Ctx &c;
-        NativeAdrenoAbiBoAllocReply &ib, &tgt;
-        uint32_t &ibTok, &tgtTok;
-        mach_vm_address_t &ibAddr, &tgtAddr;
-        ~Guard() {
-            if (ibAddr && ibTok) IOConnectUnmapMemory64(c.conn, ibTok, mach_task_self(), ibAddr);
-            if (tgtAddr && tgtTok) IOConnectUnmapMemory64(c.conn, tgtTok, mach_task_self(), tgtAddr);
-            if (ibTok) { NativeAdrenoAbiBoCpuUnmap u = {ib.handle, ibTok, 0}; call(c, NativeAdrenoMethodBoCpuUnmap, &u, (NativeAdrenoAbiTimestamp *)nullptr); }
-            if (tgtTok) { NativeAdrenoAbiBoCpuUnmap u = {tgt.handle, tgtTok, 0}; call(c, NativeAdrenoMethodBoCpuUnmap, &u, (NativeAdrenoAbiTimestamp *)nullptr); }
-            if (ib.handle) { NativeAdrenoAbiBoFree f = {ib.handle}; call(c, NativeAdrenoMethodBoFree, &f, (NativeAdrenoAbiTimestamp *)nullptr); }
-            if (tgt.handle) { NativeAdrenoAbiBoFree f = {tgt.handle}; call(c, NativeAdrenoMethodBoFree, &f, (NativeAdrenoAbiTimestamp *)nullptr); }
-            if (c.conn) IOServiceClose(c.conn);
-        }
-    } guard{c, ib, tgt, ibTok, tgtTok, ibAddr, tgtAddr};
+        ~Guard() { if (c.conn) IOServiceClose(c.conn); }
+    } guard{c};
     NativeAdrenoAbiParams params = {};
     if (!checked(c, callOut(c, NativeAdrenoMethodQuery, &params), "query")) return nil;
     marker(port, 4);
@@ -272,7 +270,193 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
     line("P21PLUGIN stage=idle verified=%d", verified);
     note("done verified=%d", verified);
     marker(port, 7);
-    // Stage 1: no device is returned, so backboardd keeps the software renderer.
+    if (verified != 4) return nil; // Preserve P1 as the prerequisite regression.
+    char abiRows[16][64]={};unsigned abiCount=NativeMetal540CaptureABI(abiRows,16);
+    for(unsigned i=0;i<abiCount;++i){
+        note("%s",abiRows[i]);
+        NativeAdrenoAbiMetadata meta={};meta.handle=i+1;meta.bytes=(uint32_t)strlen(abiRows[i]);
+        memcpy(meta.text,abiRows[i],meta.bytes);
+        IOConnectCallStructMethod(c.conn,NativeAdrenoMethodSetMetadata,&meta,sizeof meta,nullptr,nullptr);
+    }
+    struct ProbeContext { Ctx *client; unsigned port; } pc{&c, port};
+    NativeMetal540Probe::Transport transport;
+    transport.context = &pc;
+    transport.call = [](void *opaque, uint32_t method, const void *in, size_t bytes,
+                        void *out, size_t *size) -> int {
+        auto &p = *static_cast<ProbeContext *>(opaque);
+        return (int)IOConnectCallStructMethod(p.client->conn, method, in, bytes, out, size);
+    };
+    transport.mapView = [](void *opaque, uint32_t token, uint64_t &address, uint64_t &bytes) -> int {
+        auto &p = *static_cast<ProbeContext *>(opaque);
+        mach_vm_address_t va = 0; mach_vm_size_t length = 0;
+        kern_return_t kr = IOConnectMapMemory64(p.client->conn, token, mach_task_self(),
+            &va, &length, kIOMapAnywhere);
+        address = va; bytes = length;
+        return (int)kr;
+    };
+    transport.order = [](void *, bool) { __asm__ volatile("dsb sy" ::: "memory"); };
+    transport.record = [](void *opaque, const NativeMetal540Probe::Record &r) {
+        auto &p = *static_cast<ProbeContext *>(opaque);
+        marker(p.port, 0x5400u + (unsigned)r.stage);
+        line("P540 GLSL430/A5xx s%u r%u e%x f%llu v%u g%u", (unsigned)r.stage,
+            r.resource, (unsigned)r.error, (unsigned long long)r.fence, r.verified, r.guardVerified);
+        note("P540 GLSL430/A5xx NOT-Metalcompiler s%u r%u e%x h%llx va%llx f%llu v%u g%u",
+            (unsigned)r.stage, r.resource, (unsigned)r.error, (unsigned long long)r.handle,
+            (unsigned long long)r.iova, (unsigned long long)r.fence, r.verified, r.guardVerified);
+        note("P540 cpu=inhibit gpu=noncache ownership=connection bytes=%llu isa=%u ib=%u out=%x scratch=%x",
+            (unsigned long long)r.cpuBytes, r.codeWords, r.ibWords, r.observed, r.scratch);
+        if(r.stage==NativeMetal540Probe::Readback){
+            line("P540STATE ctrl=%x cfg=%x hcfg=%x hcnt=%x obj=%x ids=%x grid=%x addr=%x",
+                r.state[0],r.state[1],r.state[2],r.state[3],r.state[4],r.state[5],r.state[6],r.state[7]);
+            NativeAdrenoAbiMetadata sampleMeta={};sampleMeta.handle=r.handle?r.handle:1;
+            char sampleText[64]={};snprintf(sampleText,sizeof sampleText,"PX %x/%x/%x/%x",r.samples[0],r.samples[1],r.samples[2],r.samples[3]);
+            sampleMeta.bytes=(uint32_t)strlen(sampleText);memcpy(sampleMeta.text,sampleText,sampleMeta.bytes);
+            IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&sampleMeta,sizeof sampleMeta,nullptr,nullptr);
+            NativeAdrenoAbiMetadata stateMeta={};stateMeta.handle=r.handle?r.handle:1;
+            char stateText[64]={};snprintf(stateText,sizeof stateText,"PS %x/%x/%x/%x/%x/%x/%x/%x",
+                r.state[0],r.state[1],r.state[2],r.state[3],r.state[4],r.state[5],r.state[6],r.state[7]);
+            stateMeta.bytes=(uint32_t)strlen(stateText);memcpy(stateMeta.text,stateText,stateMeta.bytes);
+            IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&stateMeta,sizeof stateMeta,nullptr,nullptr);
+        }
+        NativeAdrenoAbiMetadata meta = {};
+        meta.handle = r.handle ? r.handle : 1;
+        char text[64] = {};
+        snprintf(text, sizeof text, "P540 GLSL430/A5xx s%u r%u e%x f%llx v%u g%u",
+            (unsigned)r.stage, r.resource, (unsigned)r.error,
+            (unsigned long long)r.fence, r.verified, r.guardVerified);
+        meta.bytes = (uint32_t)strlen(text); memcpy(meta.text, text, meta.bytes);
+        IOConnectCallStructMethod(p.client->conn, NativeAdrenoMethodSetMetadata,
+            &meta, sizeof meta, nullptr, nullptr);
+    };
+    NativeMetal540Probe probe(transport);
+    int shaderRC = probe.run();
+    note("P540 done rc=%x producer=GLSL430/A5xx no-system-Metal-device", (unsigned)shaderRC);
+    if(shaderRC)return nil;
+    NativeMetal540Transform::Transport transformTransport;
+    transformTransport.call=transport.call;transformTransport.mapView=transport.mapView;
+    transformTransport.order=transport.order;transformTransport.context=&pc;
+    transformTransport.record=[](void *opaque,const NativeMetal540Transform::Record &r){
+        auto &p=*static_cast<ProbeContext *>(opaque);
+        marker(p.port,0x5500u+(unsigned)r.stage);
+        note("T540 s%u r%u e%x f%llx in%u ig%u out%u og%u",(unsigned)r.stage,r.resource,
+            (unsigned)r.error,(unsigned long long)r.fence,r.inputVerified,r.inputGuardVerified,r.verified,r.guardVerified);
+        if(r.stage==NativeMetal540Transform::Readback){
+            const char *prefixes[]={"TX ","TI "};const uint32_t *samples[]={r.samples,r.inputSamples};
+            for(unsigned i=0;i<2;++i){
+                NativeAdrenoAbiMetadata m={};m.handle=r.handle?r.handle:1;char text[64]={};
+                snprintf(text,sizeof text,"%s%x/%x/%x/%x",prefixes[i],samples[i][0],samples[i][1],samples[i][2],samples[i][3]);
+                m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+                IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+            }
+        }
+        NativeAdrenoAbiMetadata m={};m.handle=r.handle?r.handle:1;char text[64]={};
+        snprintf(text,sizeof text,"T540 s%u e%x f%llx in%u/%u v%u g%u",(unsigned)r.stage,(unsigned)r.error,
+            (unsigned long long)r.fence,r.inputVerified,r.inputGuardVerified,r.verified,r.guardVerified);
+        m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+        IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+    };
+    NativeMetal540Transform transform(transformTransport);
+    int transformRC=transform.run();
+    note("T540 done rc=%x producer=GLSL430 dual-SSBO",(unsigned)transformRC);
+    if(transformRC)return nil;
+    NativeMetal540AIRProbe::Transport airTransport;
+    airTransport.call=transport.call;airTransport.mapView=transport.mapView;airTransport.order=transport.order;airTransport.context=&pc;
+    airTransport.record=[](void *opaque,const NativeMetal540AIRProbe::Record &r){
+        auto &p=*static_cast<ProbeContext *>(opaque);marker(p.port,0x5600u+(unsigned)r.stage);
+        note("A540 AIR padding s%u e%x f%llx src%u/%u params%u/%u out%u/%u",(unsigned)r.stage,(unsigned)r.error,
+            (unsigned long long)r.fence,r.inputVerified,r.inputGuardVerified,r.paramVerified,r.paramGuardVerified,r.verified,r.guardVerified);
+        if(r.stage==NativeMetal540AIRProbe::Readback){
+            const char *prefixes[]={"AX ","AI "};const uint32_t *samples[]={r.samples,r.inputSamples};
+            for(unsigned i=0;i<2;++i){
+                NativeAdrenoAbiMetadata m={};m.handle=r.handle?r.handle:1;char text[64]={};
+                snprintf(text,sizeof text,"%s%x/%x/%x/%x",prefixes[i],samples[i][0],samples[i][1],samples[i][2],samples[i][3]);
+                m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+                IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+            }
+        }
+        NativeAdrenoAbiMetadata m={};m.handle=r.handle?r.handle:1;char text[64]={};
+        snprintf(text,sizeof text,"A540 s%u e%x f%llx i%u/%u p%u/%u v%u g%u",(unsigned)r.stage,(unsigned)r.error,
+            (unsigned long long)r.fence,r.inputVerified,r.inputGuardVerified,r.paramVerified,r.paramGuardVerified,r.verified,r.guardVerified);
+        m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+        IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+    };
+    NativeMetal540AIRProbe air(airTransport);int airRC=air.run();
+    note("A540 done rc=%x entry=padding_gradient AIR-NIR-A540",(unsigned)airRC);
+    if(airRC)return nil;
+    NativeMetal540Render::Transport renderTransport;
+    renderTransport.call=transport.call;renderTransport.mapView=transport.mapView;renderTransport.order=transport.order;renderTransport.context=&pc;
+    renderTransport.record=[](void *opaque,const NativeMetal540Render::Record &r){
+        auto &p=*static_cast<ProbeContext *>(opaque);marker(p.port,0x5700u+(unsigned)r.stage);
+        note("R540 s%u e%x f%llx vs%u fs%u ib%u center%x corner%x bad%u",(unsigned)r.stage,(unsigned)r.error,
+            (unsigned long long)r.fence,r.vsWords,r.fsWords,r.ibWords,r.pixels.center,r.pixels.corner,r.pixels.mismatches);
+        NativeAdrenoAbiMetadata m={};m.handle=r.handle?r.handle:1;char text[64]={};
+        snprintf(text,sizeof text,"R540 s%u e%x f%llx px%x/%x bad%u",(unsigned)r.stage,(unsigned)r.error,
+            (unsigned long long)r.fence,r.pixels.center,r.pixels.corner,r.pixels.mismatches);
+        m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+        IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+        if(r.stage==NativeMetal540Render::Readback||r.stage==NativeMetal540Render::Complete){
+            snprintf(text,sizeof text,"RP in%u out%u edge%u ts%u/%u/%u",r.pixels.inside,r.pixels.outside,r.pixels.uncheckedEdge,
+                r.clearTimestamp,r.colorTimestamp,r.ucheTimestamp);m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+            IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+        }
+    };
+    NativeMetal540Render render(renderTransport);int renderRC=render.run(true);
+    note("R540 triangle rc=%x no-system-Metal-device",(unsigned)renderRC);
+    if(renderRC)return nil;
+    NativeMetal540RenderAIRProbe::Transport graphics{};
+    graphics.call=transport.call;graphics.mapView=transport.mapView;graphics.order=transport.order;graphics.context=&pc;
+    graphics.record=[](void *opaque,const NativeMetal540RenderAIRProbe::Record &r){
+        auto &p=*static_cast<ProbeContext *>(opaque);NativeAdrenoAbiMetadata m={};m.handle=1;
+        char text[64]={};snprintf(text,sizeof text,"RA s%u e%x f%llx px%x/%x bad%u",(unsigned)r.stage,(unsigned)r.error,
+            (unsigned long long)r.fence,r.pixels.center,r.pixels.corner,r.pixels.mismatches);
+        m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+        IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+        snprintf(text,sizeof text,"RI v%u/%u c%u/%u ts%u/%u/%u",r.inputVerified,r.inputGuardVerified,
+            r.colorVerified,r.colorGuardVerified,r.clearTimestamp,r.colorTimestamp,r.ucheTimestamp);
+        m.bytes=(uint32_t)strlen(text);memcpy(m.text,text,m.bytes);
+        IOConnectCallStructMethod(p.client->conn,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);
+    };
+    NativeMetal540RenderAIRProbe graphicsProbe(graphics);int graphicsRC=graphicsProbe.run(true);
+    note("RA real SpriteKit AIR graphics rc=%x no-system-device",(unsigned)graphicsRC);
+    if(graphicsRC)return nil;
+    IOServiceClose(c.conn);c.conn=0;
+    int ownedRC=NativeMetal540RunOwnedObjects(port);
+    note("M540 owned public-selector chain rc=%x no-system-device",(unsigned)ownedRC);
+    if(ownedRC)return nil;
+    int graphicsOwnedRC=NativeMetal540RunOwnedGraphics(port);
+    note("RG owned graphics object chain rc=%x no-system-device",(unsigned)graphicsOwnedRC);
+    if(graphicsOwnedRC)return nil;
+    int surfaceInit=0;
+    auto sink=[](void *,const NativeMetal540Surface::Record &r){
+        io_connect_t metadata=r.connection;
+        if(!metadata)return;
+        auto send=[&](const char *text){NativeAdrenoAbiMetadata m={};m.handle=1;m.bytes=(uint32_t)strnlen(text,63);memcpy(m.text,text,m.bytes);
+            IOConnectCallStructMethod(metadata,NativeAdrenoMethodSetMetadata,&m,sizeof m,nullptr,nullptr);};
+        char text[64]={};
+        snprintf(text,sizeof text,"SF540 s%u e%x f%llx px%x/%x bad%u",(unsigned)r.stage,(unsigned)r.error,
+            (unsigned long long)r.fence,r.pixels.center,r.pixels.corner,r.pixels.mismatches);send(text);
+        snprintf(text,sizeof text,"SP in%u out%u edge%u ts%u/%u/%u c%u",r.pixels.inside,r.pixels.outside,r.pixels.uncheckedEdge,
+            r.clearTimestamp,r.colorTimestamp,r.ucheTimestamp,(unsigned)r.cachephase);send(text);
+        snprintf(text,sizeof text,"SI id%u b%llx n%llu p%llu hold%u",r.surface.surfaceID,(unsigned long long)r.surface.base,
+            (unsigned long long)r.surface.allocation,(unsigned long long)r.surface.pitch,(unsigned)r.surfaceHeld);send(text);
+        if(r.retirement.attempted){
+            unsigned freed=0,unmapped=0;
+            for(unsigned i=0;i<r.retirement.count;++i){freed+=r.retirement.bos[i].freeAck;unmapped+=r.retirement.bos[i].viewUnmapped;}
+            snprintf(text,sizeof text,"SR s%u e%x raw%x free%u map%u proof%u",(unsigned)r.retirement.stage,
+                (unsigned)r.retirement.error,(unsigned)r.retirement.rawrc,freed,unmapped,(unsigned)r.retirement.proof);send(text);
+        }
+        if(r.error){snprintf(text,sizeof text,"SE s%u e%x raw%x lock%u",(unsigned)r.stage,(unsigned)r.error,(unsigned)r.rawrc,(unsigned)r.lock);send(text);}
+    };
+    NSObject *surfaceOwner=[NSObject new];
+    Native540SurfaceSession *surface=[[Native540SurfaceSession alloc] initWithService:port record:sink
+        context:(void *)(uintptr_t)port owner:surfaceOwner error:&surfaceInit];
+    if(!surface){note("SF540 init rc=%x",(unsigned)surfaceInit);return nil;}
+    int surfaceRC=[surface runWithPrerequisites:YES];
+    note("SF540 private IOSurface rc=%x",(unsigned)surfaceRC);
+    int retirement=[surface retire];
+    note("SF540 explicit retirement=%x confirmed=%u no-system-presentation",(unsigned)retirement,
+        (unsigned)[surface result].retirementConfirmed);
+    // These controlled workloads do not publish a system Metal device.
     return nil;
 }
 @end

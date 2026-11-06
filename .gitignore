@@ -10,3 +10,7 @@ backups/
 
 # Independent upstream checkout; fetch separately, do not record an implicit gitlink.
 /upstream/IOStorageFamily/
+
+# Offline compiler receipts, private inputs and generated binaries stay local.
+# The one immutable AIR fixture header is explicitly tracked for compilation.
+/tools/gpu-native540/evidence/

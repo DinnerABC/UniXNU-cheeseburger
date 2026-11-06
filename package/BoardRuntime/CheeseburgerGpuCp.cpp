@@ -27,6 +27,7 @@ static const unsigned gpu_firmware_size=0;
 #include "CheeseburgerGpuBlit540.h"
 #include "CheeseburgerGpuCompute540.h"
 #include "CheeseburgerGpuMapRange.h"
+#include "CheeseburgerGpuDiagnostics.h"
 extern "C" {
 volatile uint64_t cb_cp[128];
 extern volatile uint64_t cb_smmu[24];
@@ -91,6 +92,8 @@ volatile uint32_t native_adreno_cprobe[24];
 // Core-domain transition: rc, RBCCU/SP status before, the same after, and the
 // keep-alive fence result (rc | stage<<8) that proves the CP survived it.
 volatile uint32_t native_adreno_resume[6];
+volatile CheeseburgerCoreRecord native_adreno_core_record={};
+volatile CheeseburgerDrainRecord native_adreno_drain_record={};
 // 2D GPU->GPU copy (sagit snapshot2D): rc, seq, words, four samples from the
 // same-pitch target, four from the 1088-pitch target, both match counts and
 // the two destination pitches.
@@ -309,43 +312,66 @@ static int flipPreallocate(void){
 static uint64_t gRingGva=0,gFenceGva=0;
 static uint32_t gRingWords=0,gFenceSeq=0;
 static IOLock *gSubmitLock=nullptr;
-// sagit Engine::idlePowerTransition. The PAS authenticate step that follows
-// CP_ME_INIT resets the RBCCU/SP core domains (P21-Lapwing:
-// rbccu=778801/1 sp=778001/1), and a compute or vertex/fragment shader cannot
-// execute while SP is down. The power-up command may only be written with the
-// CP stopped, so this reuses the halt/drain/resume that every SMMU table update
-// already runs on this board: halt CP and VBIF, prove the ring is empty and the
-// pipeline idle, write both domains, resume the same cursor, and read the GPMU
-// status only after the CP is live. No register read is issued while the AXI is
-// halted. A failed transition quarantines the engine and submits nothing.
+// Domain commands require a stopped CP. The retained ring and DMA allocations
+// must not be released or resumed after an unproven drain. GPMU status reads
+// remain outside the CP/VBIF halted window on this board.
+static uint64_t diagnosticTicks(){uint64_t t;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(t));return t;}
+static void recordDrain(const CheeseburgerGpu::DrainState &s){
+ if(native_adreno_drain_record.reason)return;
+ native_adreno_drain_record.valid=0;
+ native_adreno_drain_record.stage=s.stage;native_adreno_drain_record.reason=s.reason;
+ native_adreno_drain_record.rptr=s.rptr;native_adreno_drain_record.wptr=s.wptr;
+ native_adreno_drain_record.me=s.me;native_adreno_drain_record.vbif=s.vbif;
+ native_adreno_drain_record.mask=s.mask;native_adreno_drain_record.ackme=s.ackme;
+ native_adreno_drain_record.ackvb=s.ackvb;native_adreno_drain_record.status=s.status;
+ native_adreno_drain_record.status3=s.status3;native_adreno_drain_record.endr=s.endr;
+ native_adreno_drain_record.endw=s.endw;native_adreno_drain_record.wait=s.wait;
+ native_adreno_drain_record.preStatus=s.preStatus;native_adreno_drain_record.preStatus3=s.preStatus3;
+ native_adreno_drain_record.cpStatus=s.cpStatus;native_adreno_drain_record.cpStatus3=s.cpStatus3;
+ native_adreno_drain_record.cpMe=s.cpMe;native_adreno_drain_record.cpRead=s.cpRead;
+ native_adreno_drain_record.cpWrite=s.cpWrite;native_adreno_drain_record.cpValid=s.cpValid;
+ native_adreno_drain_record.sample=diagnosticTicks();
+ __atomic_store_n(&native_adreno_drain_record.valid,s.valid,__ATOMIC_RELEASE);
+}
+static int recordCoreResult(int rc){
+ native_adreno_resume[0]=uint32_t(rc);native_adreno_core_record.rc=rc;
+ native_adreno_core_record.sample=diagnosticTicks();
+ __atomic_fetch_or(&native_adreno_core_record.valid,CoreResultValid,__ATOMIC_RELEASE);
+ return rc;
+}
 static int resumeCoreDomains(){
- if(!gMmio||!gMmio->v||!gSubmitLock||!gEngine540||!gFence)return -1;
+ if(!gMmio||!gMmio->v||!gSubmitLock||!gEngine540||!gFence)return recordCoreResult(-1);
  W gp;gp.v=gMmio->v;
  IOLockLock(gSubmitLock);
  if(gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||!gEngine540->ready()){
-  IOLockUnlock(gSubmitLock);return -2;
+  IOLockUnlock(gSubmitLock);return recordCoreResult(-2);
  }
  uint64_t pre[6]={0};powerCore(gp,pre,false);
  native_adreno_resume[1]=uint32_t(pre[1]);native_adreno_resume[2]=uint32_t(pre[3]);
- if(pre[1]==0xffffffffu||pre[3]==0xffffffffu){IOLockUnlock(gSubmitLock);return -3;}
- if((pre[4]&(1u<<20))&&(pre[5]&(1u<<20))){IOLockUnlock(gSubmitLock);return 0;}
+ native_adreno_core_record.rbpre=uint32_t(pre[4]);native_adreno_core_record.sppre=uint32_t(pre[5]);
+ native_adreno_core_record.valid=CoreSampleBefore;
+ if(pre[1]==0xffffffffu||pre[3]==0xffffffffu){IOLockUnlock(gSubmitLock);return recordCoreResult(-3);}
+ if((pre[4]&(1u<<20))&&(pre[5]&(1u<<20))){IOLockUnlock(gSubmitLock);return recordCoreResult(0);}
  CheeseburgerGpu::DrainState drain;
  if(!CheeseburgerGpu::drainForTables(*gMmio,true,drain)){
-  gEngineSubmitFailed=true;gEngine540->quarantine();
-  IOLockUnlock(gSubmitLock);return -4;
+  recordDrain(drain);gEngineSubmitFailed=true;gEngine540->quarantine();
+  IOLockUnlock(gSubmitLock);return recordCoreResult(-4);
  }
- // Posted writes only: the halt left AXI quiesced, so the command must not wait
- // on a trailing barrier here; resumeAfterTables' publish orders them.
+ recordDrain(drain);
  if(!(pre[4]&(1u<<20))){gMmio->writePosted(0xa887*4,0x778000);IODelay(3);}
  if(!(pre[5]&(1u<<20))){gMmio->writePosted(0xa881*4,0x778000);IODelay(3);}
  if(!CheeseburgerGpu::resumeAfterTables(*gMmio,drain)){
-  gEngineSubmitFailed=true;gEngine540->quarantine();
-  IOLockUnlock(gSubmitLock);return -5;
+  recordDrain(drain);gEngineSubmitFailed=true;gEngine540->quarantine();
+  IOLockUnlock(gSubmitLock);return recordCoreResult(-5);
  }
- IOLockUnlock(gSubmitLock);
+ recordDrain(drain);
  uint64_t post[6]={0};powerCore(gp,post,false);
  native_adreno_resume[3]=uint32_t(post[4]);native_adreno_resume[4]=uint32_t(post[5]);
- return ((post[4]&(1u<<20))&&(post[5]&(1u<<20)))?1:-6;
+ native_adreno_core_record.rbpost=uint32_t(post[4]);native_adreno_core_record.sppost=uint32_t(post[5]);
+ native_adreno_core_record.valid|=CoreSampleAfter;
+ const int rc=((post[4]&(1u<<20))&&(post[5]&(1u<<20)))?1:-6;
+ if(rc<0){gEngineSubmitFailed=true;gEngine540->quarantine();}
+ IOLockUnlock(gSubmitLock);return recordCoreResult(rc);
 }
 static void captureGpuFaults(Mmio &m){
  cb_cp[50]=m.read(CheeseburgerGpu::CPHwFault);
@@ -535,6 +561,15 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    uint32_t(cb_cp[48]),uint32_t(cb_cp[49]));
   IOSleep(8000);
   if(rc==0){
+   // sagit recover(): reset -> mapper -> core blocks -> ME_INIT.
+   uint64_t resetPower[6]={0};powerCore(gp,resetPower,true);
+   IOLog("CB GPU power: after-reset rb=%x/%x>%x sp=%x/%x>%x spclk=%x\n",
+    uint32_t(resetPower[0]),uint32_t(resetPower[1]),uint32_t(resetPower[4]),
+    uint32_t(resetPower[2]),uint32_t(resetPower[3]),uint32_t(resetPower[5]),rd(gp,0xa880*4));
+   if(!(resetPower[4]&(1u<<20))||!(resetPower[5]&(1u<<20))){
+    engine.abandon(rec);cb_cp[38]=15;cb_cp[39]=uint64_t(int64_t(-60));
+    IOLog("CB GPU power: cold core enable failed; no ME_INIT\n");return;
+   }
    cb_cp[38]=2;
    rc=engine.start((volatile uint32_t*)ring.va,ring.bytes/4,ring.gva,pm4.gva,pfp.gva,fence.gva,rec);
    cb_cp[38]=3;cb_cp[39]=uint64_t(int32_t(rc));
@@ -559,7 +594,10 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    // sagit order: ME_INIT -> GPMU firmware upload -> ZAP. The GPMU command
    // stream is built into the gpmu buffer and must complete before the CP
    // fetches the first indirect buffer.
-   bool gok=engine.gpmu(gpmu.gva,fw.gpmuWords(),800000,257000000,rec);
+   unsigned powerCollapse=1;PE_parse_boot_argn("cheeseburger-gpu-pc",&powerCollapse,sizeof powerCollapse);
+   bool gok=engine.gpmu(gpmu.gva,fw.gpmuWords(),800000,257000000,rec,powerCollapse!=0);
+   if(gok)IOLog("CB GPU power: collapse=%u inter=%x rb=%x sp=%x\n",powerCollapse,
+    rd(gp,0xa892*4),rd(gp,0xa88d*4),rd(gp,0xa88b*4));
    cb_cp[94]=gok?1:0;
    if(!gok){
     cb_cp[38]=11;cb_cp[39]=uint64_t(int32_t(rec.rc));
@@ -577,6 +615,9 @@ extern "C" void cheeseburger_gpu_cp_probe(void){
    // only then submit CP_SET_SECURE_MODE; running the PAS chain before the
    // reset left the engine unable to fetch. Authentication still gates every
    // user submission: if it fails here we halt and abandon the engine.
+   {uint64_t gpmuPower[6]={0};powerCore(gp,gpmuPower,false);
+    IOLog("CB GPU power: pre-zap rb=%x/%x sp=%x/%x spclk=%x\n",
+     uint32_t(gpmuPower[0]),uint32_t(gpmuPower[1]),uint32_t(gpmuPower[2]),uint32_t(gpmuPower[3]),rd(gp,0xa880*4));}
    int zrc=cheeseburger_gpu_zap_load(gp.v);
    cb_cp[82]=uint64_t(int32_t(zrc));
    if(zrc){
@@ -1718,7 +1759,7 @@ static uint32_t computeReadPixel(uint32_t bandPa,uint32_t pitch,uint32_t x,uint3
 }
 static int computeKickVariant(const uint32_t *code,uint64_t shaderVA,uint64_t bufferVA,
  uint32_t bufferBytes,uint32_t local,uint32_t groups,
- const CheeseburgerGpu::ScanBand540::Variant &variant,uint32_t &seq,uint32_t &words){
+ const CheeseburgerGpu::ScanBand540::Variant &variant,uint32_t &seq,uint32_t &words,bool direct=false){
  void *va=gComputeShaderBuf?gComputeShaderBuf->getBytesNoCopy():nullptr;
  if(!va)return -1;
  memcpy(va,code,128);
@@ -1727,19 +1768,38 @@ static int computeKickVariant(const uint32_t *code,uint64_t shaderVA,uint64_t bu
  memset(ib,0,8192);
  CheeseburgerGpu::Encoder540 e(ib,2048);
  if(!CheeseburgerGpu::ScanBand540::encodeVariant(e,shaderVA,bufferVA,bufferBytes,local,
-    groups,gClearScratchIova,variant))return -2;
+    groups,gClearScratchIova,variant,direct?code:nullptr))return -2;
+ constexpr unsigned stateCount=8;
+ static const uint32_t stateRegs[stateCount]={REG_A5XX_SP_CS_CTRL_REG0,REG_A5XX_SP_CS_CONFIG,
+  REG_A5XX_HLSQ_CS_CONFIG,REG_A5XX_HLSQ_CS_CNTL,REG_A5XX_SP_CS_OBJ_START,
+  REG_A5XX_HLSQ_CS_CNTL_0,REG_A5XX_HLSQ_CS_NDRANGE_1,REG_A5XX_SP_ADDR_MODE_CNTL};
+ const uint64_t capture=gComputeProbeIova+7ull*4096+512;
+ for(unsigned i=0;i<stateCount;++i){
+  const uint32_t readback[3]={stateRegs[i],uint32_t(capture+i*4),uint32_t((capture+i*4)>>32)};
+  if(!e.packet(0x3e,readback,3))return -3;
+ }
+ const uint32_t captureFence[4]={4u,uint32_t(gClearScratchIova),uint32_t(gClearScratchIova>>32),2};
+ if(!e.packet(0x46,captureFence,4))return -3;
  words=e.size();
- return clearKick(words,seq);
+ const int rc=clearKick(words,seq);
+ if(!rc){
+  flush_dcache((vm_offset_t)(gComputeProbeVA+7*1024+128),stateCount*4,FALSE);
+  IOLog("CB GPU state: direct=%u ctrl=%x cfg=%x hcfg=%x hcnt=%x obj=%x ids=%x grid=%x addr=%x\n",
+   unsigned(direct),gComputeProbeVA[7*1024+128],gComputeProbeVA[7*1024+129],
+   gComputeProbeVA[7*1024+130],gComputeProbeVA[7*1024+131],gComputeProbeVA[7*1024+132],
+   gComputeProbeVA[7*1024+133],gComputeProbeVA[7*1024+134],gComputeProbeVA[7*1024+135]);
+ }
+ return rc;
 }
 extern "C" int cheeseburger_gpu_compute_band_test(void){
  if(gComputeRc!=0xffff)return gComputeRc;
  gComputeRc=-1;
  if(!gEngine540||!gEngine540->ready()||gEngineSubmitFailed||cheeseburger_gpu_smmu4k_faulted()||
     !gClearIbVA||!gClearScratchIova)return gComputeRc;
- // RBCCU/SP are down after the PAS authenticate; bring them back in a proven
- // quiescent window before the first shader dispatch. The keep-alive fence
- // afterwards is the liveness proof for the transition itself.
- unsigned resume=1;PE_parse_boot_argn("cheeseburger-gpu-core-resume",&resume,sizeof resume);
+ // sagit keeps CPU domain resume opt-in; a healthy GPMU-managed engine may
+ // collapse SP/RBCCU while idle. Submission and readback establish execution.
+ unsigned resume=0;PE_parse_boot_argn("cheeseburger-gpu-core-resume",&resume,sizeof resume);
+ IOLog("CB GPU core: policy manual=%u hwcg=%x isdb=%x\n",resume,gMmio->read(0x67*4),gMmio->read(0x533*4));
  if(resume){
   const int rrc=resumeCoreDomains();
   IOLog("CB GPU core: resume rc=%d rb=%x/%x sp=%x/%x\n",rrc,
@@ -1748,7 +1808,10 @@ extern "C" int cheeseburger_gpu_compute_band_test(void){
   if(rrc<0){gComputeRc=rrc;return gComputeRc;}
   CheeseburgerGpu::SubmitRecord ka;
   const int krc=keepAliveInline(gFenceSeq+1,ka);
-  native_adreno_resume[5]=uint32_t(uint16_t(uint32_t(krc)))|(uint32_t(ka.stage&0xff)<<8);
+  native_adreno_resume[5]=uint32_t(krc);
+  native_adreno_core_record.fence_rc=krc;native_adreno_core_record.fence_stage=ka.stage;
+  native_adreno_core_record.sample=diagnosticTicks();
+  __atomic_fetch_or(&native_adreno_core_record.valid,CoreFenceValid,__ATOMIC_RELEASE);
   IOLog("CB GPU core: fence rc=%d stage=%u fr=%x\n",krc,ka.stage,ka.fence);
   if(krc){
    gEngineSubmitFailed=true;gEngine540->quarantine();gComputeRc=krc;return krc;
@@ -1818,7 +1881,7 @@ extern "C" int cheeseburger_gpu_compute_band_test(void){
  { const uint64_t probeVA=gComputeProbeIova+7ull*4096;
    uint32_t pseq=0,pwords=0;
    const int prc=computeKickVariant(CheeseburgerGpu::Probe540::Code,gComputeShaderIova,
-    probeVA,4096,64,16,CheeseburgerGpu::ScanBand540::DefaultVariant(),pseq,pwords);
+    probeVA,4096,64,1,CheeseburgerGpu::ScanBand540::DefaultVariant(),pseq,pwords,true);
    IODelay(20000);
    __asm__ volatile("dsb sy":::"memory");
    flush_dcache((vm_offset_t)(gComputeProbeVA+7*1024),64,FALSE);
@@ -1826,7 +1889,7 @@ extern "C" int cheeseburger_gpu_compute_band_test(void){
    const uint32_t p0=gComputeProbeVA[7*1024],p1=gComputeProbeVA[7*1024+1];
    native_adreno_compute[12]=uint32_t(prc);native_adreno_compute[13]=pwords;
    native_adreno_compute[14]=p0;native_adreno_compute[15]=p1;
-   IOLog("CB GPU compute: probe rc=%d seq=%u words=%u px=%x/%x\n",prc,pseq,pwords,p0,p1);
+   IOLog("CB GPU compute: probe-direct rc=%d seq=%u words=%u px=%x/%x\n",prc,pseq,pwords,p0,p1);
  }
  // The scanout band uses variant 0 and waits before reading.
  const uint32_t local=64,pixels=uint32_t(v.v_width)*ComputeRows,groups=pixels/local;

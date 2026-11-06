@@ -16,6 +16,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <kern/clock.h>
+#include <kern/cpu_data.h>
 #include <vm/memory_types.h>
 #include <sys/proc.h>
 #include <sys/kauth.h>
@@ -26,6 +27,10 @@
 #include "NativeAdrenoABI.h"
 #include "CheeseburgerGpuMapRange.h"
 #include "CheeseburgerGpuBoPolicy.h"
+#include "CheeseburgerGpuImportCache.h"
+#include "sheng/Adreno740/NativeAdrenoMemory.h"
+
+extern "C" uint64_t gPhysBase,gPhysSize;
 
 extern "C" {
 volatile uint64_t native_adreno_service_stats[20];
@@ -34,6 +39,8 @@ volatile uint64_t native_adreno_tunnel[2];
 // Submission lifetime: [0] quarantined objects, [1] retired, [2] held BOs,
 // [3] submits refused because no job slot was free.
 volatile uint64_t native_adreno_retire[4];
+volatile uint64_t native_adreno_import_stats[4];
+volatile uint64_t native_adreno_import_cache[4];
 volatile uint64_t native_adreno_client_uid=~0ull;
 char native_adreno_client_name[17];
 volatile int native_adreno_open_stage;
@@ -54,6 +61,14 @@ extern volatile uint32_t native_adreno_submit_staged;
 extern volatile uint64_t native_adreno_submit_stage_gva;
 extern "C" void proc_selfname(char *, int);
 char native_adreno_service_text[64];
+char native_adreno_state_text[64];
+char native_adreno_pixel_text[64];
+char native_adreno_metal_abi[16][64];
+char native_adreno_transform_text[64],native_adreno_transform_input[64],native_adreno_transform_output[64];
+char native_adreno_air_text[64],native_adreno_air_input[64],native_adreno_air_output[64];
+char native_adreno_objects_text[64],native_adreno_objects_error[64];
+char native_adreno_render_text[64],native_adreno_render_pixels[64],native_adreno_render_air[64],native_adreno_render_air_inputs[64],native_adreno_graphics_objects[64],native_adreno_graphics_error[64],native_adreno_device_init[64],native_adreno_device_protocol[64],native_adreno_device_contract[64],native_adreno_device_registry[64],native_adreno_objects_retirement[64],native_adreno_continuous_render[64],native_adreno_continuous_pixels[64];
+char native_adreno_surface_text[64],native_adreno_surface_pixels[64],native_adreno_surface_info[64],native_adreno_surface_error[64],native_adreno_surface_retirement[64];
 volatile int native_adreno_service_ready;
 int cheeseburger_gpu_engine_submit(const uint64_t *,const uint32_t *,unsigned,uint32_t *,
  const volatile uint32_t *,unsigned);
@@ -131,7 +146,7 @@ struct Quarantined {
     IOMemoryDescriptor *desc=nullptr;
     BoSpan spans[64]={};
     unsigned spanCount=0;
-    bool mapped=false,imported=false;
+    bool mapped=false,imported=false,completeFailed=false,cacheBlocked=false;
 };
 Quarantined gQuarantine[MaxBo];
 unsigned gQuarantineCount=0;
@@ -181,29 +196,39 @@ void releaseJobFenceLocked(uint32_t fence) {  // gRetireLock held
 void retireQuarantinedLocked() {
     for(unsigned i=0;i<gQuarantineCount;){
         Quarantined &q=gQuarantine[i];
-        if(holdsCount(q.serial)){++i;continue;}
+        if(q.completeFailed||q.cacheBlocked||holdsCount(q.serial)){++i;continue;}
         bool done=true;
         if(q.mapped){
-            int rc=0;
-            if(!q.desc){if(!q.spanCount)rc=cheeseburger_gpu_smmu_unmap(q.iova,unsigned(q.bytes/4096));}
-            else {
-                IOByteCount off=0;
-                while(off<q.bytes){
-                    IOByteCount seg=0;
-                    const uint64_t pa=q.desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
-                    if(!pa||!seg){rc=-1;break;}
-                    if(seg>q.bytes-off)seg=q.bytes-off;
-                    const unsigned pages=unsigned((seg+4095)/4096);
-                    if(cheeseburger_gpu_smmu_unmap(q.iova+off,pages)){rc=-1;break;}
-                    off+=uint64_t(pages)*4096;
-                }
-                if(!rc&&off<q.bytes)rc=-1;
-            }
             auto idle=[](){ return cheeseburger_gpu_engine_idle(); };
-            if(!CheeseburgerGpu::releaseMappedBuffer(true,idle,[&](){ return rc; }))done=false;
+            auto unmap=[&](){
+                int rc=0;
+                if(!q.desc){if(!q.spanCount)rc=cheeseburger_gpu_smmu_unmap(q.iova,unsigned(q.bytes/4096));}
+                else {
+                    IOByteCount off=0;
+                    while(off<q.bytes){
+                        IOByteCount seg=0;
+                        const uint64_t pa=q.desc->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+                        if(!pa||!seg){rc=-1;break;}
+                        if(seg>q.bytes-off)seg=q.bytes-off;
+                        const unsigned pages=unsigned((seg+4095)/4096);
+                        if(cheeseburger_gpu_smmu_unmap(q.iova+off,pages)){rc=-1;break;}
+                        off+=uint64_t(pages)*4096;
+                    }
+                    if(!rc&&off<q.bytes)rc=-1;
+                }
+                return rc;
+            };
+            if(!CheeseburgerGpu::releaseMappedBuffer(true,idle,unmap))done=false;
         }
         if(!done){retainIova(q.iova,q.bytes);++i;continue;}
-        if(q.imported&&q.desc)q.desc->complete(kIODirectionInOut);
+        q.mapped=false;
+        if(!CheeseburgerGpu::completeImportedBuffer(q.imported,q.completeFailed,[&](){
+            return q.desc?int(q.desc->complete(kIODirectionInOut)):int(kIOReturnBadArgument);
+        })){
+            native_adreno_import_stats[2]=native_adreno_import_stats[2]+1;
+            ++i;continue;
+        }
+        if(q.imported)native_adreno_import_stats[3]=native_adreno_import_stats[3]+1;
         if(!q.imported&&q.desc){
             IOByteCount off=0;
             while(off<q.bytes){
@@ -263,7 +288,8 @@ class AGXDeviceUserClient : public IOUserClient {
         bool mapped=false,cpuMapped=false;
         // An imported BO wraps the caller's own pages; a BO may therefore be
         // several physically contiguous runs that are mapped one by one.
-        bool imported=false;
+        bool imported=false,completeFailed=false;
+        CheeseburgerGpu::ImportedCacheState cache{};
         BoSpan spans[64]={};
         unsigned spanCount=0;
         // Identity in the global hold table. Holds survive this client, so a
@@ -294,6 +320,7 @@ class AGXDeviceUserClient : public IOUserClient {
     Bo *find(uint64_t);
     void dropView(Bo &);
     bool freeBo(Bo &);
+    IOReturn maintainImports(bool,uint32_t=0);
 public:
     void setGeneration(uint64_t generation) { generation_=generation; ownsClient_=true; }
     void setAbi(bool abi) { abi_=abi; }
@@ -483,7 +510,8 @@ void AGXDeviceUserClient::quarantine(Bo &bo) {
         Quarantined &q=gQuarantine[gQuarantineCount++];
         q=Quarantined();
         q.serial=bo.serial;q.iova=bo.iova;q.bytes=bo.bytes;q.physical=bo.physical;
-        q.buf=bo.buf;q.desc=bo.desc;q.mapped=bo.mapped;q.imported=bo.imported;
+        q.buf=bo.buf;q.desc=bo.desc;q.mapped=bo.mapped;q.imported=bo.imported;q.completeFailed=bo.completeFailed;
+        q.cacheBlocked=bo.cache.pending||bo.cache.failed;
         q.spanCount=bo.spanCount;
         for(unsigned i=0;i<bo.spanCount;++i)q.spans[i]=bo.spans[i];
         native_adreno_retire[0]=native_adreno_retire[0]+1;
@@ -496,6 +524,7 @@ void AGXDeviceUserClient::quarantine(Bo &bo) {
 }
 bool AGXDeviceUserClient::freeBo(Bo &bo) {
     if(!bo.handle)return true;
+    if(bo.completeFailed||bo.cache.pending||bo.cache.failed)return false;
     // A job that has not reported its fence may still fetch this memory.
     // Completed jobs are retired first: the usual client order is submit,
     // wait, then free, and a client that skips the wait must not lose the BO.
@@ -532,10 +561,17 @@ bool AGXDeviceUserClient::freeBo(Bo &bo) {
         return false;
     }
     if(bo.mapped)native_adreno_service_stats[5]=native_adreno_service_stats[5]+1;
-    if(allocBytes_>=bo.bytes)allocBytes_-=bo.bytes;
+    bo.mapped=false;
     // An imported BO unwires the caller's pages; their cache mode is the
     // caller's and must not be touched here.
-    if(bo.imported&&bo.desc)bo.desc->complete(kIODirectionInOut);
+    if(!CheeseburgerGpu::completeImportedBuffer(bo.imported,bo.completeFailed,[&](){
+        return bo.desc?int(bo.desc->complete(kIODirectionInOut)):int(kIOReturnBadArgument);
+    })){
+        native_adreno_import_stats[2]=native_adreno_import_stats[2]+1;
+        return false;
+    }
+    if(bo.imported)native_adreno_import_stats[3]=native_adreno_import_stats[3]+1;
+    if(allocBytes_>=bo.bytes)allocBytes_-=bo.bytes;
     // An owned BO uses its buffer as the descriptor; release it once.
     if(bo.desc&&bo.desc!=bo.buf)OSSafeReleaseNULL(bo.desc);
     // Restore the VM's default page attributes only after the GPU can no
@@ -771,19 +807,28 @@ IOReturn AGXDeviceUserClient::boFree(uint64_t handle) {
 // caller keeps its CPU mapping and cache mode and maintains them; the pages
 // stay wired until BoFree, which is refused while a job still references them.
 IOReturn AGXDeviceUserClient::boImport(const NativeAdrenoAbiBoImport &a,NativeAdrenoAbiBoAllocReply &r) {
-    if(!task_||!a.address||!a.bytes||(a.bytes&4095)||(a.address&4095)||a.bytes>(1ull<<36)||
+    if(!task_||!a.address||!a.bytes||(a.bytes&4095)||(a.address&4095)||a.bytes>UINT64_MAX-a.address||
        a.bytes>MaxBufferBytes540)return kIOReturnBadArgument;
     if(allocBytes_>MaxClientBytes540-a.bytes)return kIOReturnNoResources;
     unsigned index=MaxBo;
     for(unsigned i=0;i<MaxBo;++i)if(!bos_[i].handle){index=i;break;}
     if(index==MaxBo)return kIOReturnNoResources;
+    const IOOptionBits options=kIODirectionInOut|kIOMemoryMapperNone;
     IOMemoryDescriptor *d=IOMemoryDescriptor::withAddressRange(a.address,(IOByteCount)a.bytes,
-        kIODirectionInOut,task_);
+        options|kIOMemoryPersistent,task_);
+    const bool persistent=d!=nullptr;
+    if(!d)d=IOMemoryDescriptor::withAddressRange(a.address,(IOByteCount)a.bytes,options,task_);
     if(!d)return kIOReturnNoMemory;
-    if(d->prepare(kIODirectionInOut)!=kIOReturnSuccess){d->release();return kIOReturnNoMemory;}
-    IOByteCount seg=0;
-    const uint64_t first=d->getPhysicalSegment(0,&seg,kIOMemoryMapperNone);
-    if(!first||!seg){d->complete(kIODirectionInOut);d->release();return kIOReturnNoMemory;}
+    const IOReturn prepared=d->prepare(kIODirectionInOut);
+    if(prepared!=kIOReturnSuccess){d->release();return prepared;}
+    bool valid=d->getLength()==a.bytes;
+    uint64_t first=0;
+    for(IOByteCount off=0;valid&&off<a.bytes;off+=4096){
+        IOByteCount seg=0;
+        const uint64_t pa=d->getPhysicalSegment(off,&seg,kIOMemoryMapperNone);
+        if(!pa||(pa&4095)||seg<4096||pa>=(1ull<<36)||4096>(1ull<<36)-pa)valid=false;
+        if(!off)first=pa;
+    }
     Bo &bo=bos_[index];
     bo=Bo();
     bo.handle=uint64_t(index)+1;
@@ -794,6 +839,8 @@ IOReturn AGXDeviceUserClient::boImport(const NativeAdrenoAbiBoImport &a,NativeAd
     bo.token=BoTokenBase+index;
     if(gRetireLock){IOLockLock(gRetireLock);bo.serial=++gSerialCounter;IOLockUnlock(gRetireLock);}
     allocBytes_+=bo.bytes;
+    if(!valid){if(!freeBo(bo)&&bo.handle)quarantine(bo);return kIOReturnUnsupported;}
+    native_adreno_import_stats[persistent?0:1]=native_adreno_import_stats[persistent?0:1]+1;
     r.handle=bo.handle;
     native_adreno_service_stats[2]=native_adreno_service_stats[2]+1;
     native_adreno_service_stats[12]=native_adreno_service_stats[12]+a.bytes;
@@ -816,6 +863,35 @@ IOReturn AGXDeviceUserClient::boCpuUnmap(uint64_t handle,uint32_t token) {
     bo->cpuMapped=false;
     return kIOReturnSuccess;
 }
+IOReturn AGXDeviceUserClient::maintainImports(bool acquire,uint32_t fence) {
+    for(unsigned i=0;i<MaxBo;++i){
+        Bo &bo=bos_[i];
+        if(!bo.handle||!bo.imported||!bo.mapped)continue;
+        if(!bo.desc||bo.completeFailed||bo.cache.failed)return kIOReturnNotReady;
+        if(acquire&&(!bo.cache.pending||bo.cache.fence!=fence))continue;
+        auto maintain=[&](){
+            return CheeseburgerGpu::maintainImportedPages(bo.bytes,gPhysBase,gPhysSize,
+                [&](uint64_t offset,uint64_t &length){
+                    IOByteCount n=0;const uint64_t pa=bo.desc->getPhysicalSegment(offset,&n,kIOMemoryMapperNone);
+                    length=n;return pa;
+                },[&](uint64_t physical,uint64_t bytes){
+                    // Reuse the pinned physical-cache primitive. Unlike its
+                    // framebuffer caller, imports must all be validated DRAM.
+                    return int(NativeAdrenoMaintainPhysicalPages(physical,size_t(bytes),
+                        acquire?NativeAdrenoInvalidate:NativeAdrenoCleanInvalidate));
+                });
+        };
+        unsigned holds=0;
+        if(!acquire&&gRetireLock){IOLockLock(gRetireLock);holds=holdsCount(bo.serial);IOLockUnlock(gRetireLock);}
+        if(!acquire&&(bo.cache.pending||holds))return kIOReturnBusy;
+        const int rc=acquire?CheeseburgerGpu::acquireImportedBuffer(bo.cache,fence,maintain):
+            CheeseburgerGpu::publishImportedBuffer(bo.cache,holds,maintain);
+        if(rc){native_adreno_import_cache[3]=native_adreno_import_cache[3]+1;return kIOReturnIOError;}
+        native_adreno_import_cache[acquire?1:0]=native_adreno_import_cache[acquire?1:0]+1;
+        native_adreno_import_cache[2]=native_adreno_import_cache[2]+bo.bytes;
+    }
+    return kIOReturnSuccess;
+}
 IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdrenoAbiSubmitReply &r) {
     if(s.buffer_count<1||s.buffer_count>NativeAdrenoAbiMaxBuffers||s.reserved)
         return kIOReturnBadArgument;
@@ -823,6 +899,8 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     if(s.wait_fence){
         if(cheeseburger_gpu_engine_wait(uint32_t(s.wait_fence),s.wait_timeout_ns?s.wait_timeout_ns:1000000000ull))
             return kIOReturnTimeout;
+        const IOReturn acquired=maintainImports(true,uint32_t(s.wait_fence));
+        if(acquired)return acquired;
         if(gRetireLock){
             IOLockLock(gRetireLock);
             releaseJobFenceLocked(uint32_t(s.wait_fence));
@@ -867,6 +945,8 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
     // the submitted buffers, while an IB may use any mapped object as data,
     // texture or write target. Reserve the slot first so a submission can
     // never be kicked without a place to record its resources.
+    const IOReturn published=maintainImports(false);
+    if(published)return published;
     uint64_t serials[MaxJobBos];unsigned serialCount=0;
     for(unsigned i=0;i<MaxBo&&serialCount<MaxJobBos;++i){
         Bo &b=bos_[i];
@@ -936,6 +1016,8 @@ IOReturn AGXDeviceUserClient::submit(const NativeAdrenoAbiSubmit &s,NativeAdreno
         IOLockUnlock(gRetireLock);
     }
     if(rc){native_adreno_service_stats[9]=native_adreno_service_stats[9]+1;return kIOReturnIOError;}
+    for(unsigned i=0;i<MaxBo;++i)
+        if(bos_[i].imported&&bos_[i].cache.pending)bos_[i].cache.fence=seq;
     r.fence=seq;
     native_adreno_service_stats[8]=native_adreno_service_stats[8]+1;
     return kIOReturnSuccess;
@@ -945,7 +1027,10 @@ IOReturn AGXDeviceUserClient::waitFence(const NativeAdrenoAbiWaitFence &w) {
     if(!w.fence)return kIOReturnBadArgument;
     uint64_t timeout=w.timeout_ns?w.timeout_ns:1000000ull;
     int rc=cheeseburger_gpu_engine_wait(uint32_t(w.fence),timeout);
-    if(!rc&&gRetireLock){
+    if(rc)return kIOReturnTimeout;
+    const IOReturn acquired=maintainImports(true,uint32_t(w.fence));
+    if(acquired)return acquired;
+    if(gRetireLock){
         IOLockLock(gRetireLock);
         releaseJobFenceLocked(uint32_t(w.fence));
         retireQuarantinedLocked();
@@ -1023,6 +1108,81 @@ IOReturn AGXDeviceUserClient::run(uint32_t method,const void *input,size_t input
         uint32_t n=m.bytes<sizeof(native_adreno_service_text)-1?m.bytes:uint32_t(sizeof(native_adreno_service_text)-1);
         memset(native_adreno_service_text,0,sizeof native_adreno_service_text);
         if(m.text&&n)memcpy(native_adreno_service_text,m.text,n);
+        if(n>=3&&m.text[0]=='P'&&m.text[1]=='S'&&m.text[2]==' '){
+            memset(native_adreno_state_text,0,sizeof native_adreno_state_text);
+            memcpy(native_adreno_state_text,m.text,n);
+        }
+        if(n>=3&&m.text[0]=='P'&&m.text[1]=='X'&&m.text[2]==' '){
+            memset(native_adreno_pixel_text,0,sizeof native_adreno_pixel_text);
+            memcpy(native_adreno_pixel_text,m.text,n);
+        }
+        if(n>=3&&m.text[0]=='M'&&m.text[1]=='A'&&m.text[2]==' '&&m.handle>=1&&m.handle<=16){
+            memset(native_adreno_metal_abi[m.handle-1],0,64);
+            memcpy(native_adreno_metal_abi[m.handle-1],m.text,n);
+        }
+        if(n>=5&&!memcmp(m.text,"T540 ",5)){
+            memset(native_adreno_transform_text,0,64);memcpy(native_adreno_transform_text,m.text,n);
+        }
+        if(n>=3&&m.text[0]=='T'&&m.text[2]==' '&&(m.text[1]=='I'||m.text[1]=='X')){
+            char *dest=m.text[1]=='I'?native_adreno_transform_input:native_adreno_transform_output;
+            memset(dest,0,64);memcpy(dest,m.text,n);
+        }
+        if(n>=5&&!memcmp(m.text,"A540 ",5)){
+            memset(native_adreno_air_text,0,64);memcpy(native_adreno_air_text,m.text,n);
+        }
+        if(n>=3&&m.text[0]=='A'&&m.text[2]==' '&&(m.text[1]=='I'||m.text[1]=='X')){
+            char *dest=m.text[1]=='I'?native_adreno_air_input:native_adreno_air_output;
+            memset(dest,0,64);memcpy(dest,m.text,n);
+        }
+        if(n>=5&&!memcmp(m.text,"M540 ",5)){
+            memset(native_adreno_objects_text,0,64);memcpy(native_adreno_objects_text,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"ME ",3)&&!native_adreno_objects_error[0]){
+            memset(native_adreno_objects_error,0,64);memcpy(native_adreno_objects_error,m.text,n);
+        }
+        if(n>=5&&!memcmp(m.text,"R540 ",5)){
+            memset(native_adreno_render_text,0,64);memcpy(native_adreno_render_text,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"RP ",3)){
+            memset(native_adreno_render_pixels,0,64);memcpy(native_adreno_render_pixels,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"RX ",3)){
+            memset(native_adreno_continuous_pixels,0,64);memcpy(native_adreno_continuous_pixels,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"RC ",3)){
+            memset(native_adreno_continuous_render,0,64);memcpy(native_adreno_continuous_render,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"OR ",3)){
+            memset(native_adreno_objects_retirement,0,64);memcpy(native_adreno_objects_retirement,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"DR ",3)){
+            memset(native_adreno_device_registry,0,64);memcpy(native_adreno_device_registry,m.text,n);
+        }
+        if(n>=3&&m.text[0]=='D'&&m.text[2]==' '&&(m.text[1]=='P'||m.text[1]=='C')){
+            char *dest=m.text[1]=='P'?native_adreno_device_protocol:native_adreno_device_contract;
+            memset(dest,0,64);memcpy(dest,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"DI ",3)){
+            memset(native_adreno_device_init,0,64);memcpy(native_adreno_device_init,m.text,n);
+        }
+        if(n>=3&&m.text[0]=='R'&&m.text[2]==' '&&(m.text[1]=='G'||m.text[1]=='E')){
+            char *dest=m.text[1]=='G'?native_adreno_graphics_objects:native_adreno_graphics_error;
+            memset(dest,0,64);memcpy(dest,m.text,n);
+        }
+        if(n>=3&&(m.text[0]=='R')&&m.text[2]==' '&&(m.text[1]=='A'||m.text[1]=='I')){
+            char *dest=m.text[1]=='A'?native_adreno_render_air:native_adreno_render_air_inputs;
+            memset(dest,0,64);memcpy(dest,m.text,n);
+        }
+        if(n>=6&&!memcmp(m.text,"SF540 ",6)){
+            memset(native_adreno_surface_text,0,64);memcpy(native_adreno_surface_text,m.text,n);
+        }
+        if(n>=3&&!memcmp(m.text,"SR ",3)){
+            memset(native_adreno_surface_retirement,0,64);memcpy(native_adreno_surface_retirement,m.text,n);
+        }
+        if(n>=3&&m.text[0]=='S'&&m.text[2]==' '&&(m.text[1]=='P'||m.text[1]=='I'||m.text[1]=='E')){
+            char *dest=m.text[1]=='P'?native_adreno_surface_pixels:m.text[1]=='I'?native_adreno_surface_info:native_adreno_surface_error;
+            if(m.text[1]!='E'||!dest[0]){memset(dest,0,64);memcpy(dest,m.text,n);}
+        }
         native_adreno_service_stats[14]=n;
         status=kIOReturnSuccess;
         break;}

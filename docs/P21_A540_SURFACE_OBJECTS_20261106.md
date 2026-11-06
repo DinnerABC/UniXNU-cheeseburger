@@ -1,0 +1,13 @@
+# A540 IOSurface texture对象导入 · 2026-11-06
+
+依据固定sagit QcomMTL.mm::initWithDevice:surface:plane:options: (2200–2242) 与texture surface initializer(2493–2537)适配语义，不套22H374surfaceID-nativeABI。
+
+本机仍用官方NativeAdrenoBoImport callerVA/length：限定trueIOSurfaceRef、plane0/plain、64RGBA8、pitch256/allocation16384、base4096aligned、所有plane0getter交叉符合；仅Shared/RenderTarget/singleSample/noMip。session最多oneimporttexture，ownerCFRetain并session持有、failedimport/map维持lost/owners，不能作用域释放。target无CPUmaptoken，preparedkernelimport映射与exactphysicalcache已验证，不另造alias。
+
+同actual_MTLDevice→SpriteKitlibrary/VSFS/PSO→standardtextureiosurface→pass→encoder→commit/wait→readback，CPU写sentinel在真实writelock内，unlock检查；kernel提交publish/成功waitacquire，importCPU只ordering不postclean。readback在成功/缓存后readlock/gettersconsistent、copyout及unlock检查，失败不补read。
+
+HostactualIOSurfacecreation/getters、importtransport/noCPUtoken、same7resources、softwarepixelmodel及submitfail/waittimeout/notwritten/identity/callback/late/reentrantwait/raceguard8mode全部PASS；原compute/arm64Objects+Run通过。证据 local `native540/graphics-objects-20261106T130119735441Z`，软件模拟不算设备执行。
+
+同批修正targetprotocol参考：objc_getProtocol运行时目标定义，恢复supportsFamily原21H461q签名。仅同名opaqueC++struct指针字段公开/隐藏ABI兼容比较，不放宽signedness、pointerdepth/qualifier/byvaluestruct；ASan类型模型PASS。旧DPtype2包含混用SDK/publicprotocol误报，不当真功能支持。
+
+候选 `out/p21/p21-sagit-surface-objects-20261106T130524Z`构建中，onlyuserlandpayloadEFI变化；精确samekernel/BoardRuntime验证复用上一registry候选，sameSeed/697Bargs/ADT/DTB/power/wire，未本批devicevalidation。原registryID/standardbuffer/readback成功baseline保留。systemMTLdefaultdevice注册、通用texture/跨进程共享/presentation/UI合成仍未完成。

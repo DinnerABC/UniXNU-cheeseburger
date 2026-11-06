@@ -50,6 +50,13 @@ int main(){
         check(!ok,"release/unmap-failure-keeps-buffer");
     }
     {
+        bool failed=false;int calls=0;
+        check(completeImportedBuffer(false,failed,[&]{++calls;return 0;})&&calls==0,"complete/owned-no-call");
+        check(completeImportedBuffer(true,failed,[&]{++calls;return 0;})&&calls==1&&!failed,"complete/import-success");
+        check(!completeImportedBuffer(true,failed,[&]{++calls;return -7;})&&failed&&calls==2,"complete/failure-keeps-descriptor");
+        check(!completeImportedBuffer(true,failed,[&]{++calls;return 0;})&&calls==2,"complete/no-retry-after-failure");
+    }
+    {
         ClientGate gate;uint64_t a=0,b=0,c=0,d=0;
         check(gate.acquire(a)&&a==1,"gate/acquire-a");
         check(!gate.acquire(b),"gate/second-refused");

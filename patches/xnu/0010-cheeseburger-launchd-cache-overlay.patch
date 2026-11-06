@@ -1,0 +1,244 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7556,12 +7556,220 @@
+ 			native_gpu_addon_written++;
+ 		}
+ 		at += (packed + 7) & ~7ULL;
++	}
++}
++/* iOS 16 and later build the system domain's daemons from the signed service
++ * cache /System/Library/xpc/launchd.plist (launchd_cache_loader verifies it and
++ * hands it to launchd); a plist that only exists on disk is not discovered at
++ * boot. With boot-arg sgac=1 this step copies the sealed cache, adds one daemon
++ * through the board's bplist editor, writes the result into Data and mounts it
++ * over /System/Library/xpc as a read-only union. The loader reads it only when
++ * launchd_unsecure_cache= is present in the boot arguments, so the step also
++ * requires that string in the loader binary and rolls the mount back if the
++ * augmented file does not read back through the union exactly. */
++struct native_launchd_cache_stats {
++	uint64_t input_bytes, output_bytes, objects, daemons;
++	uint32_t offset_size, ref_size;
++	int error;
++};
++extern int cheeseburger_launchd_cache_size(const uint8_t *, uint64_t, const char *, const char *, uint64_t *,
++    struct native_launchd_cache_stats *) __attribute__((weak_import));
++extern int cheeseburger_launchd_cache_build(const uint8_t *, uint64_t, const char *, const char *, uint8_t *, uint64_t,
++    struct native_launchd_cache_stats *) __attribute__((weak_import));
++volatile int native_gpu_addon_cache_stage = 0;
++volatile int native_gpu_addon_cache_status = -1;
++volatile int native_gpu_addon_cache_loader = -1;
++volatile int native_gpu_addon_cache_mount_stage = 0;
++volatile int native_gpu_addon_cache_mount_status = -1;
++volatile int native_gpu_addon_cache_rollback = -1;
++volatile uint64_t native_gpu_addon_cache_input = 0;
++volatile uint64_t native_gpu_addon_cache_output = 0;
++volatile int native_gpu_addon_cache_objects = -1;
++volatile int native_gpu_addon_cache_daemons = -1;
++static int
++native_gpu_addon_read_file(const char *path, uint64_t cap, uint8_t **data, uint64_t *size)
++{
++	vnode_t vp = NULLVP;
++	vfs_context_t ctx = vfs_context_current();
++	uint8_t *buffer = NULL;
++	uint64_t bytes = 0;
++	int resid = 0;
++	int error = vnode_open(path, FREAD | O_NOFOLLOW, 0, 0, &vp, ctx);
++	if (error) {
++		return error;
++	}
++	struct vnode_attr va;
++	VATTR_INIT(&va);
++	VATTR_WANTED(&va, va_data_size);
++	error = vnode_getattr(vp, &va, ctx);
++	if (!error && (!va.va_data_size || va.va_data_size > cap)) {
++		error = E2BIG;
++	}
++	if (!error) {
++		bytes = va.va_data_size;
++		buffer = kalloc_data((size_t)bytes, Z_WAITOK);
++		if (!buffer) {
++			error = ENOMEM;
++		}
++	}
++	if (!error) {
++		error = vn_rdwr(UIO_READ, vp, (caddr_t)buffer, (int)bytes, 0, UIO_SYSSPACE, IO_NOAUTH,
++		    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++		if (!error && resid) {
++			error = EIO;
++		}
++	}
++	vnode_close(vp, FREAD, ctx);
++	if (error) {
++		if (buffer) {
++			kfree_data(buffer, (size_t)bytes);
++		}
++		return error;
++	}
++	*data = buffer;
++	*size = bytes;
++	return 0;
++}
++static int
++native_gpu_addon_contains(const uint8_t *haystack, uint64_t bytes, const char *needle, uint64_t length)
++{
++	if (!bytes || bytes < length) {
++		return 0;
++	}
++	for (uint64_t i = 0; i + length <= bytes; i++) {
++		if (haystack[i] == (uint8_t)needle[0] && !memcmp(haystack + i, needle, (size_t)length)) {
++			return 1;
++		}
++	}
++	return 0;
++}
++/* The addon install that wrote into the Data mount during activation hung on
++ * this board; its final MNT_WAIT fsync is the suspected stall. The loader only
++ * needs the contents through the vnode cache, so publish the cache without a
++ * synchronous store flush. */
++static int
++native_gpu_addon_write_nosync(const char *path, const uint8_t *data, uint64_t size, uint32_t mode, vfs_context_t ctx)
++{
++	vnode_t vp = NULLVP;
++	int resid = 0;
++	int error = vnode_open(path, O_CREAT | O_TRUNC | FWRITE | O_NOFOLLOW, mode, 0, &vp, ctx);
++	if (error) {
++		return error;
++	}
++	error = vn_rdwr(UIO_WRITE, vp, (caddr_t)(uintptr_t)data, (int)size, 0, UIO_SYSSPACE, IO_NOAUTH | IO_UNIT,
++	    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++	if (!error && resid) {
++		error = EIO;
++	}
++	if (!error) {
++		struct vnode_attr va;
++		VATTR_INIT(&va);
++		VATTR_SET(&va, va_mode, mode);
++		error = vnode_setattr(vp, &va, ctx);
+ 	}
++	int close_error = vnode_close(vp, FWRITE, ctx);
++	return error ? error : close_error;
+ }
+ static void
++native_gpu_addon_cache(proc_t p, user_addr_t scratch)
++{
++	static const char sealed_path[] = "/System/Library/xpc/launchd.plist";
++	static const char loader_path[] = "/usr/libexec/launchd_cache_loader";
++	static const char source[] = "/private/var/mobile/ngpu/xpc";
++	static const char output_path[] = "/private/var/mobile/ngpu/xpc/launchd.plist";
++	static const char point[] = "/System/Library/xpc";
++	static const char plist_key[] = "/System/Library/LaunchDaemons/org.cheeseburger.adrenoprobed.plist";
++	static const char program[] = "/private/var/mobile/ngpu/bin/adrenoprobed";
++	static const char unsecure[] = "launchd_unsecure_cache=";
++	uint8_t *in = NULL, *out = NULL, *check = NULL, *loader = NULL;
++	uint64_t in_size = 0, out_size = 0, check_size = 0, loader_size = 0;
++	struct native_launchd_cache_stats stats = {0};
++	vfs_context_t ctx = vfs_context_current();
++	int error;
++
++	native_gpu_addon_cache_stage = 1;
++	error = native_gpu_addon_read_file(sealed_path, 16ull << 20, &in, &in_size);
++	native_gpu_addon_cache_input = in_size;
++	if (error) {
++		goto done;
++	}
++	native_gpu_addon_cache_loader = 0;
++	if (!native_gpu_addon_read_file(loader_path, 4ull << 20, &loader, &loader_size)) {
++		native_gpu_addon_cache_loader = native_gpu_addon_contains(loader, loader_size, unsecure,
++		    sizeof(unsecure) - 1);
++		kfree_data(loader, (size_t)loader_size);
++	}
++	if (!native_gpu_addon_cache_loader || !cheeseburger_launchd_cache_size || !cheeseburger_launchd_cache_build) {
++		error = ENOTSUP;
++		goto done;
++	}
++	native_gpu_addon_cache_stage = 2;
++	error = cheeseburger_launchd_cache_size(in, in_size, plist_key, program, &out_size, &stats);
++	native_gpu_addon_cache_output = out_size;
++	native_gpu_addon_cache_objects = (int)stats.objects;
++	native_gpu_addon_cache_daemons = (int)stats.daemons;
++	if (error) {
++		goto done;
++	}
++	out = kalloc_data((size_t)out_size, Z_WAITOK);
++	if (!out) {
++		error = ENOMEM;
++		goto done;
++	}
++	native_gpu_addon_cache_stage = 3;
++	error = cheeseburger_launchd_cache_build(in, in_size, plist_key, program, out, out_size, &stats);
++	if (error) {
++		goto done;
++	}
++	native_gpu_addon_cache_stage = 4;
++	error = native_gpu_addon_parents(p, scratch, output_path);
++	if (error) {
++		goto done;
++	}
++	native_gpu_addon_cache_stage = 5;
++	error = native_gpu_addon_write_nosync(output_path, out, out_size, 0644, ctx);
++	if (error) {
++		goto done;
++	}
++	native_gpu_addon_cache_stage = 6;
++	native_gpu_addon_mount(p, scratch, 0xa00, source, sizeof(source), point, sizeof(point),
++	    "/System/Library/xpc/extensions.plist", plist_key, &native_gpu_addon_cache_mount_stage,
++	    &native_gpu_addon_cache_mount_status);
++	error = native_gpu_addon_cache_mount_status;
++	if (error) {
++		goto done;
++	}
++	native_gpu_addon_cache_stage = 7;
++	error = native_gpu_addon_read_file(sealed_path, out_size + 4096, &check, &check_size);
++	if (!error && (check_size != out_size || memcmp(check, out, (size_t)out_size))) {
++		error = EIO;
++	}
++done:
++	if (error && native_gpu_addon_cache_mount_stage == 5) {
++		vnode_t root = NULLVP;
++		if (!vnode_lookup(point, 0, &root, ctx) && root) {
++			mount_t mounted = vnode_mount(root);
++			vnode_put(root);
++			if (mounted) {
++				native_gpu_addon_cache_rollback = dounmount(mounted, 0, 0, ctx);
++			}
++		}
++	}
++	native_gpu_addon_cache_status = error;
++	if (in) {
++		kfree_data(in, (size_t)in_size);
++	}
++	if (out) {
++		kfree_data(out, (size_t)out_size);
++	}
++	if (check) {
++		kfree_data(check, (size_t)check_size);
++	}
++}
++static void
+ native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
+ {
+-	uint32_t enabled = 0, install = 1, mounts = 1;
++	uint32_t enabled = 0, install = 1, mounts = 1, cache = 0;
+ 	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
+ 		return;
+ 	}
+@@ -7570,6 +7778,7 @@
+ 	 * the owner files live in the mobile-writable part of the Data volume. */
+ 	PE_parse_boot_argn("sgai", &install, sizeof(install));
+ 	PE_parse_boot_argn("sgam", &mounts, sizeof(mounts));
++	PE_parse_boot_argn("sgac", &cache, sizeof(cache));
+ 	if (install) {
+ 		native_gpu_addon_install(p, scratch);
+ 	}
+@@ -7602,6 +7811,11 @@
+ 	    "/System/Library/LaunchDaemons/org.cheeseburger.adrenoprobed.plist", &native_gpu_addon2_stage, &native_gpu_addon2_status);
+ 	native_gpu_addon_stat("/System/Library/LaunchDaemons/org.cheeseburger.adrenoprobed.plist", native_gpu_addon_mount_stat);
+ 	native_gpu_addon_stat("/System/Library/LaunchDaemons/com.apple.backboardd.plist", native_gpu_addon_orig_stat);
++	/* The on-disk plist above is kept for the loader's path check, but launchd
++	 * loads the system daemons from the service cache; add the job there too. */
++	if (cache) {
++		native_gpu_addon_cache(p, scratch);
++	}
+ 	/* The default iPadOS 17 wallpaper's layered animation with PNG images in place of its HEIC ones (no hardware HEVC decoder here).
+ 	 * The overlay carries the animation's documents and the PNG images; the sealed assets directory stays visible below it. */
+ 	static const char wallpaper_source[] = "/private/var/mobile/ngpu/wallpaper",

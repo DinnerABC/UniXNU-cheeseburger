@@ -1,0 +1,25 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7779,7 +7779,7 @@
+ 	PE_parse_boot_argn("sgai", &install, sizeof(install));
+ 	PE_parse_boot_argn("sgam", &mounts, sizeof(mounts));
+ 	PE_parse_boot_argn("sgac", &cache, sizeof(cache));
+-	if (install) {
++	if (install == 1) {
+ 		native_gpu_addon_install(p, scratch);
+ 	}
+ 	if (!mounts) {
+@@ -8353,6 +8353,13 @@
+ 	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
+ 	boot_progress_stage("Data mount returned");
+ 	if (data_error) panic("offline scratch Data mount failed: %d", data_error);
++	/* Installation is deferred until the Data mount operation has returned. */
++	uint32_t addon_install = 0, addon_enabled = 0;
++	PE_parse_boot_argn("sgai", &addon_install, sizeof(addon_install));
++	PE_parse_boot_argn("sheng-gpu-addon", &addon_enabled, sizeof(addon_enabled));
++	if (addon_install == 2 && addon_enabled == 1) {
++		native_gpu_addon_install(p, (user_addr_t)scratch_addr);
++	}
+ #if defined(XNU_BOOT_PROGRESS) && XNU_BOOT_PROGRESS
+ 	extern int sheng_boot_watchdog_policy(void *, uint64_t);
+ 	boot_progress_stage("temporary watchdog launch policy enter");

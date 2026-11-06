@@ -4,8 +4,8 @@ the owner trust bundle for one P21 candidate.
 
 The addon is written into the Data volume by the kernel's boot-time addon mount
 (sheng-gpu-addon=1); the trust bundle replaces the payload's trustcache and adds
-the daemon's CDHash as one extra module in front of the two unchanged Apple
-modules. Nothing is written to the Data seed or to the OS inputs.
+the daemon and plugin CDHashes as one engineering module after the two unchanged
+Apple modules. Nothing is written to the Data seed or to the OS inputs.
 """
 from pathlib import Path
 import hashlib
@@ -94,11 +94,29 @@ def main():
     shutil.rmtree(plugin_bundle, ignore_errors=True)
     plugin_bundle.mkdir(parents=True)
     plugin_exe = plugin_bundle / 'NativeAdrenoMetal'
+    probe_flags=['-DNATIVE540_ENCODER_ONLY=1']
+    if os.environ.get('P21_PROBE_GLOBAL')=='1':probe_flags.append('-DNATIVE540_PROBE_GLOBAL=1')
     subprocess.run(['xcrun', 'clang++', '-target', 'arm64-apple-ios17.0',
                     '-isysroot', sdk(), '-std=c++17', '-fobjc-arc', '-O2', '-fno-exceptions',
+                    *probe_flags,
                     '-fno-rtti', '-I', str(R / 'package/BoardRuntime'),
+                    '-I', str(R / 'package/Userland'),
                     '-bundle', str(R / 'package/Userland/native_adreno_metal_plugin.mm'),
-                    '-framework', 'Foundation', '-framework', 'IOKit', '-framework', 'Metal', '-o', str(plugin_exe)],
+                    str(R / 'package/Userland/NativeMetal540Client.cpp'),
+                    str(R / 'package/Userland/NativeMetal540Probe.cpp'),
+                    str(R / 'package/Userland/NativeMetal540RuntimeABI.mm'),
+                    str(R / 'package/Userland/NativeMetal540Transform.cpp'),
+                    str(R / 'package/Userland/NativeMetal540AIRProbe.cpp'),
+                    str(R / 'package/Userland/NativeMetal540Objects.mm'),
+                    str(R / 'package/Userland/NativeMetal540OwnedRun.mm'),
+                    str(R / 'package/Userland/NativeMetal540GraphicsOwnedRun.mm'),
+                    str(R / 'package/Userland/NativeMetal540Capabilities.mm'),
+                    str(R / 'package/Userland/NativeMetal540DeviceAdapter.mm'),
+                    str(R / 'package/Userland/NativeMetal540ProtocolAudit.mm'),
+                    str(R / 'package/Userland/NativeMetal540Render.cpp'),
+                    str(R / 'package/Userland/NativeMetal540RenderAIRProbe.cpp'),
+                    str(R / 'package/Userland/NativeMetal540Surface.mm'),
+                    '-framework', 'Foundation', '-framework', 'IOKit', '-framework', 'Metal', '-framework', 'IOSurface', '-o', str(plugin_exe)],
                    check=True, env=ENV)
     subprocess.run(['strip', '-x', str(plugin_exe)], check=True, env=ENV)
     (plugin_bundle / 'Info.plist').write_bytes(plistlib.dumps(dict(
@@ -130,6 +148,11 @@ def main():
         (OUT / (name + '.plist')).write_bytes(plistlib.dumps(job, fmt=plistlib.FMT_XML))
 
     files = [('bin/adrenoprobed', 0o755, daemon.read_bytes())]
+    for path in sorted(plugin_bundle.rglob('*')):
+        if path.is_file() and not path.is_symlink():
+            relative=path.relative_to(plugin_bundle).as_posix()
+            mode=0o755 if relative=='NativeAdrenoMetal' else 0o644
+            files.append(('addons/NativeAdrenoMetal.bundle/'+relative,mode,path.read_bytes()))
     for name in sorted(jobs):
         files.append((f'daemons/{name}.plist', 0o644, (OUT / (name + '.plist')).read_bytes()))
     entries = []
@@ -176,6 +199,8 @@ def main():
                   plugin_sha256=sha(plugin_exe.read_bytes()), plugin_cdhash=plugin_cdhash,
                   plugin_bundle='NativeAdrenoMetal.bundle', plugin_class='NativeAdrenoMetalDevice',
                   trust_own_cdhashes=[cdhash, plugin_cdhash], trust_original_modules_unchanged=True,
+                  probe_profile='globalID-four-groups-256' if os.environ.get('P21_PROBE_GLOBAL')=='1' else 'localID-one-group-64',
+                  probe_fixture_sha256=sha((R/'tools/gpu-native540'/('probe_global_fixture.h' if os.environ.get('P21_PROBE_GLOBAL')=='1' else 'probe_fixture.h')).read_bytes()),
                   hardware_executed=False)
     (OUT / 'build.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))

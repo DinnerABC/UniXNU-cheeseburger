@@ -1,0 +1,21 @@
+# A540 owned SolidColor图形对象链 · 2026-11-06
+
+本批在原 NativeMetal540Objects session上增加texture/renderpipeline/renderencoder与command类型，不另建GPUengine，不把受限NSObject声明为完整MTLprotocol或systemdevice。原MLComputepadding链保持，增加原SpriteKit92788B hash准入及实际VS/FSfunctiontype，精确同library/sessionpair准入。
+
+Texture仅plain2D64×64RGBA8sample1/mip1/layer1/Shared/RenderTarget，backing16384BNEWBO，初次未完成不可getBytes。显式有限 `newRenderPipelineWithVertexFunction:fragmentFunction:` 与 `renderCommandEncoderWithTexture:` 非假装完整publicMTLdescriptor接口；vertex48B/fragment16Bslot0offset0、triangle3start0，单encoder/draw。未知格式、foreignsession、重复texture提交拒绝。
+
+Commit在caller同步prepare IB/VS/FS/scratch与original encodeAIR、输入flush/uploadproof；worker只submit/genuine200mswait/cacheacquire，三timestamp必须1/2/3。只有真实Completed/cache后texture getBytesfull64×64pitch256可读；fence不是pixelcorrect，OwnedRun额外原readbackoracle验证。targetCPU只有sentinel、vertex/fragment输入CPU上传，不上传expectedimage。
+
+所有BO/mapping保活继续沿原session/lost/close/quarantine，hostdeadline/失败不允许ownerreuse。此新conn未扩大privateSurface5BOretirementproof到整个graphicsBO集合；安全关闭与显式receipt仍分别验收。
+
+Host `tests/test_native540_graphics_objects.py`3testsPASS，actualObjC ASanUBSan图形/submitfail/waitfail/fencebutnopixels及旧compute对象slowprepare/timeout等回归，arm64Objects+GraphicsOwnedRun编译PASS。证据 `/Users/dinnerabc/unixnu-p21/native540/graphics-objects-20261106T103745886930Z`。模型softwarewrites不是hardwareAIR证据。
+
+候选 `out/p21/p21-sagit-graphics-owned-20261106T103931Z`同seed/697Bargs/ADT/DTB/PM4/power，实际image `37e85ac7493e3c582102b6f53d001f33c2ce14be807a4aabf641816c180f0b55`、kernel75fcfab6…/FDbb47d57d…、gate20261106T104329ZactualEFI3pinsPASS。单次boot回执logs/boot-once-20261106T104401Z、246.156s自行回Recovery，BCB预置且无hosthelp。
+
+新log `out/p21/persistent-logs/20261106T104817Z` boot `0x3d912a16`，rawSHA `e0f4733b599b41da738bac65520d3e3072ac7106ace3892fb0c30993bbb60484`，35rounds/0writererrors。**RG status4 read1 pxff0000ff/ff000000 bad0**，userBO47/sub9fence9wait9/open5close5/free5；原RA/RI、M540/SF540/SRproof全保持。真实owned图形对象读取原metallib、创建pipeline/texture/encoder并实际GPU写出正确像素，不是softwaremodel。冻结 `out/p21/gpu-cp/rounds/20261106T104924Z-sagit-owned-spritekit-graphics-pass`。
+
+后续source追加标准 `newRenderPipelineStateWithDescriptor:`／`renderCommandEncoderWithDescriptor:`／texture getBytes region入口，只允许同有限SolidColor功能：emptyvertex/linkeddescriptor按内容核对，singleattachmentRGBA8/clearblack/store、array0默认或1、禁止MSAA/depth/resolve/unknown。sessionprepare内二次texture占用门防预先创建两command竞态，host模型覆盖。首次descriptor测试因默认非nil空对象／arraylength0拒绝，记录保留，修正后3testsPASS/arm64/原compute；source变更未入上述已启动image，candidate/logs/post-build-source-change.json明确。
+
+新标准入口候选 `out/p21/p21-sagit-graphics-descriptors-20261106T110242Z`实机成功，imageSHA `8db1208f44f70d7d10ecce82b1177935d653e4829d1ace562ecd10b65fae1e1d`，samekernel75fcfab6…/newFD09a860d2…/payload92d5f0f7…，gate20261106T110626ZactualEFI3pinsPASS。单次boot244.577s自行return，BCB预置/无hosthelp，boot `0x3f177281` log `out/p21/persistent-logs/20261106T111119Z` rawSHA `dc30feed45890598f8f57360fe25cbf4f24f5f6ebb5b1df45a11c2419a657cc7` 35rounds/0errors。RGstatus4/read1/bad0原AIR/compute/privateimport/retirement全保持。
+
+实际使用标准pipeline/passdescriptor与texturegetBytes region，仍只有限64RGBA/SolidColor支持；未给对象添加假protocol。samekernel/BoardRuntime已核对复用，非重编kernelclaim。冻结 `out/p21/gpu-cp/rounds/20261106T111250Z-sagit-standard-render-descriptors-pass`，device-result.json绑定本轮raw。仍无systemMetalregistereddevice、通用metallib、共享texture/IOSurfaceobjects、presentation/UI GPU合成。

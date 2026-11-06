@@ -75,7 +75,7 @@ struct ScanBand540 {
 
     static bool encodeVariant(Encoder540 &e, uint64_t shaderVA, uint64_t bufferVA,
                               uint32_t bufferBytes, uint32_t local, uint32_t groups,
-                              uint64_t scratch, const Variant &v) {
+                              uint64_t scratch, const Variant &v, const uint32_t *directCode=nullptr) {
         Blit540 base(e);
         if (!base.restore()) return false;
         bool ok = true;
@@ -106,9 +106,8 @@ struct ScanBand540 {
         r(REG_A5XX_HLSQ_CS_INSTRLEN, InstrLen);
         // SP_CS_OBJ_START is a 64-bit address followed by four zero words in
         // sagit's object write; Mesa 26 exposes the pair as one reg64.
-        r(REG_A5XX_SP_CS_OBJ_START, uint32_t(shaderVA));
-        r(REG_A5XX_SP_CS_OBJ_START + 1, uint32_t(shaderVA >> 32));
-        for (unsigned i = 2; i < 6; ++i) r(REG_A5XX_SP_CS_OBJ_START + i, 0);
+        const uint32_t object[6]={uint32_t(shaderVA),uint32_t(shaderVA>>32),0,0,0,0};
+        if(!e.regs(REG_A5XX_SP_CS_OBJ_START,object,6))ok=false;
         r(REG_A5XX_HLSQ_UPDATE_CNTL, 0x1f00000);
         r(REG_A5XX_HLSQ_CS_CNTL_0,
           A5XX_HLSQ_CS_CNTL_0_WGIDCONSTID(v.wgid) |
@@ -118,7 +117,12 @@ struct ScanBand540 {
         // SS4 load of the cached instruction unit from the shader object.
         const uint32_t load[3] = {(2u << 16) | (ComputeBlock << 18) | (InstrLen << 22),
                                   uint32_t(shaderVA), uint32_t(shaderVA >> 32)};
-        p(0x30, load, 3);
+        if(directCode){
+            uint32_t direct[3+CodeWords]={};
+            direct[0]=(ComputeBlock<<18)|(InstrLen<<22);
+            for(unsigned i=0;i<CodeWords;++i)direct[3+i]=directCode[i];
+            p(0x30,direct,3+CodeWords);
+        }else p(0x30, load, 3);
         // Compute SSBO descriptors: state block 15, 16 entries. Only buffer 0
         // is bound; WIDTH/HEIGHT carry its byte size, the second packet its
         // 64-bit GPU address.
@@ -126,8 +130,8 @@ struct ScanBand540 {
         const uint32_t count = v.bufCount > 16 ? 16 : v.bufCount;
         values[0] = (v.bufBlock << 18) | (count << 22);
         values[1] = 1;
-        values[3] = bufferBytes & 0xffffu;
-        values[4] = bufferBytes >> 16;
+        values[3] = A5XX_SSBO_1_0_WIDTH(bufferBytes & 0xffffu);
+        values[4] = A5XX_SSBO_1_1_HEIGHT(bufferBytes >> 16);
         p(0x30, values, 3 + count * 2);
         values[1] = 2;
         values[3] = uint32_t(bufferVA);

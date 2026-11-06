@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: MIT
-// Diagnostic log on UFS (boot argument sheng-log=1): every 2 s the text the board page would show (the diagnostic page, the live
-// banner, the GPU rows, a caught panic message) and the kernel message buffer are written to the last 32 MiB of userdata through
-// NativeUfs's bounded log window, so a run can be read back afterwards (scripts/read-sheng-log.py over the Linux log reader).
-//
-// Window layout (4096-byte blocks): 0 header, 1..32 the kernel message buffer (oldest first), 33.. text slots of 8 blocks in a ring,
-// then the export (version 3, int-150): the newest complete blob that user space handed over (boot_log_export_put: the Metal plugin's
-// pipeline caches, so the next image can start with them) lies in NativeUfs's export region, the 256 MiB below the window, which the
-// reader fetches on its own. Its two halves alternate, so the header always names a blob that is wholly on the medium. (Version 2 kept a
-// 16 MiB area at the window's tail; the UI's pipeline caches outgrew it in int-148 and int-149.)
-// The header is written last in each round, so a reader never trusts a slot or an export the header does not count yet.
+// Diagnostic snapshots and msgbuf share the authorized userdata-relative
+// 10 GiB, 32 MiB window. Each round writes its slot/message data before the
+// committed header. The remaining 31 blocks hold independent-console heartbeat
+// subrings; they still share the UFS driver and cannot guarantee panic capture.
 #include <kern/thread.h>
 #include <kern/clock.h>
 #include <string.h>
 #include <pexpert/pexpert.h>
 #include <IOKit/IOLib.h>
 #include "BoardBootArgs.h"
+#include "CheeseburgerGpuDiagnostics.h"
 
 extern int native_ufs_log_open(uint64_t *, uint64_t *, const char **) __attribute__((weak_import));
 extern int native_ufs_log_write(uint64_t, uint32_t, const void *) __attribute__((weak_import));
@@ -133,6 +128,15 @@ extern volatile uint64_t native_gpu_addon_mount_stat[3] __attribute__((weak_impo
 extern volatile uint64_t native_gpu_addon_orig_stat[3] __attribute__((weak_import));
 extern volatile int native_gpu_addon_boot_mount __attribute__((weak_import));
 extern char native_adreno_service_text[64] __attribute__((weak_import));
+extern char native_adreno_state_text[64] __attribute__((weak_import));
+extern char native_adreno_pixel_text[64] __attribute__((weak_import));
+extern char native_adreno_metal_abi[16][64] __attribute__((weak_import));
+extern char native_adreno_transform_text[64],native_adreno_transform_input[64],native_adreno_transform_output[64] __attribute__((weak_import));
+extern char native_adreno_air_text[64],native_adreno_air_input[64],native_adreno_air_output[64] __attribute__((weak_import));
+extern char native_adreno_objects_text[64],native_adreno_objects_error[64] __attribute__((weak_import));
+extern char native_adreno_render_text[64],native_adreno_render_pixels[64],native_adreno_render_air[64],native_adreno_render_air_inputs[64],native_adreno_graphics_objects[64],native_adreno_graphics_error[64],native_adreno_device_init[64],native_adreno_device_protocol[64],native_adreno_device_contract[64],native_adreno_device_registry[64],native_adreno_objects_retirement[64],native_adreno_continuous_render[64],native_adreno_continuous_pixels[64] __attribute__((weak_import));
+extern char native_adreno_surface_text[64],native_adreno_surface_pixels[64],native_adreno_surface_info[64],native_adreno_surface_error[64],native_adreno_surface_retirement[64] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_import_stats[4],native_adreno_import_cache[4] __attribute__((weak_import));
 extern volatile int native_adreno_service_ready __attribute__((weak_import));
 extern volatile int native_gpu_addon_stage __attribute__((weak_import));
 extern volatile int native_gpu_addon_status __attribute__((weak_import));
@@ -235,6 +239,9 @@ static uint8_t *boot_log_heartbeat_buffer, *boot_log_autoreset_buffer, *boot_log
 volatile uint64_t boot_log_blocks, boot_log_hb_first;
 volatile uint32_t boot_log_hb_count;
 static uint64_t boot_log_ticks_start, boot_log_freq;
+static volatile uint32_t boot_log_heartbeat_errors;
+static uint32_t boot_log_truncated_rows;
+static volatile uint32_t boot_log_snapshot_errors;
 
 static uint64_t log_ticks(void) {uint64_t v; __asm__ volatile("isb\n\tmrs %0, cntpct_el0" : "=r"(v)); return v;}
 
@@ -242,6 +249,7 @@ static uint64_t log_ticks(void) {uint64_t v; __asm__ volatile("isb\n\tmrs %0, cn
 static size_t put(char *out, size_t at, size_t cap, const char *text, size_t max) {
   size_t n = strnlen(text, max);
   while (n && (text[n - 1] == ' ' || text[n - 1] == 0)) --n;
+  if(n+at+2>=cap)++boot_log_truncated_rows;
   for (size_t i = 0; i < n && at + 2 < cap; ++i) {char c = text[i]; out[at++] = (c >= 32 && c < 127) ? c : '?';}
   if (at + 1 < cap) out[at++] = '\n';
   return at;
@@ -294,7 +302,7 @@ volatile uint64_t cb_boot_id=0;
 // 3 auto-reset. The reader groups by tag and filters by the header boot id.
 enum {HbTickSlots = 22, HbStepSlots = 6, HbResetSlots = 3, HbSlots = HbTickSlots + HbStepSlots + HbResetSlots};
 static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq, unsigned base, unsigned count) {
-  if (!buf || !boot_log_blocks || !cb_boot_id || !boot_log_ticks_start || boot_log_state != 2) return;
+  if (!buf || !boot_log_blocks || !cb_boot_id || !boot_log_ticks_start || boot_log_state == 4) return;
   const uint64_t now = boot_log_freq ? (log_ticks() - boot_log_ticks_start) / boot_log_freq : 0;
   memset(buf, 0, LogBlock);
   int line = snprintf((char *)buf, LogBlock,
@@ -320,6 +328,14 @@ static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq, unsign
              &native_adreno_submit_precpirq ? native_adreno_submit_precpirq : 0,
              &native_adreno_submit_fenced ? native_adreno_submit_fenced : 0);
     size_t used = strnlen((char *)buf, LogBlock - 1);
+    const uint32_t valid=__atomic_load_n(&native_adreno_core_record.valid,__ATOMIC_ACQUIRE);
+    snprintf((char *)buf+used,LogBlock-used,
+      " g=%d/%u/%u/%x ticks=%llu start=%llu freq=%llu he=%u",
+      valid&CoreResultValid?native_adreno_core_record.rc:-32768,
+      native_adreno_drain_record.stage,native_adreno_drain_record.reason,valid,
+      (unsigned long long)log_ticks(),(unsigned long long)boot_log_ticks_start,
+      (unsigned long long)boot_log_freq,boot_log_heartbeat_errors);
+    used=strnlen((char *)buf,LogBlock-1);
     if (used + 1 < LogBlock) { ((char *)buf)[used] = '\n'; ((char *)buf)[used + 1] = 0; }
   }
   // Use every block after the slot area as a small heartbeat ring so a fault
@@ -331,7 +347,8 @@ static void heartbeat_record(uint8_t *buf, const char *tag, uint64_t seq, unsign
   } else {
     lba = boot_log_blocks - 1;
   }
-  if (native_ufs_log_write(lba, 1, buf)) native_ufs_log_sync();
+  if (!native_ufs_log_write(lba,1,buf) || !native_ufs_log_sync())
+    __atomic_fetch_add(&boot_log_heartbeat_errors,1,__ATOMIC_RELAXED);
 }
 void cheeseburger_bootlog_heartbeat(void) {
   static uint64_t seq;
@@ -367,6 +384,37 @@ extern uint32_t processor_avail_count;
 #include "PlatformLogReports.inc"
 static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
  size_t at=0;char head[96];snprintf(head,sizeof(head),"#slot %u t=%us tag=cheeseburger-P21",slot,now);at=put(out,at,cap,head,sizeof(head));
+ char time_row[220];
+ snprintf(time_row,sizeof time_row,"LOGTIME start=%llu freq=%llu sample=%llu sec=%u snapshot_errors=%u heartbeat_errors=%u",
+  (unsigned long long)boot_log_ticks_start,(unsigned long long)boot_log_freq,
+  (unsigned long long)log_ticks(),now,boot_log_snapshot_errors,boot_log_heartbeat_errors);
+ at=put(out,at,cap,time_row,sizeof time_row);
+ uint32_t core_valid=__atomic_load_n(&native_adreno_core_record.valid,__ATOMIC_ACQUIRE);
+ if(core_valid){
+  char core[300];snprintf(core,sizeof core,"CORE2 valid=%x rc=%d rbpre=%x sppre=%x rbpost=%x sppost=%x fence_rc=%d fence_stage=%u sample=%llu",
+   core_valid,native_adreno_core_record.rc,native_adreno_core_record.rbpre,native_adreno_core_record.sppre,
+   native_adreno_core_record.rbpost,native_adreno_core_record.sppost,native_adreno_core_record.fence_rc,
+   native_adreno_core_record.fence_stage,(unsigned long long)native_adreno_core_record.sample);
+  at=put(out,at,cap,core,sizeof core);
+ }
+ uint32_t drain_valid=__atomic_load_n(&native_adreno_drain_record.valid,__ATOMIC_ACQUIRE);
+ if(drain_valid){
+  char drain[400];snprintf(drain,sizeof drain,"DRAIN stage=%u reason=%u valid=%x rptr=%x wptr=%x me=%x vbif=%x mask=%x ackme=%x ackvb=%x status=%x status3=%x endr=%x endw=%x wait=%u sample=%llu",
+   native_adreno_drain_record.stage,native_adreno_drain_record.reason,drain_valid,
+   native_adreno_drain_record.rptr,native_adreno_drain_record.wptr,native_adreno_drain_record.me,
+   native_adreno_drain_record.vbif,native_adreno_drain_record.mask,native_adreno_drain_record.ackme,
+   native_adreno_drain_record.ackvb,native_adreno_drain_record.status,native_adreno_drain_record.status3,
+   native_adreno_drain_record.endr,native_adreno_drain_record.endw,native_adreno_drain_record.wait,
+   (unsigned long long)native_adreno_drain_record.sample);
+  at=put(out,at,cap,drain,sizeof drain);
+  snprintf(drain,sizeof drain,"DRAINCP valid=%x pre=%x/%x cp=%x/%x me=%x rptr=%x wptr=%x sample=%llu",
+   native_adreno_drain_record.cpValid,native_adreno_drain_record.preStatus,
+   native_adreno_drain_record.preStatus3,native_adreno_drain_record.cpStatus,
+   native_adreno_drain_record.cpStatus3,native_adreno_drain_record.cpMe,
+   native_adreno_drain_record.cpRead,native_adreno_drain_record.cpWrite,
+   (unsigned long long)native_adreno_drain_record.sample);
+  at=put(out,at,cap,drain,sizeof drain);
+ }
  snprintf(head,sizeof(head),"DISPLAY stage=%llu meta=%x reg=%llu clients=%llu frames=%llu",p20_observer[7],native_legacy_meta_status,p20_registry_seen,p20_display_clients,p20_display_frames);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"SWAP check=%llu reject=%llu why=%llu transfer=%llu rc=%llx",p20_swap_stats[0],p20_swap_stats[2],p20_swap_stats[3],p20_swap_stats[7],p20_swap_stats[11]);at=put(out,at,cap,head,sizeof(head));
  snprintf(head,sizeof(head),"DISPLAY SCALE status=%d calls=%u chosen=%u rotation=%u",native_legacy_unit_scale_status,native_legacy_unit_scale_calls,native_legacy_chosen_scale,native_legacy_chosen_rotation);at=put(out,at,cap,head,sizeof(head));
@@ -573,6 +621,63 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
   char txt[112];
   snprintf(txt,sizeof txt,"GPSTXT %s bid=%llx",native_adreno_service_text,cb_boot_id);
   at=put(out,at,cap,txt,sizeof txt);
+  if(&native_adreno_state_text[0]&&native_adreno_state_text[0]){
+   snprintf(txt,sizeof txt,"GPSTATE %s bid=%llx",native_adreno_state_text,cb_boot_id);
+   at=put(out,at,cap,txt,sizeof txt);
+  }
+  if(&native_adreno_pixel_text[0]&&native_adreno_pixel_text[0]){
+   snprintf(txt,sizeof txt,"GPPIX %s bid=%llx",native_adreno_pixel_text,cb_boot_id);
+   at=put(out,at,cap,txt,sizeof txt);
+  }
+  if(&native_adreno_transform_text[0]&&native_adreno_transform_text[0]){
+   at=put(out,at,cap,native_adreno_transform_text,64);
+   at=put(out,at,cap,native_adreno_transform_input,64);
+   at=put(out,at,cap,native_adreno_transform_output,64);
+  }
+  if(&native_adreno_air_text[0]&&native_adreno_air_text[0]){
+   at=put(out,at,cap,native_adreno_air_text,64);
+   at=put(out,at,cap,native_adreno_air_input,64);
+   at=put(out,at,cap,native_adreno_air_output,64);
+  }
+  if(&native_adreno_objects_error[0]&&native_adreno_objects_error[0])at=put(out,at,cap,native_adreno_objects_error,64);
+  if(&native_adreno_objects_text[0]&&native_adreno_objects_text[0])at=put(out,at,cap,native_adreno_objects_text,64);
+  if(&native_adreno_render_text[0]&&native_adreno_render_text[0]){
+   at=put(out,at,cap,native_adreno_render_text,64);
+   at=put(out,at,cap,native_adreno_render_pixels,64);
+  }
+  if(&native_adreno_continuous_render[0]&&native_adreno_continuous_render[0]){
+   at=put(out,at,cap,native_adreno_continuous_render,64);at=put(out,at,cap,native_adreno_continuous_pixels,64);
+  }
+  if(&native_adreno_objects_retirement[0]&&native_adreno_objects_retirement[0])at=put(out,at,cap,native_adreno_objects_retirement,64);
+  if(&native_adreno_device_init[0]&&native_adreno_device_init[0])at=put(out,at,cap,native_adreno_device_init,64);
+  if(&native_adreno_device_protocol[0]&&native_adreno_device_protocol[0])at=put(out,at,cap,native_adreno_device_protocol,64);
+  if(&native_adreno_device_contract[0]&&native_adreno_device_contract[0])at=put(out,at,cap,native_adreno_device_contract,64);
+  if(&native_adreno_device_registry[0]&&native_adreno_device_registry[0])at=put(out,at,cap,native_adreno_device_registry,64);
+  if(&native_adreno_graphics_objects[0]&&native_adreno_graphics_objects[0]){
+   at=put(out,at,cap,native_adreno_graphics_objects,64);at=put(out,at,cap,native_adreno_graphics_error,64);
+  }
+  if(&native_adreno_render_air[0]&&native_adreno_render_air[0]){
+   at=put(out,at,cap,native_adreno_render_air,64);at=put(out,at,cap,native_adreno_render_air_inputs,64);
+  }
+  if(&native_adreno_surface_text[0]&&native_adreno_surface_text[0]){
+   at=put(out,at,cap,native_adreno_surface_text,64);
+   at=put(out,at,cap,native_adreno_surface_pixels,64);
+   at=put(out,at,cap,native_adreno_surface_info,64);
+  }
+  if(&native_adreno_surface_error[0]&&native_adreno_surface_error[0])at=put(out,at,cap,native_adreno_surface_error,64);
+  if(&native_adreno_surface_retirement[0]&&native_adreno_surface_retirement[0])at=put(out,at,cap,native_adreno_surface_retirement,64);
+  if(&native_adreno_import_stats[0]){
+   char import[128];snprintf(import,sizeof import,"GIMPORT persistent=%llu fallback=%llu complete_errors=%llu completed=%llu bid=%llx",
+    native_adreno_import_stats[0],native_adreno_import_stats[1],native_adreno_import_stats[2],native_adreno_import_stats[3],cb_boot_id);
+   at=put(out,at,cap,import,sizeof import);
+  }
+  if(&native_adreno_import_cache[0]){
+   char cache[128];snprintf(cache,sizeof cache,"GICACHE pub=%llu acq=%llu bytes=%llu errors=%llu bid=%llx",
+    native_adreno_import_cache[0],native_adreno_import_cache[1],native_adreno_import_cache[2],native_adreno_import_cache[3],cb_boot_id);
+   at=put(out,at,cap,cache,sizeof cache);
+  }
+  if(&native_adreno_metal_abi[0][0])for(unsigned i=0;i<16;++i)
+   if(native_adreno_metal_abi[i][0])at=put(out,at,cap,native_adreno_metal_abi[i],64);
   char v2[160];
   snprintf(v2,sizeof v2,"GPSV2 markers=%llu last=%llx mapopt=%llx refused=%llu bid=%llx",
     native_adreno_service_stats[16],native_adreno_service_stats[17],
@@ -696,18 +801,6 @@ static size_t compose(char *out,size_t cap,uint32_t slot,unsigned now) {
       (int)(int16_t)(uint16_t)native_adreno_flip[7],native_adreno_flip[8],native_adreno_flip[9],
       cb_boot_id);
     at=put(out,at,cap,flip,sizeof flip);
-   }
-   /* Core-domain transition: status before and after the CP-quiescent
-    * power-up, and the keep-alive fence that proves the CP survived it. */
-   if (&native_adreno_resume[0] && native_adreno_resume[1]) {
-    char core[170];
-    snprintf(core,sizeof core,"CORE rbccu=%x>%x sp=%x>%x rc=%d fence=%d/%u bid=%llx",
-      native_adreno_resume[1],native_adreno_resume[3],
-      native_adreno_resume[2],native_adreno_resume[4],
-      (int)(int16_t)(uint16_t)native_adreno_resume[0],
-      (int)(int16_t)(uint16_t)(native_adreno_resume[5]&0xff),
-      (native_adreno_resume[5]>>8)&0xffu,cb_boot_id);
-    at=put(out,at,cap,core,sizeof core);
    }
    /* Isolated compute constant probe: its own page should hold 0xdeadbeef. */
    if (&native_adreno_compute[0] && (native_adreno_compute[12] || native_adreno_compute[14])) {
@@ -1069,7 +1162,11 @@ static void writer(void *arg, wait_result_t result) {
     int ok = 1;
     // Text slot, then the message buffer, then the header that makes both visible.
     memset(boot_log_buffer, 0, LogSlotBlocks * LogBlock);
-    compose((char *)boot_log_buffer, LogSlotBlocks * LogBlock, h.slots_written, now);
+    boot_log_truncated_rows=0;
+    size_t composed=compose((char *)boot_log_buffer, LogSlotBlocks * LogBlock-256, h.slots_written, now);
+    char commit[160];snprintf(commit,sizeof commit,"LOGCOMMIT slot=%u bytes=%llu truncated_rows=%u sample=%llu",
+      h.slots_written,(unsigned long long)composed,boot_log_truncated_rows,(unsigned long long)log_ticks());
+    put((char *)boot_log_buffer,composed,LogSlotBlocks*LogBlock,commit,sizeof commit);
     ok &= native_ufs_log_write(LogSlotFirst + (uint64_t)(h.slots_written % slot_count) * LogSlotBlocks, LogSlotBlocks, boot_log_buffer);
     h.msg_bytes = copy_msgbuf(boot_log_buffer);
     for(unsigned offset=0;offset<LogMsgBlocks && ok;offset+=32)
@@ -1083,7 +1180,7 @@ static void writer(void *arg, wait_result_t result) {
     memcpy(boot_log_buffer, &h, sizeof h);
     ok &= native_ufs_log_write(0, 1, boot_log_buffer);
     ok &= native_ufs_log_sync();
-    if (!ok) {boot_log_errors = ++errors;} else {errors = 0;if(h.rounds==1)printf("CB persistent log: first commit synced, boot=%llx\n",h.boot_id);}
+    if (!ok) {boot_log_errors = ++errors;++boot_log_snapshot_errors;} else {errors = 0;if(h.rounds==1)printf("CB persistent log: first commit synced, boot=%llx start=%llu freq=%llu\n",h.boot_id,(unsigned long long)start,(unsigned long long)f);}
     if (errors >= LogMaxErrors) {boot_log_state = 3; return;}
     if (h.gpt_last != h.gpt_open) {boot_log_state = 4; return;}
     IOSleep(LogPeriodMs);

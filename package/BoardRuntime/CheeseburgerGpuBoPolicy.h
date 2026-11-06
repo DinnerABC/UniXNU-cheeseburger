@@ -19,6 +19,14 @@ inline bool releaseMappedBuffer(bool mapped, Idle idle, Unmap unmap) {
     return true;
 }
 
+template <class Complete>
+inline bool completeImportedBuffer(bool imported, bool &failed, Complete complete) {
+    if (failed) return false;
+    if (!imported) return true;
+    if (complete() != 0) { failed = true; return false; }
+    return true;
+}
+
 // One live connection at a time. The generation prevents a closing client from
 // clearing the gate of a newer connection: release() only acts for the
 // generation it acquired.

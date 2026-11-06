@@ -34,8 +34,13 @@ struct SubmitRecord {
 // The last few streams as the CP reads them (same record sheng keeps in
 // NativeAdrenoRing): [slot] seq, start, end, count, then the ring words.
 extern "C" {
+#ifdef NATIVE540_ENCODER_ONLY
+extern volatile uint32_t native_adreno_ring_log540[4][4 + 64];
+extern volatile uint32_t native_adreno_ring_log540_count;
+#else
 volatile uint32_t native_adreno_ring_log540[4][4 + 64];
 volatile uint32_t native_adreno_ring_log540_count;
+#endif
 }
 
 // Sagit Encoder, restricted to the packets this board emits. Every count and
@@ -113,6 +118,11 @@ public:
             packet(0x13, nullptr, 0) && packet(0x53, table, 3) &&
             packet(0x43, invalidate, 3) && reg(0x831, 0) &&
             packet(0x5f, &one, 1) && packet(0x13, nullptr, 0);
+    }
+    bool regs(uint32_t address,const uint32_t *values,uint32_t count){
+        if(!values||!count||count>=0x7f||address>0x40000-count||n+count+1>cap)return false;
+        w[n++]=0x40000000u|count|(parity(count)<<7)|(address<<8)|(parity(address)<<27);
+        for(uint32_t i=0;i<count;++i)w[n++]=values[i];return true;
     }
     bool reg(uint32_t address, uint32_t value) {
         if (address > 0x3ffff || n + 2 > cap) return false;

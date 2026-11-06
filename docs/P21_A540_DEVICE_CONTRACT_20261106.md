@@ -1,0 +1,13 @@
+# A540 资源设备身份／完成通知／注册协议审计 · 2026-11-06
+
+基线actual_MTLDeviceinit已deviceDIready＋RGbad0，通过原frameworksuperinit/195queryconstruct、ownlimits和realbackend；但不是systemregistry。
+
+本批补充：sessionweakpublicidentity避免cycle，createdbuffer/library/queue/commandstrong持有真实device，function/pipeline/texture沿ownedparent取identity；设备释放时资源仍保活其device。所有标准图形/compute `.device`返回相应对象。currentAllocatedSize由sessionledger实际累计，不伪数。
+
+CB完成通知一次性：success/error/latehandler均支持，callbacks在client/session锁外执行；notification期间wait等callback结束，callback自身重入wait不死锁；仍2s hostdeadline，超时lost不放资源。hostactualgraphics/oldcompute/arm643tests通过，包含callbackonce/reentry和identity。
+
+新 NativeMetal540ProtocolAudit 只读targetMTLDevice与MTLDeviceSPIrequiredmethods，递归协议/逐selector真实method及参数returnencoding校验，缺方法/不匹配计数和首项明确输出DP；不classaddprotocol、不把method存在当语义完整。不伪造defaultdevice。DC独立记录identity/callback/allocated，RG保持pixelcheck。
+
+候选 `out/p21/p21-sagit-device-contract-20261106T120610Z` imageSHA `161f74562718e938b1e3e0bf034cd3560842834797611c025e83397c6fc3f409`、kernel750e930a…/FDcf6ce0d0…/payloadb1092c3c…；gate20261106T121048ZactualEFI3pinsPASS，kernel/plugin/trust/payload/UEFI同轮，sameSeed/697Bargs/ADT/DTB/power/wire。singleboot/monitor进行中，无devicecontract运行结果；不引用旧DI或pixel作为本轮结果。
+
+后续：根据DP实际缺项逐个实现可验证标准API、准确MTLResource/SPIadmission，缺功能仍拒绝；目标系统默认device注册及presentation必须另验，不能adoptprotocolcheckbox替代实现。原IOSurface/privateBoFreeproof保持，但不因此证明所有graphicsobjectsretirement或displayread安全。
