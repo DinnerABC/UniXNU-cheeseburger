@@ -1,3 +1,13 @@
+## 2026-11-07：转向真实Metal桌面；通用库/全屏编码/长期BO/设备compiler底座完成，尚未接管
+
+- 用户新优先级为**尽快原系统backboardd/QuartzCore使用GPU合成桌面**，不是继续wrapper/四色probe；当前`a9ffb26`成功基线保留，本轮未启动设备、未新增rawboot。最近设备日志仍boot **`0x3d869cc1`**／`out/p21/persistent-logs/20261106T170445Z`。执行器重连后无ADB server/旧monitor检测，本轮未启动服务/查询手机，**当前手机状态未重新确认**，不要复制上一Recovery状态为实时状态。
+- 本批新增实质桌面底座 `NativeMetal540DesktopLibrary/Session/Draw.{h,cpp}`：固定sagit原库parse/全AIRhash/immutableownedbytes/lazycompiler/weakcache；现NativeAdrenoABI长连接64slots/128MiB/实际maxBO/2000复用/generationID/全mappedBOinflight阻止CPUreuse/free/失败stickyhold；fixed原AdrenoPipeline draw经typedbindings接现BO、sample/blend/MRT/fullBGRA及constantwindow原plan，未改MMIO/CP/ABI/seed/安全。
+- 恢复既有OS/SystemCryptex只读挂载且原SHA匹配，当前路径 `/Volumes/DawnUpdate21H461.J120J121J207J208OS` 与 `…SystemCryptex`（hostdisk12/10 attachments，仅本轮新增，不触及NAS disk8）。真实QuartzCore9,670,832B/167AIRentries，image_rect_blit VS/FS实际编译并通过fullHD1080×1920/pitch4352、sample/预乘blend/MRT原PM4gate；欠分配/alias/binding错误拒绝。**hostencoder不是device运行或桌面合成证据**。
+- 新script `p21-audit-metal-runtime-llvm.py`只读原cacheexport，targetlibLLVM UUID `0953f8c09b29364ea509ba77eed900d4`/mainUUID590d839a…；host220LLVMimports及actualtargetimports均存在，仅生成链接声明。`p21-build-metal-runtime-compiler.py`构建arm64-ios17.7实际iOSLLVM后端，SHA **`3c8b18bf0cbf61401ddccfcdc65b1a683f85c45b87f7ad1a532d084e943db8db`**，linkage无hostLLVM；C enum语义/设备load/runtimecompile仍未验证。初始danglingREADME symlink/缺crossobjc、测试SDK/include/错误注入夹具失败均保留修正。
+- local证据 `/Users/dinnerabc/unixnu-p21/native540/desktop-metal-20261107T031916Z`，NAS独立 **`out/p21/p21-metal-desktop-bridge-20261107T034422Z`** 保存源码snapshot/sourcepins/runtime/log/manifest。103tests PASS含ASan/UBSan/arm64与旧完整回归，最终alias/binding防护后桌面3tests另PASS。仅build-only，不伪写prebootgate/boot/freeze成功。详细来源/差异/限界 `docs/P21_METAL_DESKTOP_BRIDGE_20261107.md`。
+- **尚未接管原因/下一直接步骤**：上游QcomMTL使用不同Family semanticshader/program/resource/queue/shmem/notification接口；本机NativeAdrenoABI不能直接接它。现已有desktoplibrary/session/draw，但未提供真正系统MTLObject/queue/encoder/descriptor/constant绑定，full21H461继承abstract语义闭包及displayreader生命周期也未接。因此principal仍nil，**本轮不启动明知无法systemrender的假注册候选**。下一集中把上游对象链适配到这三个底座，backboardd桌面模式与mediaserverdprobe互斥；自然注册前逐项真实契约，actualsystemAIR→sample/blend→fence→原consumer→reader完成，不能GPUcopyCPU桌面当合成。
+- 本轮按批准计划的offline-blocked分支保存/提交实质适配，不改其他硬件/壁纸/OSidentity，不push/刷分区、不重复旧镜像。原临时测试metallib路径已从已验OS恢复；不要删除私有inputs/历史镜像。下一先核git/head/sourcepins、实际device/唯一ADB和latestlog回收状态，再构建完整新plugin/trust/payload/UEFI/gate；只一次临时boot后日志回收并commit。
+
 ## 2026-11-07：标准 Metal 创建契约第二批实机通过并按轮提交
 
 - 当前设备 root Recovery `3b25cc7c`／唯一ADB5037，无monitor或未回收启动。最新boot **`0x3d869cc1`**，日志 **`out/p21/persistent-logs/20261106T170445Z`**，窗口 SHA `457b7ecd37a1027dd5315111d5fb0ded162ca803fcce83e6b1860b368ad58290`，34rounds／0errors。
