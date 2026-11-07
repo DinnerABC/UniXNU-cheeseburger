@@ -159,7 +159,7 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (BOOL)isHeadless{return NO;}
 - (BOOL)isRemovable{return NO;}
 - (BOOL)isLowPower{return NO;}
-- (uint64_t)recommendedMaxWorkingSetSize{return 64ull*16384;}
+- (uint64_t)recommendedMaxWorkingSetSize{return 2ull<<30;}
 - (BOOL)supportsSampleCount:(NSUInteger)count{return count==1;}
 - (id)newBufferWithBytes:(const void*)bytes length:(NSUInteger)n options:(MTLResourceOptions)o {
     if(!bytes||!n||n>[self maxBufferLength])return nil;

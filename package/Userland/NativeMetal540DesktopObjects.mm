@@ -12,6 +12,14 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+// Private descriptor extensions set by CAMetalLayer (sagit NativeMetal.h
+// QcomNativePresentation). The runtime class implements them; declaring the
+// category here only makes the selectors visible to the compiler.
+@interface MTLTextureDescriptor (CBMetalPresentation)
+- (BOOL)isDrawable;
+- (BOOL)framebufferOnly;
+@end
+
 static NSError *cbFailure(NSString *text) {return [NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInvalidResource userInfo:@{NSLocalizedDescriptionKey:text}];}
 // Unknown-selector fallback: system consumers call many Metal selectors this
 // bounded backend does not implement. An uncaught NSException escaping into a
@@ -38,7 +46,7 @@ NSArray *CBMetalUnknownSelectors(void) {
 @end
 @interface CBMetalBuffer () { @public CBMetalDevice *_device;id _identity;NativeMetal540DesktopSession::Resource _resource;NSUInteger _length;NSString *_label;id _externalOwner; }
 @end
-@interface CBMetalTexture () { @public CBMetalBuffer *_backing;MTLTextureDescriptor *_descriptor;uint32_t _pitch;IOSurfaceRef _surface;id _surfaceOwner;bool _ready; }
+@interface CBMetalTexture () { @public CBMetalBuffer *_backing;MTLTextureDescriptor *_descriptor;uint32_t _pitch;IOSurfaceRef _surface;id _surfaceOwner;bool _ready,_isDrawable,_framebufferOnly; }
 @end
 @interface CBMetalLibrary () { @public CBMetalDevice *_device;id _identity;std::shared_ptr<NativeMetal540DesktopLibrary> _library;NSString *_label; }
 @end
@@ -61,7 +69,7 @@ NSArray *CBMetalUnknownSelectors(void) {
 }
 - (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 @end
-@interface CBMetalCommands () { @public CBMetalQueue *_queue;NSCondition *_condition;MTLCommandBufferStatus _status;NSError *_error;NSMutableArray<CBMetalOperation *> *_operations;NSMutableArray *_handlers;CBMetalBuffer *_ib,*_scratch;bool _active,_committed,_callbacksDone,_pendingReserved;NSThread *_callbackThread;NSString *_label; }
+@interface CBMetalCommands () { @public CBMetalQueue *_queue;NSCondition *_condition;MTLCommandBufferStatus _status;NSError *_error;NSMutableArray<CBMetalOperation *> *_operations;NSMutableArray *_handlers;NSMutableArray *_presentations;CBMetalBuffer *_ib,*_scratch;bool _active,_committed,_callbacksDone,_pendingReserved;NSThread *_callbackThread;NSString *_label; }
 - (void)fail:(NSString *)text;
 - (void)execute;
 @end
@@ -113,8 +121,15 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
         if((pitch&63)||pitch<d.width*4||uint64_t(pitch)*d.height>bytes||!address||(uintptr_t(address)&4095)||(bytes&4095))return nil;
         owner=CFBridgingRelease(CFRetain(s));
     }
+    bool framebufferOnly=[d respondsToSelector:@selector(framebufferOnly)]&&d.framebufferOnly;
+    bool isDrawable=[d respondsToSelector:@selector(isDrawable)]&&d.isDrawable;
+    // Drawable validation per sagit :2508: renderable 4-byte-per-pixel color
+    // format, no swizzle, RenderTarget usage.
+    if(isDrawable&&(!cbFormat(d.pixelFormat)||d.swizzle.red!=MTLTextureSwizzleRed||d.swizzle.green!=MTLTextureSwizzleGreen||
+       d.swizzle.blue!=MTLTextureSwizzleBlue||d.swizzle.alpha!=MTLTextureSwizzleAlpha||!(d.usage&MTLTextureUsageRenderTarget)))return nil;
     if(bytes>16u*1024*1024)return nil;auto b=cbBuffer(self,bytes,address,owner);if(!b)return nil;
-    auto texture=[CBMetalTexture new];texture->_backing=b;texture->_descriptor=[d copy];texture->_pitch=uint32_t(pitch);texture->_surface=s;texture->_surfaceOwner=owner;texture->_ready=s!=nullptr;return texture;
+    auto texture=[CBMetalTexture new];texture->_backing=b;texture->_descriptor=[d copy];texture->_pitch=uint32_t(pitch);texture->_surface=s;texture->_surfaceOwner=owner;texture->_ready=s!=nullptr;
+    texture->_isDrawable=isDrawable;texture->_framebufferOnly=framebufferOnly;return texture;
 }
 - (CBMetalLibrary *)newLibraryWithData:(dispatch_data_t)data error:(NSError **)error {
     if(error)*error=nil;size_t n=data?dispatch_data_get_size(data):0;if(!n||n>64u*1024*1024){if(error)*error=cbFailure(@"Bounded original AIR library required");return nil;}
@@ -220,6 +235,8 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (NSUInteger)allocatedSize {return _backing.allocatedSize;}
 - (IOSurfaceRef)iosurface {return _surface;}
 - (NSUInteger)iosurfacePlane {return 0;}
+- (BOOL)isDrawable {return _isDrawable;}
+- (BOOL)framebufferOnly {return _framebufferOnly;}
 - (NSString *)label {return _backing.label;}
 - (void)setLabel:(NSString *)s {_backing.label=s;}
 - (void)replaceRegion:(MTLRegion)r mipmapLevel:(NSUInteger)level withBytes:(const void *)bytes bytesPerRow:(NSUInteger)row {
@@ -310,7 +327,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (id)device {return _identity;}
 - (NSString *)label {return _label;}
 - (void)setLabel:(NSString *)s {_label=[s copy];}
-- (CBMetalCommands *)commandBuffer {unsigned n=_live.load();do {if(n>=_capacity)return nil;}while(!_live.compare_exchange_weak(n,n+1));auto b=[CBMetalCommands new];b->_queue=self;b->_condition=[NSCondition new];b->_operations=[NSMutableArray new];b->_handlers=[NSMutableArray new];b->_status=MTLCommandBufferStatusNotEnqueued;return b;}
+- (CBMetalCommands *)commandBuffer {unsigned n=_live.load();do {if(n>=_capacity)return nil;}while(!_live.compare_exchange_weak(n,n+1));auto b=[CBMetalCommands new];b->_queue=self;b->_condition=[NSCondition new];b->_operations=[NSMutableArray new];b->_handlers=[NSMutableArray new];b->_presentations=[NSMutableArray new];b->_status=MTLCommandBufferStatusNotEnqueued;return b;}
 @end
 static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return {id,0,uint32_t(texture.width),uint32_t(texture.height),texture->_pitch,cbFormat(texture.pixelFormat)};}
 @implementation CBMetalCommands
@@ -329,6 +346,18 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
 - (void)addCompletedHandler:(void (^)(CBMetalCommands *))handler {
     if(!handler)return;[_condition lock];bool done=_callbacksDone;if(!done)[_handlers addObject:[handler copy]];[_condition unlock];if(done)handler(self);
 }
+- (void)recordPresentation:(CBMetalTexture *)texture mode:(NSUInteger)mode time:(NSTimeInterval)time {
+    [_condition lock];
+    if(_committed){[_condition unlock];return;}
+    bool valid=texture&&[texture isKindOfClass:CBMetalTexture.class]&&texture->_backing&&texture->_backing->_device==(CBMetalDevice*)self.device&&
+        texture->_isDrawable&&std::isfinite(time)&&time>=0&&mode<=2&&_presentations.count<16;
+    for(CBMetalTexture *pending in _presentations)if(pending==texture)valid=NO;
+    if(!valid)[self fail:@"Invalid or duplicate drawable presentation"];
+    else[_presentations addObject:texture];
+    [_condition unlock];
+}
+- (void)presentDrawable:(CBMetalTexture *)texture {[self recordPresentation:texture mode:0 time:0];}
+- (void)presentDrawable:(CBMetalTexture *)texture atTime:(NSTimeInterval)time {[self recordPresentation:texture mode:1 time:time];}
 - (CBMetalRender *)renderCommandEncoderWithDescriptor:(MTLRenderPassDescriptor *)d {
     if(!d||_committed||_active||_operations.count>248)return nil;d=[d copy];auto r=[CBMetalRender new];r->_commands=self;
     id device=self.device;NSMutableArray *owners=[NSMutableArray new];
@@ -380,6 +409,10 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
     if(rc){if(c->session->lost())c->lost=true;[self fail:@"Native draw/submit/fence failed"];
         if(c->lost){[c->held addObjectsFromArray:_operations];[c->held addObject:ib?:[NSObject new]];[c->held addObject:scratch?:[NSObject new]];}}
     _ib=nil;_scratch=nil;ib=nil;scratch=nil;[c->lock unlock];
+    if(!self.error)for(CBMetalTexture *pending in _presentations)@try {
+        if(pending->_surface)IOSurfaceIncrementUseCount(pending->_surface);
+    } @catch(NSException *exception) {[_condition lock];if(!_error)_error=cbFailure(@"Drawable presentation failed");[_condition unlock];break;}
+    [_presentations removeAllObjects];
     [_condition lock];_status=_error?MTLCommandBufferStatusError:MTLCommandBufferStatusCompleted;[_condition unlock];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {
         [_condition lock];_callbackThread=NSThread.currentThread;[_condition unlock];

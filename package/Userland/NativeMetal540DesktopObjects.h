@@ -47,6 +47,8 @@ NSArray *CBMetalUnknownSelectors(void);
 @end
 @interface CBMetalTexture : NSObject
 @property(readonly) id device;
+@property(readonly) BOOL isDrawable;
+@property(readonly) BOOL framebufferOnly;
 @property(readonly) NSUInteger width,height,depth,arrayLength,mipmapLevelCount,sampleCount;
 @property(readonly) MTLPixelFormat pixelFormat;
 @property(readonly) MTLTextureType textureType;
@@ -97,6 +99,8 @@ NSArray *CBMetalUnknownSelectors(void);
 @property(readonly,nullable) NSError *error;
 @property(nullable,copy) NSString *label;
 - (nullable CBMetalRender *)renderCommandEncoderWithDescriptor:(MTLRenderPassDescriptor *)descriptor;
+- (void)presentDrawable:(CBMetalTexture *)texture;
+- (void)presentDrawable:(CBMetalTexture *)texture atTime:(NSTimeInterval)time;
 - (void)addCompletedHandler:(void (^)(CBMetalCommands *))handler;
 - (void)commit;
 - (void)waitUntilCompleted;

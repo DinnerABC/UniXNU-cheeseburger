@@ -1,3 +1,10 @@
+## 2026-11-07：drawable/present 已实现仍14crash；根因指向195supports全NO，下轮 truthful capability
+
+- **drawable/present 轮** boot `0x3df87fd6`（350s）：实现 `CBMetalTexture` isDrawable/framebufferOnly 准入（sagit `:2506–2508`：renderable 4B 格式+无swizzle+RenderTarget usage）与 `presentDrawable:`/`atTime:` 记录（`:4398–4419`：max16/去重/own-device 校验，complete 后 IOSurfaceIncrementUseCount）；`recommendedMaxWorkingSetSize` 修为 2GiB（1MiB 与 unified memory 矛盾）。结果 **14次sig6、0帧**——drawable/present 也不是根因。冻 **`out/p21/gpu-cp/rounds/20261107T113211Z-sagit-desktop-drawable-195-supports-root-cause`**。
+- **6 boot 收敛结论**：门控关=0crash；开=14/1/14/1/14 crash（时序变化）。功能补齐（DS对象/drawable/present/workingset）均未消除。**根因指向 195 supports 查询全 NO**：设备声明 MTLDeviceSPI 却无任何支持 family，CA 请求资源时 Apple 校验直接 abort。UNC/metadata/文件/crash报告通道均已穷尽无法取得确切断言文本。
+- **下轮（决定性）**：按后端真实能力逐项回答 capability——已有真实实现的（RGBA8/BGRA8 渲染、sampler、bounded limits、IOSurface、4帧渲染）answer YES；无实现的保持 NO。需逐项分析 195 查询对应后端实际支持面，truthful YES 只给有真实代码路径的项。然后离线 ObjC 验证+单次 boot 观察崩溃变化。
+- 门控镜像 `1bd080a4…`（用户确认可用）不变；本轮 drawable 候选 `61ab5bec…` 冻结保存；中间 category/ivar/perform 编译错误日志保留修正。104 回归 PASS。未push/未刷分区。
+
 ## 2026-11-07：诊断通道穷尽（沙箱阻断）；转入按 sagit 补 Metal 面
 
 - **MA 通道诊断 boot `0x3e0460d7`**：14 次sig6 同型，**MA PBASE/UNK 行未持久化**——`IOConnectCallStructMethod` 的 SetMetadata 从 backboardd 发出后不落日志窗口（沙箱 profile 阻断或存储路径不同）；marker 通道（IOServiceOpen type=0x4147xxx）可用但仅记 count/last。ReportCrash 无实际输出（Data 取证只有模板）。**可用诊断通道已穷尽：UNC 不触发（非 NSException）、backboardd 禁文件写、metadata 不持久化、无 crash 报告。**冻 **`out/p21/gpu-cp/rounds/20261107T100946Z-sagit-desktop-machan-diag-sandbox-blocked`**。
