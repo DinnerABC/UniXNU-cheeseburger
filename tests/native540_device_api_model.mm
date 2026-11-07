@@ -123,12 +123,13 @@ int main(){@autoreleasepool {
         for(NSInteger p:{NSIntegerMin,0l,1l,NSIntegerMax}){
             tile=[d sparseTileSizeWithTextureType:MTLTextureType2D pixelFormat:f sampleCount:1 sparsePageSize:p];assert(!tile.width&&!tile.height&&!tile.depth);
         }
-        bool caught=false;@try{[d minimumTextureBufferAlignmentForPixelFormat:f];}@catch(NSException*){caught=true;}assert(caught);
+        assert([d minimumTextureBufferAlignmentForPixelFormat:f]==16);
     }
     assert(![d dedicatedMemorySize]&&![d doubleFPConfig]&&![d halfFPConfig]&&![d singleFPConfig]);
     uint64_t bytes=0;size_t n=sizeof bytes;assert(!sysctlbyname("hw.memsize",&bytes,&n,nullptr,0)&&n==sizeof bytes);
     assert([d sharedMemorySize]==bytes);
-    assert(![d metalAssertionsEnabled]);[d setMetalAssertionsEnabled:NO];bool caught=false;
-    @try{[d setMetalAssertionsEnabled:YES];}@catch(NSException*){caught=true;}assert(caught&&![d metalAssertionsEnabled]);
+    assert(![d metalAssertionsEnabled]);[d setMetalAssertionsEnabled:NO];
+    // Enabling is ignored (unsupported feature), never raised into callers.
+    [d setMetalAssertionsEnabled:YES];assert(![d metalAssertionsEnabled]);
     puts("PASS 28 target ABI entries and explicit negative behavior; HOST contract NOT system registration");
 }}

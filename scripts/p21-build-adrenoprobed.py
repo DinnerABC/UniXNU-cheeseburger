@@ -114,7 +114,8 @@ def main():
         desktop_sources=[str(R/'package/Userland'/name) for name in (
             'NativeMetal540DesktopObjects.mm','NativeMetal540DesktopTransport.mm',
             'NativeMetal540DesktopConstants.mm','NativeMetal540DesktopLibrary.cpp',
-            'NativeMetal540DesktopDraw.cpp','NativeMetal540DesktopSession.cpp')]
+            'NativeMetal540DesktopDraw.cpp','NativeMetal540DesktopSession.cpp',
+            'NativeMetal540UnknownSelector.cpp')]
         compiler_reference=plugin_bundle/'QcomGPUCompiler.dylib'
         shutil.copy2(compiler_dylib,compiler_reference)
         subprocess.run(['codesign','--force','--sign','-','--pagesize','4096',str(compiler_reference)],

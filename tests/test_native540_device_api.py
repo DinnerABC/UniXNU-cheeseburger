@@ -21,7 +21,7 @@ class DeviceAPI(unittest.TestCase):
         O.mkdir();cls.cc=run(['xcrun','--find','clang++'],'compiler').strip()
         cls.mac=run(['xcrun','--sdk','macosx','--show-sdk-path'],'macsdk').strip();cls.ios=run(['xcrun','--sdk','iphoneos','--show-sdk-path'],'iossdk').strip()
     def test_actual_methods_and_rejections(self):
-        names=('NativeMetal540DeviceAdapter.mm','NativeMetal540Capabilities.mm','NativeMetal540ProtocolAudit.mm','NativeMetal540Objects.mm','NativeMetal540Render.cpp','NativeMetal540Client.cpp')
+        names=('NativeMetal540DeviceAdapter.mm','NativeMetal540Capabilities.mm','NativeMetal540ProtocolAudit.mm','NativeMetal540Objects.mm','NativeMetal540Render.cpp','NativeMetal540Client.cpp','NativeMetal540UnknownSelector.cpp')
         run([self.cc,'-std=c++17','-O1','-g','-fobjc-arc','-fblocks','-DNATIVE540_ENCODER_ONLY','-Wall','-Wextra','-Werror',
              '-Wno-deprecated-declarations','-isysroot',self.mac,'-I'+str(R/'package/Userland'),'-I'+str(R/'package/BoardRuntime'),
              '-fsanitize=address,undefined','-fno-omit-frame-pointer',R/'tests/native540_device_api_model.mm',

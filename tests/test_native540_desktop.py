@@ -35,7 +35,7 @@ class Desktop(unittest.TestCase):
         cls.mac=run(['xcrun','--sdk','macosx','--show-sdk-path'],'mac-sdk').strip()
         cls.includes=['-I'+str(R/'package/Userland'),'-I'+str(R/'package/BoardRuntime'),
                       '-I'+str(S/'drivers/include'),'-I'+str(S/'drivers/gpu/QcomGPU'),'-I'+str(S/'tools/gpu-compiler')]
-        cls.sources=[R/'package/Userland/NativeMetal540DesktopSession.cpp',R/'package/Userland/NativeMetal540Client.cpp']
+        cls.sources=[R/'package/Userland/NativeMetal540DesktopSession.cpp',R/'package/Userland/NativeMetal540Client.cpp',R/'package/Userland/NativeMetal540UnknownSelector.cpp']
 
     def test_lifecycle_model(self):
         run([self.cc,'-std=c++17','-isysroot',self.mac,'-O1','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',

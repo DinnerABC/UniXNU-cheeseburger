@@ -1,3 +1,13 @@
+## 2026-11-07：250s boot 定位10连崩根因；350s 修复候选渲染+全probe通过+单次可恢复abort
+
+- 用户先报告 600s boot **进入桌面**（boot `0x3e0dd14c`，17帧/272触摸）；随后要求 250s 并修复。250s boot **`0x3e0e4e60`** 反而 **10 次 sig6、0帧**——符号化（slide 6138000）栈**直接穿 Metal.framework→QuartzCore**：CA 创建 pipeline 时调用 `minimumTextureBufferAlignmentForPixelFormat:`，adapter 的 raise 逃逸进调用方（fail-fast forwarding 只兜住未知 selector，不兜住已实现方法的 raise）。
+- **修复**：adapter 该查询改为返回有界 **16**（texture-buffer 创建仍拒绝，不虚报能力）；`setMetalAssertionsEnabled:` 改 no-op；未知 selector 记录器重构为独立纯 C++ TU **`NativeMetal540UnknownSelector.{h,cpp}`**（接口取 selector 名字符串，纯 C++ 链接目标无需 objc runtime；修复了 weak-import 静态链接失败、包装重名递归、构建清单重复三个中间错误，失败日志保留）。device-api 测试按新契约更新（查询返16/断言忽略）。**104 项全回归 PASS**。
+- 350s（按用户指示）候选 **`out/p21/p21-sagit-desktop-350s-20261107T0711Z/uefi/boot-p21-up1.img`** SHA `b2627c21b7033d0ac04f887b143b61fb151e5dee434f4e7520c7dc5e075bf8fd`，gate `20261107T070915Z`/3pins，kernel复用97ae7084，FD `18ba36ad…`，expandedpayload `40eaab75…`，plugin `f23484cc…`。单次boot **`0x3df95f84`**（receipt `logs/boot-once-20261107T070940Z`，365.7s 自动复位返回；日志 `out/p21/persistent-logs/20261107T071554Z`，window SHA `76760d53d326ec9304d24fa397fa951e0ca24bf63471ffc7c89fb5ccdebcd4ca`，59rounds/0errors）。
+- **实机结果**：`DISPLAY clients=112 frames=16`、`SWAP 16/16 transfer rc=0`——桌面渲染恢复；**GPU probe 全量回归通过**（RC/RX四色/OR free7view6proof1/DP0/DC fc1cb1/DI/RG/T540/A540/SR/GICACHE 5/5，本轮250s轮的probe缺失问题消失）；backboardd fault exits=**1**：符号化为同型 kernel abort，但**栈底帧 `0x18b7def5` 在共享缓存外**（即我们插件 bundle 内的代码），且 backboardd 重启后完整渲染16帧——可恢复、不阻塞桌面。用户本轮未报告画面。
+- 本轮两boot（250s+350s）的10→1崩溃收敛证明 raise 修复正确；剩余单次 abort 根因未知，**下轮先取证 Data 卷 `/private/var/tmp/p21-plugin.txt` 的 `CBUNKNOWN` 行**（已有独立记录器写入，本轮未取证）——它直接列出系统实际调用的未实现 selector，决定下一批功能优先级；同时符号化 0x18b7def5（需插件 bundle 的 unslid 基址）。
+- 冻 **`out/p21/gpu-cp/rounds/20261107T071719Z-sagit-desktop-350s-render-probes-pass-single-abort`**，device-result.json 完整。250s/350s 两候选日志均已回收，设备 root Recovery、无待回收实验。**用户 600s boot 桌面画面归属注意**：17帧发生在单次crash后 backboardd 重启的渲染，不能区分 GPU Metal 还是 CPU 合成器回退——下轮 CBUNKNOWN+GPSVC 提交计数可判定。
+- 未push/未刷分区/未改seed/power；其他agent改动保留。auto-reset 现为 **350s**（用户指示链：225→600→250→350）。
+
 ## 2026-11-07：桌面系统首次进入——用户确认桌面可见；fail-fast 修复生效；按用户指示改 250s
 
 - **用户报告 boot `0x3e0dd14c` 正常进入系统桌面并手动重启**。镜像 `out/p21/p21-sagit-desktop-fail-fast-20261107T0626Z/uefi/boot-p21-up1.img` SHA `c7625bc9af9b4c2d919da2f6babec4a4b9ec2362dc4d2fa69dcc6f46e0c2a8dd`（auto-reset=600；用户指示后续改 **250s**），gate `20261107T062811Z`/3pins，kernel复用97ae7084，FD `0b336e3b…`，expandedpayload `9c2da7bc…`。日志 `out/p21/persistent-logs/20261107T063322Z`，window SHA `09a873c1af90289c957e1d448b4dd906d1df6ecc91ee8d6835741cc9abe90705`，43rounds/0errors，290.5s观测返回（用户手动）。

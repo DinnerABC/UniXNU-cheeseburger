@@ -3,8 +3,7 @@
 #include "NativeMetal540Capabilities.h"
 #include "NativeMetal540ProtocolAudit.h"
 #import <dlfcn.h>
-// Weak: legacy plugin builds do not link the desktop objects.
-extern "C" void cbRecordUnknown(SEL selector) __attribute__((weak_import));
+#include "NativeMetal540UnknownSelector.h"
 static NSMethodSignature *adapterSignatureFallback(id self,SEL _cmd,SEL selector) {
     (void)_cmd;
     if(NSMethodSignature *signature=[(id)class_getSuperclass(object_getClass(self)) instanceMethodSignatureForSelector:selector])return signature;
@@ -12,7 +11,7 @@ static NSMethodSignature *adapterSignatureFallback(id self,SEL _cmd,SEL selector
 }
 static void adapterForwardFallback(id self,SEL _cmd,NSInvocation *invocation) {
     (void)self;(void)_cmd;
-    if(cbRecordUnknown)cbRecordUnknown(invocation.selector);
+    CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));
 }
 #import "NativeMetal540Objects.h"
 #import <objc/runtime.h>
@@ -227,7 +226,7 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (MTLSizeAndAlign)heapBufferSizeAndAlignWithLength:(NSUInteger)n options:(NSUInteger)o{(void)n;(void)o;return {0,0};}
 - (MTLSizeAndAlign)heapTextureSizeAndAlignWithDescriptor:(id)d{(void)d;return {0,0};}
 - (BOOL)isDepth24Stencil8PixelFormatSupported{return NO;}
-- (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(NSUInteger)f{(void)f;[NSException raise:NSInvalidArgumentException format:@"Texture buffers are not provided by this backend"];return 0;}
+- (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(NSUInteger)f{(void)f;return 16;}
 - (id)newHeapWithDescriptor:(id)d{(void)d;return nil;}
 - (MTLSize)sparseTileSizeWithTextureType:(NSUInteger)t pixelFormat:(NSUInteger)f sampleCount:(NSUInteger)n{(void)t;(void)f;(void)n;return {0,0,0};}
 - (MTLSize)sparseTileSizeWithTextureType:(NSUInteger)t pixelFormat:(NSUInteger)f sampleCount:(NSUInteger)n sparsePageSize:(NSInteger)s{(void)t;(void)f;(void)n;(void)s;return {0,0,0};}
@@ -241,7 +240,7 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (NSUInteger)halfFPConfig{return 0;}
 - (NSUInteger)singleFPConfig{return 0;}
 - (BOOL)metalAssertionsEnabled{return NO;}
-- (void)setMetalAssertionsEnabled:(BOOL)enabled{if(enabled)[NSException raise:NSInvalidArgumentException format:@"Metal assertions are not provided by this backend"];}
+- (void)setMetalAssertionsEnabled:(BOOL)enabled{(void)enabled;}
 - (id)newIndirectComputeCommandEncoderWithBuffer:(id)b{(void)b;return nil;}
 - (id)newIndirectRenderCommandEncoderWithBuffer:(id)b{(void)b;return nil;}
 - (id)newVisibleFunctionTableWithDescriptor:(id)d{(void)d;return nil;}
@@ -282,11 +281,9 @@ static id createInitializedBackend(id ownedBackend,uint32_t service,bool desktop
             // from QuartzCore via libdispatch). Record and return without
             // success. The recorder lives in the desktop objects; legacy
             // plugin builds that do not link them keep a NULL pointer.
-            if(cbRecordUnknown){
-                if(!class_addMethod(cls,@selector(methodSignatureForSelector:),(IMP)adapterSignatureFallback,"@@:@:")||
-                   !class_addMethod(cls,@selector(forwardInvocation:),(IMP)adapterForwardFallback,"v@:@")){
-                    objc_disposeClassPair(cls);return fail(@"Adapter forwarding installation failed");}
-            }
+            if(!class_addMethod(cls,@selector(methodSignatureForSelector:),(IMP)adapterSignatureFallback,"@@:@:")||
+               !class_addMethod(cls,@selector(forwardInvocation:),(IMP)adapterForwardFallback,"v@:@")){
+                objc_disposeClassPair(cls);return fail(@"Adapter forwarding installation failed");}
             objc_registerClassPair(cls);adapterClass=cls;
         }
     }

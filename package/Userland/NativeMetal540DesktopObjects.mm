@@ -4,6 +4,7 @@
 #import "NativeMetal540DesktopObjects.h"
 #include "NativeMetal540DesktopDraw.h"
 #include "NativeMetal540DesktopConstants.h"
+#include "NativeMetal540UnknownSelector.h"
 #include "NativeMetal540ConstantReflection.h"
 #include <atomic>
 #include <cmath>
@@ -18,21 +19,11 @@ static NSError *cbFailure(NSString *text) {return [NSError errorWithDomain:MTLCo
 // libobjc terminate from QuartzCore via libdispatch). Unknown selectors are
 // recorded, never thrown, and never fake success: encoder/command contexts
 // fail their command buffer; value returns are zeroed.
-static NSMutableArray *cbUnknownSelectors;
-static NSLock *cbUnknownLock;
-static unsigned cbUnknownCount;
-extern "C" void cbRecordUnknown(SEL selector) {
-    static dispatch_once_t once;dispatch_once(&once,^{cbUnknownSelectors=[NSMutableArray new];cbUnknownLock=[NSLock new];});
-    NSString *name=NSStringFromSelector(selector);
-    [cbUnknownLock lock];bool duplicate=NO;
-    for(NSString *known in cbUnknownSelectors)if([known isEqualToString:name])duplicate=YES;
-    if(!duplicate&&cbUnknownSelectors.count<32)[cbUnknownSelectors addObject:name];
-    ++cbUnknownCount;[cbUnknownLock unlock];
-    int fd=open("/private/var/tmp/p21-plugin.txt",O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0644);
-    if(fd>=0){char line[160];int n=snprintf(line,sizeof line,"CBUNKNOWN %s\n",name.UTF8String);write(fd,line,(size_t)n);close(fd);}
+NSArray *CBMetalUnknownSelectors(void) {
+    NSMutableArray *out=[NSMutableArray new];
+    for(const auto &name:CBMetalUnknownSelectorList())[out addObject:@(name.c_str())];
+    return out;
 }
-unsigned CBMetalUnknownSelectorCount(void) {return cbUnknownCount;}
-NSArray *CBMetalUnknownSelectors(void) {if(!cbUnknownSelectors)return @[];[cbUnknownLock lock];NSArray *out=[cbUnknownSelectors copy];[cbUnknownLock unlock];return out;}
 @interface CBMetalContext : NSObject { @public std::unique_ptr<NativeMetal540DesktopSession> session;id owner;__weak id publicDevice;NSRecursiveLock *lock;dispatch_queue_t worker;std::atomic<unsigned> pending;std::atomic<bool> lost;NSMutableArray *held,*deferred; }
 @end
 @implementation CBMetalContext
@@ -40,7 +31,7 @@ NSArray *CBMetalUnknownSelectors(void) {if(!cbUnknownSelectors)return @[];[cbUnk
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (instancetype)init {if((self=[super init])){lock=[NSRecursiveLock new];worker=dispatch_queue_create("cb.metal.desktop",DISPATCH_QUEUE_SERIAL);pending=0;lost=false;held=[NSMutableArray new];deferred=[NSMutableArray new];}return self;}
 @end
 @interface CBMetalDevice () { @public CBMetalContext *_context;NativeMetal540DesktopLibrary::Compile _compiler; }
@@ -66,7 +57,7 @@ NSArray *CBMetalUnknownSelectors(void) {if(!cbUnknownSelectors)return @[];[cbUnk
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 @end
 @interface CBMetalCommands () { @public CBMetalQueue *_queue;NSCondition *_condition;MTLCommandBufferStatus _status;NSError *_error;NSMutableArray<CBMetalOperation *> *_operations;NSMutableArray *_handlers;CBMetalBuffer *_ib,*_scratch;bool _active,_committed,_callbacksDone,_pendingReserved;NSThread *_callbackThread;NSString *_label; }
 - (void)fail:(NSString *)text;
@@ -89,7 +80,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (instancetype)initWithTransport:(NativeMetal540DesktopSession::Transport)t connectionOwner:(id)owner compiler:(NativeMetal540DesktopLibrary::Compile)compiler error:(NSError **)error {
     if(error)*error=nil;if(!owner||!compiler){if(error)*error=cbFailure(@"Connection owner and real AIR compiler required");return nil;}
     if(!(self=[super init]))return nil;_context=[CBMetalContext new];_context->owner=owner;_compiler=compiler;
@@ -175,7 +166,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (void)dealloc {auto c=_device->_context;[c->lock lock];if(_resource.id){
     if(c->pending)[c->deferred addObject:@{@"id":@(_resource.id),@"owner":_externalOwner?:NSNull.null}];
     else {int rc=c->session->release(_resource.id);if(rc&&_externalOwner)[c->held addObject:_externalOwner];}}
@@ -195,7 +186,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (id)device {return _backing.device;}
 - (NSUInteger)width {return _descriptor.width;}
 - (NSUInteger)height {return _descriptor.height;}
@@ -236,7 +227,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (id)device {return _identity;}
 - (NSArray *)functionNames {NSMutableArray *out=[NSMutableArray new];for(const auto &n:_library->names())[out addObject:@(n.c_str())];return out;}
 - (NSString *)label {return _label;}
@@ -258,7 +249,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (id)device {return _library.device;}
 - (NSString *)name {return _name;}
 - (MTLFunctionType)functionType {return _image->info.stage==GPU::Shader::Vertex?MTLFunctionTypeVertex:_image->info.stage==GPU::Shader::Fragment?MTLFunctionTypeFragment:MTLFunctionTypeKernel;}
@@ -268,7 +259,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (id)device {return _vertex.device;}
 - (NSString *)label {return _descriptor.label;}
 @end
@@ -277,7 +268,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (id)device {return _identity;}
 @end
 @implementation CBMetalQueue
@@ -285,7 +276,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (id)device {return _identity;}
 - (NSString *)label {return _label;}
 - (void)setLabel:(NSString *)s {_label=[s copy];}
@@ -297,7 +288,7 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (void)dealloc {if(!_callbacksDone)--_queue->_live;}
 - (id)device {return _queue.device;}
 - (MTLCommandBufferStatus)status {[_condition lock];auto s=_status;[_condition unlock];return s;}
@@ -377,7 +368,7 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
     if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
     return [NSMethodSignature signatureWithObjCTypes:"v@:"];
 }
-- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 - (BOOL)check {if(_ended||_commands->_committed){[_commands fail:@"Native render encoder is closed"];return NO;}return YES;}
 - (void)setRenderPipelineState:(CBMetalPipeline *)p {if(![self check])return;if(![p isKindOfClass:CBMetalPipeline.class]||p.device!=_commands.device){[_commands fail:@"Foreign render pipeline"];return;}_pipeline=p;}
 - (void)bindBuffer:(CBMetalBuffer *)b offset:(NSUInteger)o index:(NSUInteger)i stage:(unsigned)s {
