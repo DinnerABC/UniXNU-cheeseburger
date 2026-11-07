@@ -1,3 +1,9 @@
+## 2026-11-07：README 与设备记录更新
+
+- README 与 porting.toml 按当前 iPadOS / A540 状态精简；系统 GPU 合成未完成，受控 Metal/AIR 与 CPU 桌面结果分开记录。
+- 旧记录仅附源码证据，验证等级调整为 implemented；保留历史设备观察，待发布符合官方格式的设备证据后再提高等级。新增 cellular 部分，官方 porting-record 检查通过。
+- 本轮仅修改文档和设备记录，未构建、启动或操作设备。
+
 ## 2026-11-07：drawable/present 已实现仍14crash；根因指向195supports全NO，下轮 truthful capability
 
 - **drawable/present 轮** boot `0x3df87fd6`（350s）：实现 `CBMetalTexture` isDrawable/framebufferOnly 准入（sagit `:2506–2508`：renderable 4B 格式+无swizzle+RenderTarget usage）与 `presentDrawable:`/`atTime:` 记录（`:4398–4419`：max16/去重/own-device 校验，complete 后 IOSurfaceIncrementUseCount）；`recommendedMaxWorkingSetSize` 修为 2GiB（1MiB 与 unified memory 矛盾）。结果 **14次sig6、0帧**——drawable/present 也不是根因。冻 **`out/p21/gpu-cp/rounds/20261107T113211Z-sagit-desktop-drawable-195-supports-root-cause`**。
