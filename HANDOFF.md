@@ -1,3 +1,11 @@
+## 2026-11-07：诊断通道穷尽（沙箱阻断）；转入按 sagit 补 Metal 面
+
+- **MA 通道诊断 boot `0x3e0460d7`**：14 次sig6 同型，**MA PBASE/UNK 行未持久化**——`IOConnectCallStructMethod` 的 SetMetadata 从 backboardd 发出后不落日志窗口（沙箱 profile 阻断或存储路径不同）；marker 通道（IOServiceOpen type=0x4147xxx）可用但仅记 count/last。ReportCrash 无实际输出（Data 取证只有模板）。**可用诊断通道已穷尽：UNC 不触发（非 NSException）、backboardd 禁文件写、metadata 不持久化、无 crash 报告。**冻 **`out/p21/gpu-cp/rounds/20261107T100946Z-sagit-desktop-machan-diag-sandbox-blocked`**。
+- 本轮有效改动（保留）：未知 selector 记录器支持内核上报（发送器注入，纯 C++ TU 保持）；PBASE/UNK 走 `MA ` 持久化前缀（对 mediaserverd/守护进程有效）；`CBMetalSetReportSend` 注入接口。104 回归全过。
+- **转向**：按固定 sagit `673f850…QcomMTL` 语义逐项补齐受限 Metal 面，直至 Apple 校验通过——顺序：①**CAMetalLayer drawable/present**（`QcomMTL.mm:2506–2508` drawable 校验、`:4398–4434` record/submitPresentations、surface fence 联动 `:4668–4679`）；②剩余纹理格式（sRGB/A8/16F 等 `nativeColorFormat` 表）；③`newFence`/event；④每项先离线 actualObjC 验证再合并候选。
+- **当前可用版本不变**：门控镜像 `1bd080a4…`（boot `0x3dfb1ce4`，用户确认解锁进桌面）。诊断期间所有 boot 均为单次/已回收/已冻结；设备 root Recovery；未push/未刷分区。
+- 用户观察（锁屏可滑动但不进主屏）与三次 boot 的 14/1/14 crash 模式一致：解锁转场触发 Apple Metal 校验 abort。**在 drawable 路径实现前，GPU 桌面无法接管解锁动画**；门控版本是可用的过渡态。
+
 ## 2026-11-07：解锁诊断轮+depth/stencil 状态对象；单次 abort 仍未消，已装 PBASE 符号化breadcrumb
 
 - **用户确认门控镜像 `1bd080a4…`（boot `0x3dfb1ce4`）滑动解锁进入桌面、系统可用**——已归档到该轮 device-result 与冻结 manifest。CPU 合成器路径完全可用。

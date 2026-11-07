@@ -30,6 +30,7 @@
 #include "NativeMetal540RenderAIRProbe.h"
 #include "NativeMetal540Surface.h"
 #include "NativeMetal540DesktopObjects.h"
+#include "NativeMetal540UnknownSelector.h"
 #include "NativeMetal540DeviceAdapter.h"
 
 namespace {
@@ -172,6 +173,15 @@ static void desktopUncaughtHandler(NSException *exception) {
     NSError *error = nil;
     CBMetalDevice *backend = CBMetalCreateNativeDevice(port, &error);
     gDesktopConn = CBMetalLastDesktopConnection();
+    CBMetalSetReportSend([](const char *text) {
+        if (!gDesktopConn) return;
+        NativeAdrenoAbiMetadata meta = {};
+        meta.handle = 13;
+        meta.bytes = (uint32_t)strnlen(text, 63);
+        memcpy(meta.text, text, meta.bytes);
+        IOConnectCallMethod(gDesktopConn, NativeAdrenoMethodSetMetadata, nullptr, 0,
+            &meta, sizeof meta, nullptr, nullptr, nullptr, nullptr);
+    }, (void *)(uintptr_t)gDesktopConn);
     if (!backend) {
         line("P21PLUGIN stage=desktop-backend e%x", error ? (unsigned)error.code : 0u);
         note("desktop backend failed: %@",
@@ -196,7 +206,7 @@ static void desktopUncaughtHandler(NSException *exception) {
         NativeAdrenoAbiMetadata meta = {};
         meta.handle = 2;
         char text[64] = {};
-        snprintf(text, sizeof text, "PBASE %llx", (unsigned long long)(uintptr_t)info.dli_fbase);
+        snprintf(text, sizeof text, "MA PBASE %llx", (unsigned long long)(uintptr_t)info.dli_fbase);
         meta.bytes = (uint32_t)strlen(text);
         memcpy(meta.text, text, meta.bytes);
         if (gDesktopConn) IOConnectCallMethod(gDesktopConn, NativeAdrenoMethodSetMetadata,

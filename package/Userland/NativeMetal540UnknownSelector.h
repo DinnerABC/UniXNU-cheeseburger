@@ -8,5 +8,7 @@
 // actually calls. Pure C++ taking the selector name, so pure-C++ link targets
 // (session/draw models) need no objc runtime.
 void CBMetalRecordUnknownSelectorName(const char *name);
+using CBMetalReportSend = void (*)(const char *text);
+void CBMetalSetReportSend(CBMetalReportSend send, void *connection);
 unsigned CBMetalUnknownSelectorCount(void);
 std::vector<std::string> CBMetalUnknownSelectorList(void);
