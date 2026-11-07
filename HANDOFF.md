@@ -1,3 +1,13 @@
+## 2026-11-07：锁屏卡死根因定位（CA→drawable 缺口）；门控候选零崩溃+17帧+全probe通过
+
+- 用户报告 350s boot（`0x3df95f84`）**锁屏可滑动但不能进入主屏**。排查链：
+- **Data 取证**（只读重建 3.3GB 覆盖页，`out/p21/p21-sagit-desktop-350s-20261107T0711Z/data-forensics/`，header/bitmap 前后一致、0 写入）：插件文件 `enter pid=29`/`open rc=0` 为 mediaserverd 探针记录；**无任何实际 `CBUNKNOWN` 运行记录**（仅二进制格式串）——解锁崩溃不是未知 selector。
+- **350s 修复试验 boot `0x3de8151c`**（bridge try/catch + discovery @try）：仍 **14 次 sig6、0帧**，markers last=102。符号化（slide 1aaac000）：栈 **Metal.framework(6帧)→QuartzCore(4帧)→abort**——异常由 **Apple Metal 框架自身**在用我们设备时抛出（解锁动画需要 drawable/present 路径，我们返回 nil/不支持；上游 sagit drawable 硬校验 `QcomMTL.mm:2506–2508`、present `:4398–4434` 印证）。本轮 bridge try/catch 修复（真实且保留）但不是主因。
+- **修复方向确认**：解锁崩溃源是"我们发布的系统设备缺少 CAMetalLayer drawable/present 实现"。同时上游 agent 确认官方 skip-setup/no-auto-dim（`docs/guide/skip-setup.md:44–48`：无 no-auto-dim 时 SpringBoard 30s 后变暗锁屏；`BKNoWatchdogs`）与 `homeButtonType`（`mobilegestalt.md:44`：滑动解锁手势由它驱动）是后续解锁健壮性项。
+- **当前候选（用户可用）**：`out/p21/p21-sagit-desktop-gated-350s-20261107T0808Z/uefi/boot-p21-up1.img` SHA `1bd080a4164fdb96a55cda053852d8ca73fafc25121ddd17f64cd5f25209d741`，gate `20261107T075428Z`，plugin 加**文件门控**：`/private/var/mobile/ngpu/desktop-metal` 不存在→principal 返回 nil→CPU 合成器（=用户确认过 450s 桌面的已知良好路径）。单次boot **`0x3dfb1ce4`**：**backboardd/SpringBoard/PreBoard/watchdogd fault 全 0**；`DISPLAY clients=111 frames=17`、`SWAP 17/17 transfer rc=0`；**GPU probe 全量回归通过**（RC/RX/OR/DP0/DC/RG/T540/A540/SR/GICACHE）；auto-reset 350s 正常（366.4s 返回）。日志 `out/p21/persistent-logs/20261107T080058Z`，window SHA `81e72e03dccccb49ccbb4b687e21e9230b7279dbe33abbb2369be9be7a50d114`，59rounds/0errors。**请用户验证此镜像能否滑动解锁进入主屏。**
+- 冻 **`out/p21/gpu-cp/rounds/20261107T080151Z-sagit-desktop-gated-zero-crash-full-probes`**。104 回归 PASS。
+- **下一轮（实现后重新启用 GPU 桌面）**：①按 sagit `:2506–2508/:4398–4434` 实现 CAMetalLayer drawable/present/`isDrawable/framebufferOnly` 校验与 surface fence；②创建 enable 文件后验证 GPU 合成（GPSVC 提交计数判定 GPU vs CPU 渲染归属）；③skip-setup/no-auto-dim/BKNoWatchdogs 与 homeButtonType 取证。中间失败日志（14次sig6 boot、bridge初版）全部保留。未push/未刷分区/未改seed/power。
+
 ## 2026-11-07：250s boot 定位10连崩根因；350s 修复候选渲染+全probe通过+单次可恢复abort
 
 - 用户先报告 600s boot **进入桌面**（boot `0x3e0dd14c`，17帧/272触摸）；随后要求 250s 并修复。250s boot **`0x3e0e4e60`** 反而 **10 次 sig6、0帧**——符号化（slide 6138000）栈**直接穿 Metal.framework→QuartzCore**：CA 创建 pipeline 时调用 `minimumTextureBufferAlignmentForPixelFormat:`，adapter 的 raise 逃逸进调用方（fail-fast forwarding 只兜住未知 selector，不兜住已实现方法的 raise）。

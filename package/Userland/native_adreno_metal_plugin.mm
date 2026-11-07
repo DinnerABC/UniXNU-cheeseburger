@@ -179,7 +179,29 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
     const char *host = getprogname();
 #ifdef NATIVE540_DESKTOP_DEVICE
     // Desktop mode runs only in backboardd; other hosts keep software rendering.
-    if (host && !strcmp(host, "backboardd")) return [self createDesktopDevice:port];
+    // Any exception escaping into the discovery's call frame aborts the whole
+    // process and loops the lock screen; fail to nil so the software renderer
+    // continues instead.
+    if (host && !strcmp(host, "backboardd")) {
+        // Unlock-transition gate: the system Metal device is only published
+        // when its operator created the enable marker. Without it the CPU
+        // compositor renders (the known-good desktop path) while the drawable
+        // implementation lands. Creating the file re-enables without rebuild.
+        if (access("/private/var/mobile/ngpu/desktop-metal", F_OK) != 0) {
+            line("P21PLUGIN stage=desktop-gated pid=%d", (int)getpid());
+            note("desktop gated: enable file absent");
+            return nil;
+        }
+        note("desktop enabled by marker file");
+        @try { return [self createDesktopDevice:port]; }
+        @catch (NSException *exception) {
+            line("P21PLUGIN stage=desktop-exception %@",
+                exception.reason ?: exception.name);
+            note("desktop exception: %@",
+                exception.reason ?: exception.name);
+            return nil;
+        }
+    }
 #endif
     if (!host || strcmp(host, kTargetHost)) return nil;
     static std::atomic<bool> attempted{false};
