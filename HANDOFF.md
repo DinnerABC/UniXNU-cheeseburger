@@ -2982,3 +2982,12 @@ GPU 只读审计见 `docs/P21_ADRENO540_REVIEW_20261031.md`；依据审计确定
 - 目标设备 `3b25cc7c`，只做临时 `fastboot boot`，不写 boot/recovery/固件/GPT。
 - userdata 唯一授权写入：相对 10 GiB、32 MiB 的持久日志窗口（`out/p21/r14/log-window.json`）。
 - 每次启动前要有离线门禁；启动后必须能从 Recovery 回收日志（或证明窗口未变）。
+
+## 2026-11-07 精简与可恢复性（进行中）
+
+- 当前分支与提交以 `git status -sb`、`git log -1` 为准；本轮隔离构建 `out/p21/p21-lean-rebuild-20261107/`，内核由 `/Users/dinnerabc/unixnu-p21/atos-gate/source-tree` 编译，预链接/载荷/固件使用该候选及隔离的 p2 overlay `unixnu-p21-lean-rebuild-20261107`。
+- 为可逆检查，将 4 个旧候选 `p21-willet`、`p21-yellowthroat`、`p21-godwit`、`p21-zosterops` 移至 `out/lean-staging-20261107/p21/`，约 3.5 GiB；详见该目录 README。设备确认重建启动成功之前不可删除；若构建需要，移回 `out/p21/`。
+- 当前 iPadOS 原始根卷镜像 `out/p12/reference/cheeseburger-p12-reference/userdata/userdata-root.img`、`out/p12/reference/ipsw/21H461/`、Data seed 和日志工具需保留。历史文档记录该根卷镜像 SHA-256 `fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093`，该值为历史记录而非本轮已完成重新计算。根卷镜像不是完整 userdata 备份，不能恢复当前所有文件或持久 Data。
+- 设备 3b25cc7c 曾在 root Recovery，最新读取日志 `out/p21/persistent-logs/20261107T121906Z/`、boot `0x3df87fd6`。用户允许未来清空 userdata 前做好恢复，但本轮对全分区复制到 NAS 的请求被自动审核拒绝，尚无全分区镜像；不可假定现有系统卷和 seed 能恢复全部 userdata。
+- 新内核构建和预链接已通过，内核 `1c6e65df66f2a4fad19fc586e8655702dc8553cd41fa2fb3ebd8d06c66f00dca`；后续载荷、UEFI、打包、实机状态应查候选 `logs/`、`uefi/packaging.json` 及本文件最新续记，不能把编译成功等同实机启动。
+- 续记：2026-11-07 12:27 UTC 固件重新编译、三项 EFI pins 扫描、离线打包及 `PREBOOT_GATE_P21_PASS` 已完成；镜像 `out/p21/p21-lean-rebuild-20261107/uefi/boot-p21-up1.img` SHA-256 `e4da20f65a5ee37816b77718983c8dbb038f80ebe17858e4fa0af16e8e715e83`。12:28 UTC 单次 `fastboot boot` 已接受，启动证据存于该候选 `logs/boot-once-20261107T122819Z/`；是否进入 iPadOS 待确认。自动 Recovery 标记只写 misc 首 32 字节，回读验证其余首 4 KiB 不变。未写 userdata。
