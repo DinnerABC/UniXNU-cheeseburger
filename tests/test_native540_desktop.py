@@ -56,12 +56,14 @@ class Desktop(unittest.TestCase):
     def test_actual_objc_objects(self):
         original=Path(os.environ.get('NATIVE540_QUARTZCORE_LIBRARY',
             '/Volumes/DawnUpdate21H461.J120J121J207J208SystemCryptex/System/Library/Frameworks/QuartzCore.framework/default.metallib'))
-        sources=[R/'package/Userland/NativeMetal540DesktopObjects.mm',R/'package/Userland/NativeMetal540DesktopConstants.mm',R/'package/Userland/NativeMetal540DesktopDraw.cpp',
+        sources=[R/'package/Userland/NativeMetal540DesktopObjects.mm',R/'package/Userland/NativeMetal540DesktopConstants.mm',
+                 R/'package/Userland/NativeMetal540DeviceAdapter.mm',R/'package/Userland/NativeMetal540Capabilities.mm',
+                 R/'package/Userland/NativeMetal540ProtocolAudit.mm',R/'package/Userland/NativeMetal540DesktopDraw.cpp',
                  R/'package/Userland/NativeMetal540DesktopLibrary.cpp',*self.sources]
         run([self.cc,'-std=c++17','-isysroot',self.mac,'-O1','-g','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror',
-             '-Wno-deprecated-declarations','-fsanitize=address,undefined',*self.includes,
+             '-Wno-deprecated-declarations','-fsanitize=address,undefined','-DNATIVE540_DESKTOP_HOST_MODEL=1',*self.includes,
              R/'tests/native540_desktop_objects_model.mm',*sources,LIB,'-Wl,-rpath,'+str(LIB.parent),
-             '-framework','Foundation','-framework','Metal','-framework','IOSurface','-o',O/'objects'],'objects-build')
+             '-framework','Foundation','-framework','Metal','-framework','IOSurface','-framework','IOKit','-o',O/'objects'],'objects-build')
         env=dict(ENV,ASAN_OPTIONS='detect_leaks=0:halt_on_error=1')
         result=subprocess.run([str(O/'objects'),str(original)],env=env,capture_output=True,text=True)
         (O/'objects.log').write_text(result.stdout+result.stderr)

@@ -96,11 +96,41 @@ def main():
     plugin_exe = plugin_bundle / 'NativeAdrenoMetal'
     probe_flags=['-DNATIVE540_ENCODER_ONLY=1']
     if os.environ.get('P21_PROBE_GLOBAL')=='1':probe_flags.append('-DNATIVE540_PROBE_GLOBAL=1')
+    # Desktop mode links the qualified target AIR compiler and its reflection
+    # bridge, and ships the dylib inside the bundle beside the plugin binary.
+    desktop_env=os.environ.get('P21_DESKTOP_COMPILER_BUILD')
+    desktop_sources=[]
+    compiler_reference=None
+    if desktop_env:
+        compiler_build=Path(desktop_env)
+        report=json.loads((compiler_build/'build.json').read_text())
+        if report['result']!='TARGET_A540_COMPILER_BUILD_PASS':
+            sys.exit('desktop compiler build lacks the target gate')
+        compiler_dylib=compiler_build/'build/src/freedreno/QcomGPUCompiler.dylib'
+        if sha(compiler_dylib.read_bytes())!=report['binary_sha256']:
+            sys.exit('desktop compiler identity mismatch')
+        probe_flags.append('-DNATIVE540_DESKTOP_DEVICE=1')
+        probe_flags.append('-DNATIVE540_TARGET_METAL=1')
+        desktop_sources=[str(R/'package/Userland'/name) for name in (
+            'NativeMetal540DesktopObjects.mm','NativeMetal540DesktopTransport.mm',
+            'NativeMetal540DesktopConstants.mm','NativeMetal540DesktopLibrary.cpp',
+            'NativeMetal540DesktopDraw.cpp','NativeMetal540DesktopSession.cpp')]
+        compiler_reference=plugin_bundle/'QcomGPUCompiler.dylib'
+        shutil.copy2(compiler_dylib,compiler_reference)
+        subprocess.run(['codesign','--force','--sign','-','--pagesize','4096',str(compiler_reference)],
+                       check=True,env=ENV)
+        subprocess.run(['codesign','--verify','--strict',str(compiler_reference)],check=True)
+        sagit=R.parent/'upstream/ios_sagit'
+        desktop_includes=['-I'+str(sagit/'drivers/include'),'-I'+str(sagit/'drivers/gpu/QcomGPU'),
+                          '-I'+str(sagit/'tools/gpu-compiler')]
+    else:
+        desktop_includes=[]
     subprocess.run(['xcrun', 'clang++', '-target', 'arm64-apple-ios17.0',
                     '-isysroot', sdk(), '-std=c++17', '-fobjc-arc', '-O2', '-fno-exceptions',
                     *probe_flags,
                     '-fno-rtti', '-I', str(R / 'package/BoardRuntime'),
                     '-I', str(R / 'package/Userland'),
+                    *desktop_includes,
                     '-bundle', str(R / 'package/Userland/native_adreno_metal_plugin.mm'),
                     str(R / 'package/Userland/NativeMetal540Client.cpp'),
                     str(R / 'package/Userland/NativeMetal540Probe.cpp'),
@@ -116,6 +146,8 @@ def main():
                     str(R / 'package/Userland/NativeMetal540Render.cpp'),
                     str(R / 'package/Userland/NativeMetal540RenderAIRProbe.cpp'),
                     str(R / 'package/Userland/NativeMetal540Surface.mm'),
+                    *desktop_sources,
+                    *(('-Wl,-rpath,@loader_path', str(compiler_reference)) if compiler_reference else ()),
                     '-framework', 'Foundation', '-framework', 'IOKit', '-framework', 'Metal', '-framework', 'IOSurface', '-o', str(plugin_exe)],
                    check=True, env=ENV)
     subprocess.run(['strip', '-x', str(plugin_exe)], check=True, env=ENV)
@@ -137,6 +169,17 @@ def main():
         sys.exit('no plugin CDHash')
     if 'Page size=4096' not in plugin_detail:
         sys.exit('the plugin signature must use 4 KiB pages')
+    compiler_cdhash = None
+    if desktop_env:
+        # The signed bundle covers the nested compiler dylib; its own CDHash
+        # must join the engineering trust module so AMFI admits it.
+        detail = subprocess.run(['codesign', '--display', '--verbose=4', str(compiler_reference)],
+                                capture_output=True, text=True, check=True, env=ENV).stderr
+        for line in detail.splitlines():
+            if line.startswith('CDHash='):
+                compiler_cdhash = line.split('=', 1)[1]
+        if not compiler_cdhash or len(compiler_cdhash) != 40:
+            sys.exit('no compiler dylib CDHash')
 
     jobs = {
         DAEMON_ID: dict(Label=DAEMON_ID, ProgramArguments=['/private/var/mobile/ngpu/bin/adrenoprobed'],
@@ -174,7 +217,8 @@ def main():
     if count != 2:
         sys.exit('the pinned bundle must carry exactly two Apple modules')
     originals = [original[offsets[0]:offsets[1]], original[offsets[1]:]]
-    hashes = sorted([bytes.fromhex(cdhash), bytes.fromhex(plugin_cdhash)])
+    own_cdhashes = [cdhash, plugin_cdhash] + ([compiler_cdhash] if compiler_cdhash else [])
+    hashes = sorted(bytes.fromhex(value) for value in own_cdhashes)
     own = struct.pack('<I16sI', 2,
                       uuid.uuid5(uuid.NAMESPACE_URL, 'org.cheeseburger.adreno:' + cdhash).bytes,
                       len(hashes)) + b''.join(h + bytes([2, 0, 0, 0]) for h in hashes)
@@ -198,7 +242,10 @@ def main():
                   trustcache_bytes=len(bundle), trustcache_sha256=sha(bundle),
                   plugin_sha256=sha(plugin_exe.read_bytes()), plugin_cdhash=plugin_cdhash,
                   plugin_bundle='NativeAdrenoMetal.bundle', plugin_class='NativeAdrenoMetalDevice',
-                  trust_own_cdhashes=[cdhash, plugin_cdhash], trust_original_modules_unchanged=True,
+                  trust_own_cdhashes=own_cdhashes, trust_original_modules_unchanged=True,
+                  desktop_device=bool(desktop_env),
+                  desktop_compiler_sha256=sha(compiler_reference.read_bytes()) if compiler_reference else None,
+                  desktop_compiler_cdhash=compiler_cdhash,
                   probe_profile='globalID-four-groups-256' if os.environ.get('P21_PROBE_GLOBAL')=='1' else 'localID-one-group-64',
                   probe_fixture_sha256=sha((R/'tools/gpu-native540'/('probe_global_fixture.h' if os.environ.get('P21_PROBE_GLOBAL')=='1' else 'probe_fixture.h')).read_bytes()),
                   hardware_executed=False)

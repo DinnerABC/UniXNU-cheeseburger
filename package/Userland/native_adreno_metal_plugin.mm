@@ -28,6 +28,8 @@
 #include "NativeMetal540Render.h"
 #include "NativeMetal540RenderAIRProbe.h"
 #include "NativeMetal540Surface.h"
+#include "NativeMetal540DesktopObjects.h"
+#include "NativeMetal540DeviceAdapter.h"
 
 namespace {
 constexpr uint32_t kOpenType = 0x4147;
@@ -138,12 +140,47 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
 @end
 
 @implementation NativeAdrenoMetalDevice
+#ifdef NATIVE540_DESKTOP_DEVICE
+// Desktop mode: backboardd hosts the real system device. The discovery owns
+// the port only until this initializer returns, so the device keeps its own
+// retain through the concrete transport. Registration happens only when the
+// qualified21H461 audit and protocol adoption both pass.
+- (id)createDesktopDevice:(unsigned)port {
+    static std::atomic<bool> attempted{false};
+    if (attempted.exchange(true)) return nil;
+    marker(port, 0x100);
+    NSError *error = nil;
+    CBMetalDevice *backend = CBMetalCreateNativeDevice(port, &error);
+    if (!backend) {
+        line("P21PLUGIN stage=desktop-backend e%x", error ? (unsigned)error.code : 0u);
+        note("desktop backend failed: %@",
+            error.localizedDescription ?: @"unknown");
+        return nil;
+    }
+    marker(port, 0x101);
+    id device = NativeMetal540CreateInitializedDesktopDevice(backend, port, &error);
+    if (!device) {
+        line("P21PLUGIN stage=desktop-adapter e%x", error ? (unsigned)error.code : 0u);
+        note("desktop adapter failed: %@",
+            error.localizedDescription ?: @"unknown");
+        return nil;
+    }
+    marker(port, 0x102);
+    line("P21PLUGIN stage=desktop-device pid=%d", (int)getpid());
+    note("desktop device created; framework registration pending");
+    return device;
+}
+#endif
 - (id)initWithAcceleratorPort:(unsigned)port {
     // Match the official plugin: a nil return releases self under ARC, so its
     // Metal superclass must have been initialized before any exit path.
     self = [super init];
     if (!self || !port) return nil;
     const char *host = getprogname();
+#ifdef NATIVE540_DESKTOP_DEVICE
+    // Desktop mode runs only in backboardd; other hosts keep software rendering.
+    if (host && !strcmp(host, "backboardd")) return [self createDesktopDevice:port];
+#endif
     if (!host || strcmp(host, kTargetHost)) return nil;
     static std::atomic<bool> attempted{false};
     if (attempted.exchange(true)) return nil;

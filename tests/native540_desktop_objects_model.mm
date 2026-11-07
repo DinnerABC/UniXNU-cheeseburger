@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #import "NativeMetal540DesktopObjects.h"
+#import "NativeMetal540DeviceAdapter.h"
 #include "NativeMetal540DesktopConstants.h"
 #include <cassert>
 #include <map>
@@ -66,6 +67,18 @@ int main(int argc,char **argv){@autoreleasepool {assert(argc==2);
         m.inflight=buffer;[commands commit];[commands waitUntilCompleted];m.inflight=nil;assert(completions==2);
         if(!mode){assert(commands.status==MTLCommandBufferStatusCompleted&&!commands.error&&m.submits==3&&m.waits==3);assert([q commandBuffer]);}
         else {assert(commands.status==MTLCommandBufferStatusError&&commands.error&&m.submits==1&&m.waits==1&&!m.frees);assert(!buffer.contents);}
+        // Desktop adapter closure: the shared 21H461 adapter wraps this exact
+        // backend. On host the full-target audit is recorded, not fatal; the
+        // device build (NATIVE540_TARGET_METAL) fails closed on any gap.
+        NSError *adapterError=nil;id wrapped=NativeMetal540CreateInitializedDesktopDevice(d,(uint32_t)(uintptr_t)&m,&adapterError);
+        if(!wrapped)fprintf(stderr,"desktop adapter: %s\n",adapterError.localizedDescription.UTF8String);
+        assert(wrapped&&NativeMetal540CreateInitializedDesktopDevice(d,0,&adapterError)==nil);
+        auto adapterQueue=[wrapped newCommandQueueWithMaxCommandBufferCount:2];assert(adapterQueue&&adapterQueue.device==wrapped);
+        auto adapterSampler=[wrapped newSamplerStateWithDescriptor:samplerDescriptor];assert(adapterSampler&&adapterSampler.device==wrapped);
+        assert([wrapped maxBufferLength]==16u*1024*1024);
+        assert(![wrapped newCommandQueueWithMaxCommandBufferCount:0]);
+        id afterSecond=NativeMetal540CreateInitializedDesktopDevice(d,(uint32_t)(uintptr_t)&m,&adapterError);
+        assert(afterSecond&&afterSecond!=wrapped);
     }
     puts("PASS actual ObjC desktop library/pipeline/full-HD MRT/sampling/blend/queue/encoder/submission/fence and nested callbacks; modeled transport NOT GPU execution");
 }}

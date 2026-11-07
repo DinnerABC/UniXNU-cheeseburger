@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "NativeMetal540DeviceAdapter.h"
 #include "NativeMetal540Capabilities.h"
+#include "NativeMetal540ProtocolAudit.h"
 #import "NativeMetal540Objects.h"
 #import <objc/runtime.h>
 #import <IOKit/IOKitLib.h>
@@ -238,7 +239,9 @@ static id createInitializedBackend(id ownedBackend,uint32_t service,bool desktop
     if(error)*error=nil;
     auto fail=[&](NSString *why)->id{if(error)*error=[NSError errorWithDomain:@"Native540DeviceAdapter" code:-5500 userInfo:@{NSLocalizedDescriptionKey:why}];return nil;};
     if(!backend||!service)return fail(@"Missing owned native backend or accelerator");
-    Class base=objc_lookUpClass("_MTLDevice");Method lm=base?class_getInstanceMethod(base,sel_registerName("limits")):nullptr;
+    Class base=objc_lookUpClass("_MTLDevice");
+#ifndef NATIVE540_DESKTOP_HOST_MODEL
+    Method lm=base?class_getInstanceMethod(base,sel_registerName("limits")):nullptr;
     NSOperatingSystemVersion version=NSProcessInfo.processInfo.operatingSystemVersion;
     if(version.majorVersion!=17||version.minorVersion!=7)return fail(@"Only qualified17.7 target is admitted");
     if(!base||class_getInstanceSize(base)!=536||!lm||strcmp(method_getTypeEncoding(lm),limitsType))return fail(@"Target21H461 Metal layout/encoding mismatch");
@@ -246,14 +249,17 @@ static id createInitializedBackend(id ownedBackend,uint32_t service,bool desktop
         {"initFeatureQueries","v16@0:8"},{"initGPUFamilySupport","v16@0:8"}};
     for(const auto &q:required){Method m=class_getInstanceMethod(base,sel_registerName(q.name));
         if(!m||strcmp(method_getTypeEncoding(m),q.type))return fail(@"Target Metal initializer ABI mismatch");}
+#endif
     {
         std::lock_guard<std::mutex> guard(classLock);
         if(!adapterClass){
             Class cls=objc_allocateClassPair(base,"NativeMetal540InitializedDevice21H461",0);if(!cls)return fail(@"Adapter class allocation failed");
+#ifndef NATIVE540_DESKTOP_HOST_MODEL
             NativeMetal540Capabilities::Report report{};
             NativeMetal540Capabilities::Evidence evidence(NativeMetal540Capabilities::LinearRGBA8RasterCode|
                 NativeMetal540Capabilities::LinearRGBA8DevicePixels|NativeMetal540Capabilities::RestrictedDescriptorAdmission);
             if(!NativeMetal540InstallQueries(cls,base,evidence,report)){objc_disposeClassPair(cls);return fail(@"Target capability-query preflight rejected");}
+#endif
             unsigned count=0;Method *methods=class_copyMethodList(Native540AdapterMethods.class,&count);bool ok=true;
             for(unsigned i=0;i<count&&ok;++i){SEL s=method_getName(methods[i]);const char *types=method_getTypeEncoding(methods[i]);
                 if(s==sel_registerName("limits"))types=limitsType;
@@ -263,14 +269,34 @@ static id createInitializedBackend(id ownedBackend,uint32_t service,bool desktop
         }
     }
     auto c=[Native540AdapterContext new];c->backend=backend;c->desktop=desktop;
+#ifndef NATIVE540_DESKTOP_HOST_MODEL
     if(IOObjectRetain(service)!=KERN_SUCCESS)return fail(@"Accelerator retain failed");c->service=service;
     if(IORegistryEntryGetRegistryEntryID(service,&c->registryID)!=KERN_SUCCESS||!c->registryID)return fail(@"Accelerator registry identity failed");
+#endif
     id allocated=[adapterClass alloc];if(!allocated)return fail(@"Metal subclass allocation failed");
     objc_setAssociatedObject(allocated,&contextKey,c,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     id device=[allocated init];if(!device)return fail(@"Metal superclass initialization failed");
     @try {[(Native540AdapterMethods*)device initLimits];[(Native540AdapterMethods*)device initFeatureQueries];}
     @catch(NSException *e){return fail([NSString stringWithFormat:@"Metal device initialization exception: %@",e.reason]);}
     if([backend respondsToSelector:@selector(setPublicDeviceIdentity:)])[backend setPublicDeviceIdentity:device];
+    if(desktop){
+        // Full protocol/signature audit gates desktop registration. Only on
+        // the qualified target is a gap fatal; the host model records it.
+        auto audit=NativeMetal540AuditDeviceProtocols(device);
+#ifdef NATIVE540_TARGET_METAL
+        if(audit.missing||audit.mismatched)return fail([NSString stringWithFormat:@"Protocol audit: %u missing %u mismatched %.48s",audit.missing,audit.mismatched,audit.first]);
+#else
+        (void)audit;
+#endif
+        // Adopt the framework's own registered protocols after the audit:
+        // the same route sagit uses. No duplicate protocol is invented.
+        Protocol *deviceProtocol=objc_getProtocol("MTLDevice"),*spi=objc_getProtocol("MTLDeviceSPI");
+        Class cls=object_getClass(device);
+        if(deviceProtocol&&!class_conformsToProtocol(cls,deviceProtocol))class_addProtocol(cls,deviceProtocol);
+        if(spi&&!class_conformsToProtocol(cls,spi))class_addProtocol(cls,spi);
+        if((deviceProtocol&&!class_conformsToProtocol(cls,deviceProtocol))||(spi&&!class_conformsToProtocol(cls,spi)))
+            return fail(@"Framework protocol adoption failed after audit");
+    }
     return device;
 }
 id NativeMetal540CreateInitializedDevice(Native540Device *backend,uint32_t service,NSError **error){
