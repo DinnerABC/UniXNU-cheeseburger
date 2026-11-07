@@ -52,6 +52,23 @@ class Desktop(unittest.TestCase):
         (O/'quartzcore-identity.json').write_text(json.dumps(dict(bytes=original.stat().st_size,
             sha256=hashlib.sha256(original.read_bytes()).hexdigest(),device_execution=False),indent=2)+'\n')
 
+    def test_actual_objc_objects(self):
+        original=Path(os.environ.get('NATIVE540_QUARTZCORE_LIBRARY',
+            '/Volumes/DawnUpdate21H461.J120J121J207J208SystemCryptex/System/Library/Frameworks/QuartzCore.framework/default.metallib'))
+        sources=[R/'package/Userland/NativeMetal540DesktopObjects.mm',R/'package/Userland/NativeMetal540DesktopDraw.cpp',
+                 R/'package/Userland/NativeMetal540DesktopLibrary.cpp',*self.sources]
+        run([self.cc,'-std=c++17','-isysroot',self.mac,'-O1','-g','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror',
+             '-Wno-deprecated-declarations','-fsanitize=address,undefined',*self.includes,
+             R/'tests/native540_desktop_objects_model.mm',*sources,LIB,'-Wl,-rpath,'+str(LIB.parent),
+             '-framework','Foundation','-framework','Metal','-framework','IOSurface','-o',O/'objects'],'objects-build')
+        env=dict(ENV,ASAN_OPTIONS='detect_leaks=0:halt_on_error=1')
+        result=subprocess.run([str(O/'objects'),str(original)],env=env,capture_output=True,text=True)
+        (O/'objects.log').write_text(result.stdout+result.stderr)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('PASS actual ObjC desktop',result.stdout)
+        run([self.cc,'-std=c++17','-target','arm64-apple-ios17.7','-isysroot',self.sdk,'-fobjc-arc','-fblocks',
+             '-Wall','-Wextra','-Werror','-Wno-deprecated-declarations',*self.includes,'-c',sources[0],'-o',O/'objects-ios.o'],'objects-ios')
+
     def test_arm64_product_compile(self):
         for name in ('NativeMetal540DesktopSession','NativeMetal540DesktopDraw','NativeMetal540DesktopLibrary'):
             run([self.cc,'-std=c++17','-target','arm64-apple-ios17.7','-isysroot',self.sdk,'-Wall','-Wextra','-Werror',

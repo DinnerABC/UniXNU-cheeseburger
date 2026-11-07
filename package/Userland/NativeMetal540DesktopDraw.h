@@ -17,6 +17,8 @@ struct Draw {
     uint64_t vertexTextures[QGPU_STAGE_TEXTURE_COUNT]{};
     uint64_t fragmentTextures[QGPU_STAGE_TEXTURE_COUNT]{};
 };
+int encodeClear(NativeMetal540DesktopSession &session,uint64_t ib,uint64_t scratch,
+    uint64_t target,uint32_t width,uint32_t height,uint32_t pitch,uint32_t color,uint32_t &words);
 int encodeDraw(NativeMetal540DesktopSession &session,uint64_t ib,uint64_t scratch,
     const QGPUProgramImage &vertex,const QGPUProgramImage &fragment,const Draw &draw,
     uint32_t &words);

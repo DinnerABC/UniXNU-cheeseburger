@@ -25,6 +25,21 @@
 #include <cstring>
 
 namespace NativeMetal540Desktop {
+int encodeClear(NativeMetal540DesktopSession &session,uint64_t ibID,uint64_t scratchID,
+    uint64_t targetID,uint32_t width,uint32_t height,uint32_t pitch,uint32_t color,uint32_t &words) {
+    words=0;NativeMetal540DesktopSession::Resource ib{},scratch{},target{};
+    if(!width||!height||width>16384||height>16384||pitch<uint64_t(width)*4||(pitch&63)||
+       !session.resource(ibID,ib)||!session.resource(scratchID,scratch)||!session.resource(targetID,target)||
+       ib.imported||scratch.imported||ib.id==scratch.id||target.id==ib.id||target.id==scratch.id||
+       uint64_t(pitch)*height>target.bytes||ib.bytes<65536||scratch.bytes<4096)return NativeMetal540DesktopSession::Invalid;
+    Adreno::Encoder output(static_cast<uint32_t *>(ib.cpu),uint32_t(ib.bytes/4));
+    std::vector<uint64_t> storage((sizeof(Adreno::PipelineEncoder)+7)/8);
+    auto *encoder=new(storage.data()) Adreno::PipelineEncoder(output,ib.iova,scratch.iova,uint32_t(scratch.bytes));
+    const uint32_t values[8]={width*4,height,pitch,0,color,0,0,0};
+    auto rc=encoder->clearRows(target.iova,uint32_t(target.bytes),values,false);
+    if(rc!=GPU::Result::Success)return NativeMetal540DesktopSession::Invalid;
+    words=output.size();return words?0:NativeMetal540DesktopSession::Invalid;
+}
 int encodeDraw(NativeMetal540DesktopSession &session,uint64_t ibID,uint64_t scratchID,
     const QGPUProgramImage &vertex,const QGPUProgramImage &fragment,const Draw &draw,uint32_t &words) {
     words=0;
