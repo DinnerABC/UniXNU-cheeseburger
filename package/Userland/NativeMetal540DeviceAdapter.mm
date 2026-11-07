@@ -2,6 +2,18 @@
 #include "NativeMetal540DeviceAdapter.h"
 #include "NativeMetal540Capabilities.h"
 #include "NativeMetal540ProtocolAudit.h"
+#import <dlfcn.h>
+// Weak: legacy plugin builds do not link the desktop objects.
+extern "C" void cbRecordUnknown(SEL selector) __attribute__((weak_import));
+static NSMethodSignature *adapterSignatureFallback(id self,SEL _cmd,SEL selector) {
+    (void)_cmd;
+    if(NSMethodSignature *signature=[(id)class_getSuperclass(object_getClass(self)) instanceMethodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+static void adapterForwardFallback(id self,SEL _cmd,NSInvocation *invocation) {
+    (void)self;(void)_cmd;
+    if(cbRecordUnknown)cbRecordUnknown(invocation.selector);
+}
 #import "NativeMetal540Objects.h"
 #import <objc/runtime.h>
 #import <IOKit/IOKitLib.h>
@@ -265,6 +277,16 @@ static id createInitializedBackend(id ownedBackend,uint32_t service,bool desktop
                 if(s==sel_registerName("limits"))types=limitsType;
                 ok=class_addMethod(cls,s,method_getImplementation(methods[i]),types);}
             free(methods);if(!ok){objc_disposeClassPair(cls);return fail(@"Adapter method installation failed");}
+            // Unknown selectors on the system device must never escape into a
+            // QuartzCore dispatch block (boot 0x3e0635af sig6: objc_terminate
+            // from QuartzCore via libdispatch). Record and return without
+            // success. The recorder lives in the desktop objects; legacy
+            // plugin builds that do not link them keep a NULL pointer.
+            if(cbRecordUnknown){
+                if(!class_addMethod(cls,@selector(methodSignatureForSelector:),(IMP)adapterSignatureFallback,"@@:@:")||
+                   !class_addMethod(cls,@selector(forwardInvocation:),(IMP)adapterForwardFallback,"v@:@")){
+                    objc_disposeClassPair(cls);return fail(@"Adapter forwarding installation failed");}
+            }
             objc_registerClassPair(cls);adapterClass=cls;
         }
     }

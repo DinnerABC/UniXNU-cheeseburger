@@ -1,3 +1,12 @@
+## 2026-11-07：桌面系统首次进入——用户确认桌面可见；fail-fast 修复生效；按用户指示改 250s
+
+- **用户报告 boot `0x3e0dd14c` 正常进入系统桌面并手动重启**。镜像 `out/p21/p21-sagit-desktop-fail-fast-20261107T0626Z/uefi/boot-p21-up1.img` SHA `c7625bc9af9b4c2d919da2f6babec4a4b9ec2362dc4d2fa69dcc6f46e0c2a8dd`（auto-reset=600；用户指示后续改 **250s**），gate `20261107T062811Z`/3pins，kernel复用97ae7084，FD `0b336e3b…`，expandedpayload `9c2da7bc…`。日志 `out/p21/persistent-logs/20261107T063322Z`，window SHA `09a873c1af90289c957e1d448b4dd906d1df6ecc91ee8d6835741cc9abe90705`，43rounds/0errors，290.5s观测返回（用户手动）。
+- **实机显示链路工作**：`DISPLAY clients=52 frames=17`，`SWAP check=17 reject=0 transfer=17 rc=0`（前轮0帧/8次sig6）；触摸 `publish=272 HID=272`；`AUTORESET requested=600` 未触发（用户先重启）。backboardd fault exits=**1**（上轮8）——符号化为同一类 kernel abort（pthread/libc），但栈底帧 0xbea82f5 在共享缓存外（很可能插件路径），单次发生且系统持续运行；**根因未修，记下一轮**。
+- 修复内容（对上轮 sig6 根因）：符号化确认是**未捕获 NSException 从 QuartzCore/libdispatch 逃逸**，不是 LLVM。修复：全部 CBMetal 对象与动态 21H461 adapter 类加 `methodSignatureForSelector:`/`forwardInvocation:` 未知 selector 兜底（记录到 `/private/var/tmp/p21-plugin.txt` 的 `CBUNKNOWN` 行＋计数，不抛不假成功）；自身全部 `[NSException raise]` 改为 fail 路径（getBytes/replaceRegion/commit/wait/encoder check）。最小复现发现双重计数（signature+forward 各记一次），修正为仅 forwardInvocation 记一次。验证中 test 守卫错误、auto-var-id、weak-import dlsym 等失败日志保留。
+- **注意**：本轮 GPU probe 回归行（RC/RX/OR等）未出现——GPROBE exec=0、markers last=570c（mediaserverd probe 集合）与 GPSVC open=4；probe 在桌面真实运行时可能 busy/未完整执行。这不是 GPU 退化证据（无负向记录）；下轮候选可在 250s 内保留 probe 完整路径或接受验收仅以桌面＋display 为准。CBUNKNOWN 插件文件在 Data（后续轮可取证读取）。
+- 冻 **`out/p21/gpu-cp/rounds/20261107T063453Z-sagit-desktop-system-entered-user-confirmed`**，device-result.json 记录用户确认、17帧、单次sig6与全部限界。symbolizer `scripts/p21-symbolize-p21-fault.py`（只读cache，slide=d67c000验证）。
+- **下一轮（按用户指示）**：auto-reset **225→250** 新候选；目标：(a) 保持桌面可用回归（display frames/swap、无新增sig6），(b) 取证 CBUNKNOWN/plugin 文件与 desktop 标记，(c) 定位并修剩余单次 abort，(d) 若 probe 与桌面争用则改 probe 触发时机而非删功能。不刷分区/push/改seed/power；保留全部历史镜像。
+
 ## 2026-11-07：桌面 principal 首次到达 backboardd；系统 sig6 崩溃、0帧显示（诚实记录）
 
 - 接续`9f4decb`干净基线，单次boot **`0x3e0635af`**（receipt `logs/boot-once-20261107T055622Z`，239.77s自行返回Recovery，BCB预置/无host帮助；日志 `out/p21/persistent-logs/20261107T060031Z`，window SHA `f485768f8b464a12ffe2eae8d5e0a6a2b4d525bd93397a751e51d8a2a7b9f652`，34rounds/0errors）。镜像SHA **`008a4f362bf6c5134631a83ed3f2b5a74f6342972f4568b02228dc7394a7c4bb`**，FD `fea84ac3…`，expandedpayload `16e8ed69…`，gate `20261107T055558Z` PASS/3pins；kernel复用verified 97ae7084（prelink hash相同、不假称重编），userland全部重build。

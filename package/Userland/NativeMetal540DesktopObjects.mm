@@ -12,9 +12,35 @@
 #include <sys/stat.h>
 
 static NSError *cbFailure(NSString *text) {return [NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInvalidResource userInfo:@{NSLocalizedDescriptionKey:text}];}
+// Unknown-selector fallback: system consumers call many Metal selectors this
+// bounded backend does not implement. An uncaught NSException escaping into a
+// QuartzCore dispatch block aborts the whole process (boot 0x3e0635af sig6:
+// libobjc terminate from QuartzCore via libdispatch). Unknown selectors are
+// recorded, never thrown, and never fake success: encoder/command contexts
+// fail their command buffer; value returns are zeroed.
+static NSMutableArray *cbUnknownSelectors;
+static NSLock *cbUnknownLock;
+static unsigned cbUnknownCount;
+extern "C" void cbRecordUnknown(SEL selector) {
+    static dispatch_once_t once;dispatch_once(&once,^{cbUnknownSelectors=[NSMutableArray new];cbUnknownLock=[NSLock new];});
+    NSString *name=NSStringFromSelector(selector);
+    [cbUnknownLock lock];bool duplicate=NO;
+    for(NSString *known in cbUnknownSelectors)if([known isEqualToString:name])duplicate=YES;
+    if(!duplicate&&cbUnknownSelectors.count<32)[cbUnknownSelectors addObject:name];
+    ++cbUnknownCount;[cbUnknownLock unlock];
+    int fd=open("/private/var/tmp/p21-plugin.txt",O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0644);
+    if(fd>=0){char line[160];int n=snprintf(line,sizeof line,"CBUNKNOWN %s\n",name.UTF8String);write(fd,line,(size_t)n);close(fd);}
+}
+unsigned CBMetalUnknownSelectorCount(void) {return cbUnknownCount;}
+NSArray *CBMetalUnknownSelectors(void) {if(!cbUnknownSelectors)return @[];[cbUnknownLock lock];NSArray *out=[cbUnknownSelectors copy];[cbUnknownLock unlock];return out;}
 @interface CBMetalContext : NSObject { @public std::unique_ptr<NativeMetal540DesktopSession> session;id owner;__weak id publicDevice;NSRecursiveLock *lock;dispatch_queue_t worker;std::atomic<unsigned> pending;std::atomic<bool> lost;NSMutableArray *held,*deferred; }
 @end
 @implementation CBMetalContext
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (instancetype)init {if((self=[super init])){lock=[NSRecursiveLock new];worker=dispatch_queue_create("cb.metal.desktop",DISPATCH_QUEUE_SERIAL);pending=0;lost=false;held=[NSMutableArray new];deferred=[NSMutableArray new];}return self;}
 @end
 @interface CBMetalDevice () { @public CBMetalContext *_context;NativeMetal540DesktopLibrary::Compile _compiler; }
@@ -36,6 +62,11 @@ static NSError *cbFailure(NSString *text) {return [NSError errorWithDomain:MTLCo
 @interface CBMetalOperation : NSObject { @public NativeMetal540Desktop::Draw draw;CBMetalPipeline *pipeline;NSArray *owners;bool clear;uint32_t color; }
 @end
 @implementation CBMetalOperation
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 @end
 @interface CBMetalCommands () { @public CBMetalQueue *_queue;NSCondition *_condition;MTLCommandBufferStatus _status;NSError *_error;NSMutableArray<CBMetalOperation *> *_operations;NSMutableArray *_handlers;CBMetalBuffer *_ib,*_scratch;bool _active,_committed,_callbacksDone,_pendingReserved;NSThread *_callbackThread;NSString *_label; }
 - (void)fail:(NSString *)text;
@@ -54,6 +85,11 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     [c->lock unlock];return out;
 }
 @implementation CBMetalDevice
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (instancetype)initWithTransport:(NativeMetal540DesktopSession::Transport)t connectionOwner:(id)owner compiler:(NativeMetal540DesktopLibrary::Compile)compiler error:(NSError **)error {
     if(error)*error=nil;if(!owner||!compiler){if(error)*error=cbFailure(@"Connection owner and real AIR compiler required");return nil;}
     if(!(self=[super init]))return nil;_context=[CBMetalContext new];_context->owner=owner;_compiler=compiler;
@@ -135,6 +171,11 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (CBMetalQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)n {if(!n||n>64)return nil;auto q=[CBMetalQueue new];q->_device=self;q->_identity=[self publicDeviceIdentity];q->_capacity=n;q->_live=0;return q;}
 @end
 @implementation CBMetalBuffer
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (void)dealloc {auto c=_device->_context;[c->lock lock];if(_resource.id){
     if(c->pending)[c->deferred addObject:@{@"id":@(_resource.id),@"owner":_externalOwner?:NSNull.null}];
     else {int rc=c->session->release(_resource.id);if(rc&&_externalOwner)[c->held addObject:_externalOwner];}}
@@ -150,6 +191,11 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (void *)contents {auto c=_device->_context;if(c->lost.load()||c->pending.load())return nullptr;[c->lock lock];NativeMetal540DesktopSession::Resource r{};void *p=!c->lost&&!c->pending&&c->session->resource(_resource.id,r)?r.cpu:nullptr;[c->lock unlock];return p;}
 @end
 @implementation CBMetalTexture
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (id)device {return _backing.device;}
 - (NSUInteger)width {return _descriptor.width;}
 - (NSUInteger)height {return _descriptor.height;}
@@ -169,22 +215,28 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (void)setLabel:(NSString *)s {_backing.label=s;}
 - (void)replaceRegion:(MTLRegion)r mipmapLevel:(NSUInteger)level withBytes:(const void *)bytes bytesPerRow:(NSUInteger)row {
     auto c=_backing->_device->_context;[c->lock lock];void *cpu=_backing.contents;
-    if(!cpu||!bytes||level||r.origin.z||r.size.depth!=1||r.origin.x>self.width||r.size.width>self.width-r.origin.x||r.origin.y>self.height||r.size.height>self.height-r.origin.y||row<r.size.width*4){[c->lock unlock];[NSException raise:NSInvalidArgumentException format:@"Invalid native texture upload"];return;}
+    if(!cpu||!bytes||level||r.origin.z||r.size.depth!=1||r.origin.x>self.width||r.size.width>self.width-r.origin.x||r.origin.y>self.height||r.size.height>self.height-r.origin.y||row<r.size.width*4){
+        // CPU storage uncertainty: stop further use instead of raising into
+        // the caller's dispatch context.
+        c->lost=true;_ready=false;[c->lock unlock];return;}
     uint32_t seed=0;int rc=_surface?int(IOSurfaceLock(_surface,0,&seed)):0;
     if(!rc)for(NSUInteger y=0;y<r.size.height;++y)memcpy((uint8_t*)cpu+(r.origin.y+y)*_pitch+r.origin.x*4,(const uint8_t*)bytes+y*row,r.size.width*4);
     if(_surface&&!rc)rc=int(IOSurfaceUnlock(_surface,0,&seed));if(rc)c->lost=true;_ready=!rc;[c->lock unlock];
-    if(rc)[NSException raise:NSInternalInconsistencyException format:@"Native IOSurface upload lock/unlock failed: %d",rc];
 }
 - (void)getBytes:(void *)bytes bytesPerRow:(NSUInteger)row fromRegion:(MTLRegion)r mipmapLevel:(NSUInteger)level {
     auto c=_backing->_device->_context;[c->lock lock];void *cpu=_backing.contents;
-    if(!cpu||!bytes||!_ready||level||r.origin.z||r.size.depth!=1||r.origin.x>self.width||r.size.width>self.width-r.origin.x||r.origin.y>self.height||r.size.height>self.height-r.origin.y||row<r.size.width*4){[c->lock unlock];[NSException raise:NSInvalidArgumentException format:@"Texture read needs proven native completion"];return;}
+    if(!cpu||!bytes||!_ready||level||r.origin.z||r.size.depth!=1||r.origin.x>self.width||r.size.width>self.width-r.origin.x||r.origin.y>self.height||r.size.height>self.height-r.origin.y||row<r.size.width*4){[c->lock unlock];return;}
     uint32_t seed=0;int rc=_surface?int(IOSurfaceLock(_surface,kIOSurfaceLockReadOnly,&seed)):0;
     if(!rc)for(NSUInteger y=0;y<r.size.height;++y)memcpy((uint8_t*)bytes+y*row,(uint8_t*)cpu+(r.origin.y+y)*_pitch+r.origin.x*4,r.size.width*4);
     if(_surface&&!rc)rc=int(IOSurfaceUnlock(_surface,kIOSurfaceLockReadOnly,&seed));if(rc){c->lost=true;_ready=false;}[c->lock unlock];
-    if(rc)[NSException raise:NSInternalInconsistencyException format:@"Native IOSurface read lock/unlock failed: %d",rc];
 }
 @end
 @implementation CBMetalLibrary
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (id)device {return _identity;}
 - (NSArray *)functionNames {NSMutableArray *out=[NSMutableArray new];for(const auto &n:_library->names())[out addObject:@(n.c_str())];return out;}
 - (NSString *)label {return _label;}
@@ -202,18 +254,38 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 }
 @end
 @implementation CBMetalFunction
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (id)device {return _library.device;}
 - (NSString *)name {return _name;}
 - (MTLFunctionType)functionType {return _image->info.stage==GPU::Shader::Vertex?MTLFunctionTypeVertex:_image->info.stage==GPU::Shader::Fragment?MTLFunctionTypeFragment:MTLFunctionTypeKernel;}
 @end
 @implementation CBMetalPipeline
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (id)device {return _vertex.device;}
 - (NSString *)label {return _descriptor.label;}
 @end
 @implementation CBMetalSampler
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (id)device {return _identity;}
 @end
 @implementation CBMetalQueue
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (id)device {return _identity;}
 - (NSString *)label {return _label;}
 - (void)setLabel:(NSString *)s {_label=[s copy];}
@@ -221,6 +293,11 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 @end
 static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return {id,0,uint32_t(texture.width),uint32_t(texture.height),texture->_pitch,cbFormat(texture.pixelFormat)};}
 @implementation CBMetalCommands
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
 - (void)dealloc {if(!_callbacksDone)--_queue->_live;}
 - (id)device {return _queue.device;}
 - (MTLCommandBufferStatus)status {[_condition lock];auto s=_status;[_condition unlock];return s;}
@@ -248,7 +325,7 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
     r->_viewport={0,0,double(r->_targets[0].width),double(r->_targets[0].height),0,1};r->_scissor={0,0,r->_targets[0].width,r->_targets[0].height};_active=true;return r;
 }
 - (void)commit {
-    [_condition lock];if(_committed){[_condition unlock];[NSException raise:NSInvalidArgumentException format:@"Native command buffer already committed"];return;}
+    [_condition lock];if(_committed){[_condition unlock];return;}
     _committed=true;if(_active&&!_error)_error=cbFailure(@"Render encoder was not ended");_status=MTLCommandBufferStatusCommitted;[_condition unlock];
     auto c=_queue->_device->_context;
     if(self.error||c->lost){[self fail:@"Native command preparation/admission failed"];dispatch_async(c->worker,^{@autoreleasepool {[self execute];}});return;}
@@ -290,31 +367,36 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
     }});
 }
 - (void)waitUntilCompleted {
-    [_condition lock];if(!_committed){[_condition unlock];[NSException raise:NSInvalidArgumentException format:@"Commit native command buffer before waiting"];return;}
+    [_condition lock];if(!_committed){[_condition unlock];return;}
     if(_callbackThread==NSThread.currentThread){[_condition unlock];return;}
     while(!_callbacksDone)[_condition wait];[_condition unlock];
 }
 @end
 @implementation CBMetalRender
-- (void)check {if(_ended||_commands->_committed)[NSException raise:NSInvalidArgumentException format:@"Native render encoder is closed"];}
-- (void)setRenderPipelineState:(CBMetalPipeline *)p {[self check];if(![p isKindOfClass:CBMetalPipeline.class]||p.device!=_commands.device){[_commands fail:@"Foreign render pipeline"];return;}_pipeline=p;}
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {cbRecordUnknown(invocation.selector);}
+- (BOOL)check {if(_ended||_commands->_committed){[_commands fail:@"Native render encoder is closed"];return NO;}return YES;}
+- (void)setRenderPipelineState:(CBMetalPipeline *)p {if(![self check])return;if(![p isKindOfClass:CBMetalPipeline.class]||p.device!=_commands.device){[_commands fail:@"Foreign render pipeline"];return;}_pipeline=p;}
 - (void)bindBuffer:(CBMetalBuffer *)b offset:(NSUInteger)o index:(NSUInteger)i stage:(unsigned)s {
-    [self check];if(i>=8||![b isKindOfClass:CBMetalBuffer.class]||b.device!=_commands.device||o>b.length||o>UINT32_MAX){[_commands fail:@"Invalid native buffer binding"];return;}_buffers[s][i]=b;_offsets[s][i]=o;
+    if(![self check])return;if(i>=8||![b isKindOfClass:CBMetalBuffer.class]||b.device!=_commands.device||o>b.length||o>UINT32_MAX){[_commands fail:@"Invalid native buffer binding"];return;}_buffers[s][i]=b;_offsets[s][i]=o;
 }
 - (void)setVertexBuffer:(CBMetalBuffer *)b offset:(NSUInteger)o atIndex:(NSUInteger)i {[self bindBuffer:b offset:o index:i stage:0];}
 - (void)setFragmentBuffer:(CBMetalBuffer *)b offset:(NSUInteger)o atIndex:(NSUInteger)i {[self bindBuffer:b offset:o index:i stage:1];}
 - (void)setVertexBytes:(const void *)bytes length:(NSUInteger)n atIndex:(NSUInteger)i {auto b=[_commands->_queue->_device newBufferWithBytes:bytes length:n options:0];[self setVertexBuffer:b offset:0 atIndex:i];}
 - (void)setFragmentBytes:(const void *)bytes length:(NSUInteger)n atIndex:(NSUInteger)i {auto b=[_commands->_queue->_device newBufferWithBytes:bytes length:n options:0];[self setFragmentBuffer:b offset:0 atIndex:i];}
-- (void)bindTexture:(CBMetalTexture *)t index:(NSUInteger)i stage:(unsigned)s {[self check];if(i>=8||![t isKindOfClass:CBMetalTexture.class]||t.device!=_commands.device||!t->_ready||!(t.usage&MTLTextureUsageShaderRead)){[_commands fail:@"Invalid sampled texture"];return;}_textures[s][i]=t;}
+- (void)bindTexture:(CBMetalTexture *)t index:(NSUInteger)i stage:(unsigned)s {if(![self check])return;if(i>=8||![t isKindOfClass:CBMetalTexture.class]||t.device!=_commands.device||!t->_ready||!(t.usage&MTLTextureUsageShaderRead)){[_commands fail:@"Invalid sampled texture"];return;}_textures[s][i]=t;}
 - (void)setVertexTexture:(CBMetalTexture *)t atIndex:(NSUInteger)i {[self bindTexture:t index:i stage:0];}
 - (void)setFragmentTexture:(CBMetalTexture *)t atIndex:(NSUInteger)i {[self bindTexture:t index:i stage:1];}
 - (void)bindSampler:(CBMetalSampler *)s index:(NSUInteger)i stage:(unsigned)stage {[self check];if(i>=QGPU_STAGE_SAMPLER_COUNT||![s isKindOfClass:CBMetalSampler.class]||s.device!=_commands.device){[_commands fail:@"Invalid sampler"];return;}_samplers[stage][i]=s;}
 - (void)setVertexSamplerState:(CBMetalSampler *)s atIndex:(NSUInteger)i {[self bindSampler:s index:i stage:0];}
 - (void)setFragmentSamplerState:(CBMetalSampler *)s atIndex:(NSUInteger)i {[self bindSampler:s index:i stage:1];}
-- (void)setViewport:(MTLViewport)v {[self check];if(!std::isfinite(v.originX)||!std::isfinite(v.originY)||!std::isfinite(v.width)||!std::isfinite(v.height)||v.width<=0||v.height<=0||v.width>16384||v.height>16384||v.znear!=0||v.zfar!=1){[_commands fail:@"Unsupported viewport"];return;}_viewport=v;}
-- (void)setScissorRect:(MTLScissorRect)r {[self check];if(r.x>_targets[0].width||r.width>_targets[0].width-r.x||r.y>_targets[0].height||r.height>_targets[0].height-r.y){[_commands fail:@"Scissor outside native target"];return;}_scissor=r;}
+- (void)setViewport:(MTLViewport)v {if(![self check])return;if(!std::isfinite(v.originX)||!std::isfinite(v.originY)||!std::isfinite(v.width)||!std::isfinite(v.height)||v.width<=0||v.height<=0||v.width>16384||v.height>16384||v.znear!=0||v.zfar!=1){[_commands fail:@"Unsupported viewport"];return;}_viewport=v;}
+- (void)setScissorRect:(MTLScissorRect)r {if(![self check])return;if(r.x>_targets[0].width||r.width>_targets[0].width-r.x||r.y>_targets[0].height||r.height>_targets[0].height-r.y){[_commands fail:@"Scissor outside native target"];return;}_scissor=r;}
 - (void)drawPrimitives:(MTLPrimitiveType)primitive vertexStart:(NSUInteger)start vertexCount:(NSUInteger)count {
-    [self check];if(_commands->_operations.count>=256){[_commands fail:@"Native command operation capacity reached"];return;}if(!_pipeline||!count||start>UINT32_MAX||count>GPU::Shader::MaxDrawVertices||start+count>UINT32_MAX||
+    if(![self check])return;if(_commands->_operations.count>=256){[_commands fail:@"Native command operation capacity reached"];return;}if(!_pipeline||!count||start>UINT32_MAX||count>GPU::Shader::MaxDrawVertices||start+count>UINT32_MAX||
         (primitive!=MTLPrimitiveTypeTriangle&&primitive!=MTLPrimitiveTypeTriangleStrip&&primitive!=MTLPrimitiveTypeLine)){[_commands fail:@"Invalid native draw"];return;}
     auto op=[CBMetalOperation new];op->pipeline=_pipeline;NSMutableArray *owners=[NSMutableArray arrayWithObject:_pipeline];auto &d=op->draw;auto &state=d.state;
     state.version=GPU::Shader::Version;state.registry=_pipeline->_vertex->_image->registry;state.primitive=uint32_t(primitive);state.start=uint32_t(start);state.count=uint32_t(count);state.instances=1;
@@ -346,5 +428,5 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
     }
     op->owners=[owners copy];[_commands->_operations addObject:op];
 }
-- (void)endEncoding {[self check];_ended=true;_commands->_active=false;}
+- (void)endEncoding {if(![self check])return;_ended=true;_commands->_active=false;}
 @end

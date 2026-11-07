@@ -79,6 +79,10 @@ int main(int argc,char **argv){@autoreleasepool {assert(argc==2);
         assert(![wrapped newCommandQueueWithMaxCommandBufferCount:0]);
         id afterSecond=NativeMetal540CreateInitializedDesktopDevice(d,(uint32_t)(uintptr_t)&m,&adapterError);
         assert(afterSecond&&afterSecond!=wrapped);
+        // Unknown-selector forwarding: no exception escapes, selector recorded.
+        if(!mode){unsigned unknownBefore=CBMetalUnknownSelectorCount();
+            @autoreleasepool {(void)[wrapped performSelector:@selector(unrecognizedDesktopSelector:) withObject:nil];}
+            assert(CBMetalUnknownSelectorCount()==unknownBefore+1);assert(![wrapped respondsToSelector:@selector(unrecognizedDesktopSelector:)]);}
     }
     puts("PASS actual ObjC desktop library/pipeline/full-HD MRT/sampling/blend/queue/encoder/submission/fence and nested callbacks; modeled transport NOT GPU execution");
 }}

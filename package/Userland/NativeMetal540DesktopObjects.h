@@ -12,6 +12,9 @@
 @class CBMetalPipeline,CBMetalSampler,CBMetalQueue,CBMetalCommands,CBMetalRender;
 NS_ASSUME_NONNULL_BEGIN
 CBMetalDevice * _Nullable CBMetalCreateNativeDevice(uint32_t service,NSError **error);
+extern "C" void cbRecordUnknown(SEL selector);
+unsigned CBMetalUnknownSelectorCount(void);
+NSArray *CBMetalUnknownSelectors(void);
 @interface CBMetalDevice : NSObject
 - (nullable instancetype)initWithTransport:(NativeMetal540DesktopSession::Transport)transport
     connectionOwner:(id)owner compiler:(NativeMetal540DesktopLibrary::Compile)compiler error:(NSError **)error;
