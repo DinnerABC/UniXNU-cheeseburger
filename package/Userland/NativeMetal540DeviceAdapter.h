@@ -5,3 +5,5 @@
 // Explicit owned _MTLDevice initialization only. Does not call MTLAddDevice,
 // register a system/default device, or claim full MTLDevice/SPI conformance.
 id NativeMetal540CreateInitializedDevice(Native540Device *backend,uint32_t service,NSError **error);
+// Same qualified target class, with a real desktop backend. No system publish.
+id NativeMetal540CreateInitializedDesktopDevice(id backend,uint32_t service,NSError **error);

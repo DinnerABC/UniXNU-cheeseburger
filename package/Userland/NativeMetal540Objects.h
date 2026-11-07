@@ -73,6 +73,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor completionHandler:(void (^ _Nullable)(Native540RenderPipeline * _Nullable, NSError * _Nullable))handler;
 - (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor options:(MTLPipelineOption)options completionHandler:(void (^ _Nullable)(Native540RenderPipeline * _Nullable, MTLRenderPipelineReflection * _Nullable, NSError * _Nullable))handler;
 - (Native540CommandQueue *)newCommandQueue;
+- (nullable Native540CommandQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)count;
 - (NSUInteger)currentAllocatedSize;
 // Session stores a weak identity; created resources retain it independently.
 - (void)setPublicDeviceIdentity:(id)device;

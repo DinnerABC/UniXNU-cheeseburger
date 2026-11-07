@@ -2,6 +2,8 @@
 #pragma once
 #include <GPUJITProtocol.h>
 #include "AIRNIR.h"
+#include "FunctionConstants.h"
+#include "NativeMetal540ConstantReflection.h"
 #include <cstddef>
 #include <memory>
 #include <mutex>
@@ -16,8 +18,11 @@ public:
                          uint64_t,QGPUProgramImage *,QGPUAIRNIRTiming *,char *,unsigned);
     using Image=std::shared_ptr<const QGPUProgramImage>;
     static std::shared_ptr<NativeMetal540DesktopLibrary> load(const void *bytes,size_t size,
-        Compile compile,uint64_t registry,std::string &error);
+        Compile compile,uint64_t registry,std::string &error,CBMetalInspectConstants inspector=nullptr);
     Image function(const std::string &name,std::string &error);
+    Image function(const std::string &name,const std::vector<QGPUAIRConstant> &constants,std::string &error);
+    Image function(const std::string &name,const std::vector<GPU::Compiler::FunctionConstantValue> &constants,CBMetalInspectConstants inspector,std::string &error);
+    CBMetalInspectConstants inspector() const {return inspector_;}
     const std::vector<std::string> &names() const {return names_;}
     const std::string &identity() const {return identity_;}
 private:
@@ -28,6 +33,6 @@ private:
     std::vector<std::string> names_;
     std::vector<Cached> cache_;
     std::string identity_;
-    Compile compile_=nullptr;uint64_t registry_=0;
+    Compile compile_=nullptr;uint64_t registry_=0;CBMetalInspectConstants inspector_=nullptr;
     std::mutex lock_;
 };

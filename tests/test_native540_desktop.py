@@ -12,7 +12,8 @@ import unittest
 R=Path(__file__).resolve().parents[1]
 S=R.parent/'upstream/ios_sagit'
 LOCAL=Path('/Users/dinnerabc/unixnu-p21/native540')
-LIB=LOCAL/'obj/gpu-compiler/host/src/freedreno/QcomGPUCompiler.dylib'
+LIB=Path(os.environ.get('NATIVE540_QUALIFIED_COMPILER',
+    str(LOCAL/'constants-adapter-20261107/host/build/src/freedreno/QcomGPUCompiler.dylib')))
 O=LOCAL/('desktop-tests-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
 ENV=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 
@@ -55,7 +56,7 @@ class Desktop(unittest.TestCase):
     def test_actual_objc_objects(self):
         original=Path(os.environ.get('NATIVE540_QUARTZCORE_LIBRARY',
             '/Volumes/DawnUpdate21H461.J120J121J207J208SystemCryptex/System/Library/Frameworks/QuartzCore.framework/default.metallib'))
-        sources=[R/'package/Userland/NativeMetal540DesktopObjects.mm',R/'package/Userland/NativeMetal540DesktopDraw.cpp',
+        sources=[R/'package/Userland/NativeMetal540DesktopObjects.mm',R/'package/Userland/NativeMetal540DesktopConstants.mm',R/'package/Userland/NativeMetal540DesktopDraw.cpp',
                  R/'package/Userland/NativeMetal540DesktopLibrary.cpp',*self.sources]
         run([self.cc,'-std=c++17','-isysroot',self.mac,'-O1','-g','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror',
              '-Wno-deprecated-declarations','-fsanitize=address,undefined',*self.includes,

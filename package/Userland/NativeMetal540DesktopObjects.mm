@@ -3,6 +3,8 @@
 // execution uses the board's existing ABI, not sagit's Family selectors.
 #import "NativeMetal540DesktopObjects.h"
 #include "NativeMetal540DesktopDraw.h"
+#include "NativeMetal540DesktopConstants.h"
+#include "NativeMetal540ConstantReflection.h"
 #include <atomic>
 #include <cmath>
 #include <fcntl.h>
@@ -10,26 +12,26 @@
 #include <sys/stat.h>
 
 static NSError *cbFailure(NSString *text) {return [NSError errorWithDomain:MTLCommandBufferErrorDomain code:MTLCommandBufferErrorInvalidResource userInfo:@{NSLocalizedDescriptionKey:text}];}
-@interface CBMetalContext : NSObject { @public std::unique_ptr<NativeMetal540DesktopSession> session;id owner;NSRecursiveLock *lock;dispatch_queue_t worker;std::atomic<unsigned> pending;std::atomic<bool> lost;NSMutableArray *held,*deferred; }
+@interface CBMetalContext : NSObject { @public std::unique_ptr<NativeMetal540DesktopSession> session;id owner;__weak id publicDevice;NSRecursiveLock *lock;dispatch_queue_t worker;std::atomic<unsigned> pending;std::atomic<bool> lost;NSMutableArray *held,*deferred; }
 @end
 @implementation CBMetalContext
 - (instancetype)init {if((self=[super init])){lock=[NSRecursiveLock new];worker=dispatch_queue_create("cb.metal.desktop",DISPATCH_QUEUE_SERIAL);pending=0;lost=false;held=[NSMutableArray new];deferred=[NSMutableArray new];}return self;}
 @end
 @interface CBMetalDevice () { @public CBMetalContext *_context;NativeMetal540DesktopLibrary::Compile _compiler; }
 @end
-@interface CBMetalBuffer () { @public CBMetalDevice *_device;NativeMetal540DesktopSession::Resource _resource;NSUInteger _length;NSString *_label;id _externalOwner; }
+@interface CBMetalBuffer () { @public CBMetalDevice *_device;id _identity;NativeMetal540DesktopSession::Resource _resource;NSUInteger _length;NSString *_label;id _externalOwner; }
 @end
 @interface CBMetalTexture () { @public CBMetalBuffer *_backing;MTLTextureDescriptor *_descriptor;uint32_t _pitch;IOSurfaceRef _surface;id _surfaceOwner;bool _ready; }
 @end
-@interface CBMetalLibrary () { @public CBMetalDevice *_device;std::shared_ptr<NativeMetal540DesktopLibrary> _library;NSString *_label; }
+@interface CBMetalLibrary () { @public CBMetalDevice *_device;id _identity;std::shared_ptr<NativeMetal540DesktopLibrary> _library;NSString *_label; }
 @end
 @interface CBMetalFunction () { @public CBMetalLibrary *_library;NSString *_name;NativeMetal540DesktopLibrary::Image _image; }
 @end
 @interface CBMetalPipeline () { @public CBMetalFunction *_vertex,*_fragment;MTLRenderPipelineDescriptor *_descriptor;GPU::Shader::RenderState _state; }
 @end
-@interface CBMetalSampler () { @public CBMetalDevice *_device;GPU::Shader::Sampler _state; }
+@interface CBMetalSampler () { @public CBMetalDevice *_device;id _identity;GPU::Shader::Sampler _state; }
 @end
-@interface CBMetalQueue () { @public CBMetalDevice *_device;NSUInteger _capacity;std::atomic<unsigned> _live;NSString *_label; }
+@interface CBMetalQueue () { @public CBMetalDevice *_device;id _identity;NSUInteger _capacity;std::atomic<unsigned> _live;NSString *_label; }
 @end
 @interface CBMetalOperation : NSObject { @public NativeMetal540Desktop::Draw draw;CBMetalPipeline *pipeline;NSArray *owners;bool clear;uint32_t color; }
 @end
@@ -46,7 +48,7 @@ static bool cbLinked(MTLLinkedFunctions *f){return !f||(!f.functions.count&&!f.b
 static uint32_t cbFormat(MTLPixelFormat f){return f==MTLPixelFormatRGBA8Unorm?GPU::Shader::RGBA8:f==MTLPixelFormatBGRA8Unorm?GPU::Shader::BGRA8:0;}
 static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=nullptr,id owner=nil){
     auto c=d->_context;[c->lock lock];CBMetalBuffer *out=nil;
-    if(!c->lost&&!c->pending){out=[CBMetalBuffer new];out->_device=d;out->_length=n;out->_externalOwner=owner;
+    if(!c->lost&&!c->pending){out=[CBMetalBuffer new];out->_device=d;out->_identity=[d publicDeviceIdentity];out->_length=n;out->_externalOwner=owner;
         int rc=imported?c->session->import(imported,n,out->_resource):c->session->allocate(n,out->_resource);
         if(rc){if(c->session->lost())c->lost=true;if(owner)[c->held addObject:owner];out=nil;}}
     [c->lock unlock];return out;
@@ -55,10 +57,13 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (instancetype)initWithTransport:(NativeMetal540DesktopSession::Transport)t connectionOwner:(id)owner compiler:(NativeMetal540DesktopLibrary::Compile)compiler error:(NSError **)error {
     if(error)*error=nil;if(!owner||!compiler){if(error)*error=cbFailure(@"Connection owner and real AIR compiler required");return nil;}
     if(!(self=[super init]))return nil;_context=[CBMetalContext new];_context->owner=owner;_compiler=compiler;
+    _context->publicDevice=self;
     _context->session=std::make_unique<NativeMetal540DesktopSession>(t);int rc=_context->session->initialize();
     if(rc){if(error)*error=cbFailure(@"Native desktop session initialization failed");return nil;}return self;
 }
 - (NSUInteger)currentAllocatedSize {return _context->session->allocatedBytes();}
+- (void)setPublicDeviceIdentity:(id)device {_context->publicDevice=device;}
+- (id)publicDeviceIdentity {return _context->publicDevice?:self;}
 - (CBMetalBuffer *)newBufferWithLength:(NSUInteger)n options:(MTLResourceOptions)o {return cbOptions(o)&&n&&n<=16u*1024*1024?cbBuffer(self,n):nil;}
 - (CBMetalBuffer *)newBufferWithBytes:(const void *)bytes length:(NSUInteger)n options:(MTLResourceOptions)o {
     if(!bytes)return nil;auto c=_context;[c->lock lock];auto b=[self newBufferWithLength:n options:o];if(b)memcpy(b->_resource.cpu,bytes,n);[c->lock unlock];return b;
@@ -85,8 +90,8 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (CBMetalLibrary *)newLibraryWithData:(dispatch_data_t)data error:(NSError **)error {
     if(error)*error=nil;size_t n=data?dispatch_data_get_size(data):0;if(!n||n>64u*1024*1024){if(error)*error=cbFailure(@"Bounded original AIR library required");return nil;}
     const void *bytes=nullptr;size_t mapped=0;auto map=dispatch_data_create_map(data,&bytes,&mapped);if(!map||mapped!=n)return nil;
-    std::string diagnostic;auto parsed=NativeMetal540DesktopLibrary::load(bytes,n,_compiler,0,diagnostic);
-    if(!parsed){if(error)*error=cbFailure(@(diagnostic.c_str()));return nil;}auto library=[CBMetalLibrary new];library->_device=self;library->_library=parsed;return library;
+    std::string diagnostic;auto parsed=NativeMetal540DesktopLibrary::load(bytes,n,_compiler,0,diagnostic,cbmetal_inspect_air_constants);
+    if(!parsed){if(error)*error=cbFailure(@(diagnostic.c_str()));return nil;}auto library=[CBMetalLibrary new];library->_device=self;library->_identity=[self publicDeviceIdentity];library->_library=parsed;return library;
 }
 - (CBMetalLibrary *)newLibraryWithURL:(NSURL *)url error:(NSError **)error {
     if(error)*error=nil;if(!url.isFileURL){if(error)*error=cbFailure(@"Local original metallib URL required");return nil;}
@@ -101,12 +106,12 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(![d isKindOfClass:MTLSamplerDescriptor.class]||d.minFilter>MTLSamplerMinMagFilterLinear||d.magFilter>MTLSamplerMinMagFilterLinear||
        d.mipFilter!=MTLSamplerMipFilterNotMipmapped||d.sAddressMode!=MTLSamplerAddressModeClampToEdge||d.tAddressMode!=MTLSamplerAddressModeClampToEdge||
        d.rAddressMode!=MTLSamplerAddressModeClampToEdge||d.maxAnisotropy!=1||!d.normalizedCoordinates||d.compareFunction!=MTLCompareFunctionNever)return nil;
-    auto s=[CBMetalSampler new];s->_device=self;s->_state.filters=uint32_t(d.minFilter)|(uint32_t(d.magFilter)<<1);return s;
+    auto s=[CBMetalSampler new];s->_device=self;s->_identity=[self publicDeviceIdentity];s->_state.filters=uint32_t(d.minFilter)|(uint32_t(d.magFilter)<<1);return s;
 }
 - (CBMetalPipeline *)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d error:(NSError **)error {
     if([d isKindOfClass:MTLRenderPipelineDescriptor.class])d=[d copy];
     if(error)*error=nil;if(![d isKindOfClass:MTLRenderPipelineDescriptor.class]||![d.vertexFunction isKindOfClass:CBMetalFunction.class]||
-       ![d.fragmentFunction isKindOfClass:CBMetalFunction.class]||d.vertexFunction.device!=self||d.fragmentFunction.device!=self||d.rasterSampleCount!=1||
+       ![d.fragmentFunction isKindOfClass:CBMetalFunction.class]||d.vertexFunction.device!=[self publicDeviceIdentity]||d.fragmentFunction.device!=[self publicDeviceIdentity]||d.rasterSampleCount!=1||
        d.depthAttachmentPixelFormat||d.stencilAttachmentPixelFormat||!d.rasterizationEnabled||d.supportIndirectCommandBuffers||d.binaryArchives.count||
        !cbLinked(d.vertexLinkedFunctions)||!cbLinked(d.fragmentLinkedFunctions)||d.vertexPreloadedLibraries.count||d.fragmentPreloadedLibraries.count||
        d.alphaToCoverageEnabled||d.alphaToOneEnabled||d.maxVertexAmplificationCount!=1){if(error)*error=cbFailure(@"Unsupported native render pipeline");return nil;}
@@ -127,14 +132,14 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     auto p=[CBMetalPipeline new];p->_vertex=v;p->_fragment=f;p->_descriptor=[d copy];return p;
 }
 - (CBMetalQueue *)newCommandQueue {return [self newCommandQueueWithMaxCommandBufferCount:16];}
-- (CBMetalQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)n {if(!n||n>64)return nil;auto q=[CBMetalQueue new];q->_device=self;q->_capacity=n;q->_live=0;return q;}
+- (CBMetalQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)n {if(!n||n>64)return nil;auto q=[CBMetalQueue new];q->_device=self;q->_identity=[self publicDeviceIdentity];q->_capacity=n;q->_live=0;return q;}
 @end
 @implementation CBMetalBuffer
 - (void)dealloc {auto c=_device->_context;[c->lock lock];if(_resource.id){
     if(c->pending)[c->deferred addObject:@{@"id":@(_resource.id),@"owner":_externalOwner?:NSNull.null}];
     else {int rc=c->session->release(_resource.id);if(rc&&_externalOwner)[c->held addObject:_externalOwner];}}
     [c->lock unlock];}
-- (id)device {return _device;}
+- (id)device {return _identity;}
 - (NSUInteger)length {return _length;}
 - (NSUInteger)allocatedSize {return _resource.bytes;}
 - (MTLStorageMode)storageMode {return MTLStorageModeShared;}
@@ -163,7 +168,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (NSString *)label {return _backing.label;}
 - (void)setLabel:(NSString *)s {_backing.label=s;}
 - (void)replaceRegion:(MTLRegion)r mipmapLevel:(NSUInteger)level withBytes:(const void *)bytes bytesPerRow:(NSUInteger)row {
-    auto c=((CBMetalDevice*)self.device)->_context;[c->lock lock];void *cpu=_backing.contents;
+    auto c=_backing->_device->_context;[c->lock lock];void *cpu=_backing.contents;
     if(!cpu||!bytes||level||r.origin.z||r.size.depth!=1||r.origin.x>self.width||r.size.width>self.width-r.origin.x||r.origin.y>self.height||r.size.height>self.height-r.origin.y||row<r.size.width*4){[c->lock unlock];[NSException raise:NSInvalidArgumentException format:@"Invalid native texture upload"];return;}
     uint32_t seed=0;int rc=_surface?int(IOSurfaceLock(_surface,0,&seed)):0;
     if(!rc)for(NSUInteger y=0;y<r.size.height;++y)memcpy((uint8_t*)cpu+(r.origin.y+y)*_pitch+r.origin.x*4,(const uint8_t*)bytes+y*row,r.size.width*4);
@@ -171,7 +176,7 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     if(rc)[NSException raise:NSInternalInconsistencyException format:@"Native IOSurface upload lock/unlock failed: %d",rc];
 }
 - (void)getBytes:(void *)bytes bytesPerRow:(NSUInteger)row fromRegion:(MTLRegion)r mipmapLevel:(NSUInteger)level {
-    auto c=((CBMetalDevice*)self.device)->_context;[c->lock lock];void *cpu=_backing.contents;
+    auto c=_backing->_device->_context;[c->lock lock];void *cpu=_backing.contents;
     if(!cpu||!bytes||!_ready||level||r.origin.z||r.size.depth!=1||r.origin.x>self.width||r.size.width>self.width-r.origin.x||r.origin.y>self.height||r.size.height>self.height-r.origin.y||row<r.size.width*4){[c->lock unlock];[NSException raise:NSInvalidArgumentException format:@"Texture read needs proven native completion"];return;}
     uint32_t seed=0;int rc=_surface?int(IOSurfaceLock(_surface,kIOSurfaceLockReadOnly,&seed)):0;
     if(!rc)for(NSUInteger y=0;y<r.size.height;++y)memcpy((uint8_t*)bytes+y*row,(uint8_t*)cpu+(r.origin.y+y)*_pitch+r.origin.x*4,r.size.width*4);
@@ -180,11 +185,21 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 }
 @end
 @implementation CBMetalLibrary
-- (id)device {return _device;}
+- (id)device {return _identity;}
 - (NSArray *)functionNames {NSMutableArray *out=[NSMutableArray new];for(const auto &n:_library->names())[out addObject:@(n.c_str())];return out;}
 - (NSString *)label {return _label;}
 - (void)setLabel:(NSString *)s {_label=[s copy];}
-- (CBMetalFunction *)newFunctionWithName:(NSString *)name {std::string error;auto image=_library->function(name.UTF8String,error);if(!image)return nil;auto f=[CBMetalFunction new];f->_library=self;f->_name=[name copy];f->_image=image;return f;}
+- (CBMetalFunction *)newFunctionWithName:(NSString *)name {return [self newFunctionWithName:name constantValues:nil error:nullptr];}
+- (CBMetalFunction *)newFunctionWithName:(NSString *)name constantValues:(MTLFunctionConstantValues *)values error:(NSError **)error {
+    if(error)*error=nil;if(![name isKindOfClass:NSString.class]||!name.UTF8String){if(error)*error=cbFailure(@"Valid original function name required");return nil;}
+    std::vector<GPU::Compiler::FunctionConstantValue> constants;if(!CBMetalSnapshotConstants(values,constants,error))return nil;
+    std::string diagnostic;auto image=_library->function(name.UTF8String,constants,_library->inspector(),diagnostic);
+    if(!image){if(error)*error=cbFailure(@(diagnostic.c_str()));return nil;}auto f=[CBMetalFunction new];f->_library=self;f->_name=[name copy];f->_image=image;return f;
+}
+- (void)newFunctionWithName:(NSString *)name constantValues:(MTLFunctionConstantValues *)values completionHandler:(void (^)(CBMetalFunction *,NSError *))handler {
+    if(!handler)return;name=[name copy];values=[values copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{@autoreleasepool {NSError *error=nil;auto f=[self newFunctionWithName:name constantValues:values error:&error];handler(f,error);}});
+}
 @end
 @implementation CBMetalFunction
 - (id)device {return _library.device;}
@@ -196,10 +211,10 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (NSString *)label {return _descriptor.label;}
 @end
 @implementation CBMetalSampler
-- (id)device {return _device;}
+- (id)device {return _identity;}
 @end
 @implementation CBMetalQueue
-- (id)device {return _device;}
+- (id)device {return _identity;}
 - (NSString *)label {return _label;}
 - (void)setLabel:(NSString *)s {_label=[s copy];}
 - (CBMetalCommands *)commandBuffer {unsigned n=_live.load();do {if(n>=_capacity)return nil;}while(!_live.compare_exchange_weak(n,n+1));auto b=[CBMetalCommands new];b->_queue=self;b->_condition=[NSCondition new];b->_operations=[NSMutableArray new];b->_handlers=[NSMutableArray new];b->_status=MTLCommandBufferStatusNotEnqueued;return b;}
@@ -218,7 +233,7 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
 }
 - (CBMetalRender *)renderCommandEncoderWithDescriptor:(MTLRenderPassDescriptor *)d {
     if(!d||_committed||_active||_operations.count>248)return nil;d=[d copy];auto r=[CBMetalRender new];r->_commands=self;
-    CBMetalDevice *device=(CBMetalDevice*)self.device;NSMutableArray *owners=[NSMutableArray new];
+    id device=self.device;NSMutableArray *owners=[NSMutableArray new];
     for(unsigned i=0;i<8;++i){auto a=d.colorAttachments[i];if(!a.texture)continue;
         if(![a.texture isKindOfClass:CBMetalTexture.class]||a.texture.device!=device||a.level||a.slice||a.depthPlane||a.resolveTexture||a.storeAction!=MTLStoreActionStore||
            (a.loadAction!=MTLLoadActionLoad&&a.loadAction!=MTLLoadActionClear)){[self fail:@"Unsupported native render pass attachment"];return nil;}
@@ -235,16 +250,16 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
 - (void)commit {
     [_condition lock];if(_committed){[_condition unlock];[NSException raise:NSInvalidArgumentException format:@"Native command buffer already committed"];return;}
     _committed=true;if(_active&&!_error)_error=cbFailure(@"Render encoder was not ended");_status=MTLCommandBufferStatusCommitted;[_condition unlock];
-    auto c=((CBMetalDevice*)self.device)->_context;
+    auto c=_queue->_device->_context;
     if(self.error||c->lost){[self fail:@"Native command preparation/admission failed"];dispatch_async(c->worker,^{@autoreleasepool {[self execute];}});return;}
     [c->lock lock];
-    if(!self.error&&!c->lost&&!c->pending){_ib=cbBuffer((CBMetalDevice*)self.device,65536);_scratch=cbBuffer((CBMetalDevice*)self.device,4096);
+    if(!self.error&&!c->lost&&!c->pending){_ib=cbBuffer(_queue->_device,65536);_scratch=cbBuffer(_queue->_device,4096);
         if(_ib&&_scratch){++c->pending;_pendingReserved=true;}}
     if(!_pendingReserved)[self fail:@"Native command preparation/admission failed"];[c->lock unlock];
     dispatch_async(c->worker,^{@autoreleasepool {[self execute];}});
 }
 - (void)execute {
-    auto c=((CBMetalDevice*)self.device)->_context;[c->lock lock];int rc=0;CBMetalBuffer *ib=_ib,*scratch=_scratch;
+    auto c=_queue->_device->_context;[c->lock lock];int rc=0;CBMetalBuffer *ib=_ib,*scratch=_scratch;
     if(c->lost||self.error||!_pendingReserved||!ib||!scratch)rc=NativeMetal540DesktopSession::Invalid;
     if(!rc){[_condition lock];_status=MTLCommandBufferStatusScheduled;[_condition unlock];}
     for(CBMetalOperation *op in _operations){if(rc)break;uint32_t words=0;
@@ -288,8 +303,8 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
 }
 - (void)setVertexBuffer:(CBMetalBuffer *)b offset:(NSUInteger)o atIndex:(NSUInteger)i {[self bindBuffer:b offset:o index:i stage:0];}
 - (void)setFragmentBuffer:(CBMetalBuffer *)b offset:(NSUInteger)o atIndex:(NSUInteger)i {[self bindBuffer:b offset:o index:i stage:1];}
-- (void)setVertexBytes:(const void *)bytes length:(NSUInteger)n atIndex:(NSUInteger)i {auto b=[(CBMetalDevice*)_commands.device newBufferWithBytes:bytes length:n options:0];[self setVertexBuffer:b offset:0 atIndex:i];}
-- (void)setFragmentBytes:(const void *)bytes length:(NSUInteger)n atIndex:(NSUInteger)i {auto b=[(CBMetalDevice*)_commands.device newBufferWithBytes:bytes length:n options:0];[self setFragmentBuffer:b offset:0 atIndex:i];}
+- (void)setVertexBytes:(const void *)bytes length:(NSUInteger)n atIndex:(NSUInteger)i {auto b=[_commands->_queue->_device newBufferWithBytes:bytes length:n options:0];[self setVertexBuffer:b offset:0 atIndex:i];}
+- (void)setFragmentBytes:(const void *)bytes length:(NSUInteger)n atIndex:(NSUInteger)i {auto b=[_commands->_queue->_device newBufferWithBytes:bytes length:n options:0];[self setFragmentBuffer:b offset:0 atIndex:i];}
 - (void)bindTexture:(CBMetalTexture *)t index:(NSUInteger)i stage:(unsigned)s {[self check];if(i>=8||![t isKindOfClass:CBMetalTexture.class]||t.device!=_commands.device||!t->_ready||!(t.usage&MTLTextureUsageShaderRead)){[_commands fail:@"Invalid sampled texture"];return;}_textures[s][i]=t;}
 - (void)setVertexTexture:(CBMetalTexture *)t atIndex:(NSUInteger)i {[self bindTexture:t index:i stage:0];}
 - (void)setFragmentTexture:(CBMetalTexture *)t atIndex:(NSUInteger)i {[self bindTexture:t index:i stage:1];}

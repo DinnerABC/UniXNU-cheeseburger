@@ -463,6 +463,10 @@ static Native540Buffer *allocate(Native540Session *s,NSUInteger length,uint32_t 
     for(NSDictionary *r in s->records)total+=[r[@"bytes"] unsignedLongLongValue];
     [s->lock unlock];return total;
 }
+- (Native540CommandQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)count {
+    // The legacy fixed-workload backend has no bounded retained-command pool.
+    (void)count;return nil;
+}
 - (Native540CommandQueue *)newCommandQueue {
     Native540CommandQueue *q=[[Native540CommandQueue alloc] initOwned];q->_session=_session;q->_deviceIdentity=_session->publicDevice;return q;
 }

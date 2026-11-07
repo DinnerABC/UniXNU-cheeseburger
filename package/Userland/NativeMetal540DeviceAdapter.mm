@@ -35,10 +35,10 @@ char contextKey;
 Class adapterClass=nullptr;
 std::mutex classLock;
 }
-@interface Native540AdapterContext : NSObject { @public Native540Device *backend;Limits limits;bool featuresInitialized;io_service_t service;uint64_t registryID; }
+@interface Native540AdapterContext : NSObject { @public Native540Device *backend;bool desktop;Limits limits;bool featuresInitialized;io_service_t service;uint64_t registryID; }
 @end
 @implementation Native540AdapterContext
-- (instancetype)init {if((self=[super init])){limits={};featuresInitialized=false;service=0;registryID=0;}return self;}
+- (instancetype)init {if((self=[super init])){limits={};desktop=false;featuresInitialized=false;service=0;registryID=0;}return self;}
 - (void)dealloc {if(service)IOObjectRelease(service);}
 @end
 static Native540AdapterContext *context(id self){return objc_getAssociatedObject(self,&contextKey);}
@@ -84,6 +84,8 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)descriptor completionHandler:(void (^)(id,NSError*))handler;
 - (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor*)descriptor options:(MTLPipelineOption)options completionHandler:(void (^)(id,MTLRenderPipelineReflection*,NSError*))handler;
 - (id)newCommandQueue;
+- (id)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)count;
+- (BOOL)supportsTextureSampleCount:(NSUInteger)count;
 - (int)retireResources;
 - (NativeMetal540SessionRetirement::Record)retirementResult;
 - (BOOL)supportsVertexAmplificationCount:(NSUInteger)count;
@@ -125,7 +127,12 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
     v.maxTotalComputeThreadsPerThreadgroup=64;v.maxTextureWidth2D=v.maxTextureHeight2D=64;v.maxTextureLayers=1;
     v.maxLineWidth=v.maxPointSize=1;v.minConstantBufferAlignmentBytes=4;v.maxViewportCount=1;
     v.maxVertexAmplificationFactor=v.maxVertexAmplificationCount=1;
-    v.maxBufferLength=16384;c->limits=v;
+    v.maxBufferLength=16384;
+    if(c->desktop){v.maxColorAttachments=8;v.maxVertexAttributes=16;v.maxVertexBuffers=v.maxFragmentBuffers=8;
+        v.maxVertexTextures=v.maxFragmentTextures=v.maxVertexSamplers=v.maxFragmentSamplers=8;
+        v.maxTextureWidth2D=v.maxTextureHeight2D=16384;v.maxBufferLength=16u*1024*1024;v.maxIOCommandsInFlight=1;
+        v.linearTextureAlignmentBytes=v.iosurfaceTextureAlignmentBytes=64;}
+    c->limits=v;
 }
 - (void)initFeatureQueries {
     auto c=context(self);if(!c||c->featuresInitialized)return;
@@ -143,16 +150,16 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (uint64_t)recommendedMaxWorkingSetSize{return 64ull*16384;}
 - (BOOL)supportsSampleCount:(NSUInteger)count{return count==1;}
 - (id)newBufferWithBytes:(const void*)bytes length:(NSUInteger)n options:(MTLResourceOptions)o {
-    if(!bytes||!n||n>16384)return nil;
+    if(!bytes||!n||n>[self maxBufferLength])return nil;
     return [context(self)->backend newBufferWithBytes:bytes length:n options:o];
 }
-- (NSUInteger)maxBufferLength{return 16384;}
+- (NSUInteger)maxBufferLength{return context(self)->desktop?16u*1024*1024:16384;}
 - (NSUInteger)currentAllocatedSize{return [context(self)->backend currentAllocatedSize];}
 - (MTLSize)maxThreadsPerThreadgroup{return MTLSizeMake(64,1,1);}
 - (NSUInteger)maxThreadgroupMemoryLength{return 0;}
 - (BOOL)supportsFamily:(NSInteger)family{(void)family;return NO;}
 - (BOOL)supportsFeatureSet:(MTLFeatureSet)set{(void)set;return NO;}
-- (id)newBufferWithLength:(NSUInteger)n options:(MTLResourceOptions)o{return n<=16384?[context(self)->backend newBufferWithLength:n options:o]:nil;}
+- (id)newBufferWithLength:(NSUInteger)n options:(MTLResourceOptions)o{return n<=[self maxBufferLength]?[context(self)->backend newBufferWithLength:n options:o]:nil;}
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor*)d{return [context(self)->backend newTextureWithDescriptor:d];}
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor*)d iosurface:(IOSurfaceRef)s plane:(NSUInteger)p{return [context(self)->backend newTextureWithDescriptor:d iosurface:s plane:p];}
 - (id)newLibraryWithData:(dispatch_data_t)d error:(NSError**)e{return [context(self)->backend newLibraryWithData:d error:e];}
@@ -185,6 +192,12 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
     if(!h)return;id owner=self;[context(self)->backend newRenderPipelineStateWithDescriptor:d options:o completionHandler:^(Native540RenderPipeline *p,MTLRenderPipelineReflection *r,NSError *e){(void)owner;h(p,r,e);}];
 }
 - (id)newCommandQueue{return [context(self)->backend newCommandQueue];}
+- (id)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)count {
+    auto c=context(self);SEL selector=_cmd;
+    if(!c||!c->desktop||![c->backend respondsToSelector:selector])return nil;
+    return ((id(*)(id,SEL,NSUInteger))[c->backend methodForSelector:selector])(c->backend,selector,count);
+}
+- (BOOL)supportsTextureSampleCount:(NSUInteger)count{return count==1;}
 - (int)retireResources{return [context(self)->backend retireResources];}
 - (NativeMetal540SessionRetirement::Record)retirementResult{return [context(self)->backend retirementResult];}
 // Unsupported creation APIs fail explicitly; no dummy resource or Apple tier.
@@ -194,7 +207,10 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (id)newFence{return nil;}
 - (id)newBufferWithBytesNoCopy:(void*)p length:(NSUInteger)n options:(NSUInteger)o deallocator:(void (^)(void*,NSUInteger))deallocator{(void)p;(void)n;(void)o;(void)deallocator;return nil;}
 - (id)newDepthStencilStateWithDescriptor:(id)d{(void)d;return nil;}
-- (id)newSamplerStateWithDescriptor:(id)d{(void)d;return nil;}
+- (id)newSamplerStateWithDescriptor:(id)d {
+    auto c=context(self);if(!c||!c->desktop||![c->backend respondsToSelector:_cmd])return nil;
+    return ((id(*)(id,SEL,id))[c->backend methodForSelector:_cmd])(c->backend,_cmd,d);
+}
 - (MTLSizeAndAlign)heapBufferSizeAndAlignWithLength:(NSUInteger)n options:(NSUInteger)o{(void)n;(void)o;return {0,0};}
 - (MTLSizeAndAlign)heapTextureSizeAndAlignWithDescriptor:(id)d{(void)d;return {0,0};}
 - (BOOL)isDepth24Stencil8PixelFormatSupported{return NO;}
@@ -217,7 +233,8 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (id)newIndirectRenderCommandEncoderWithBuffer:(id)b{(void)b;return nil;}
 - (id)newVisibleFunctionTableWithDescriptor:(id)d{(void)d;return nil;}
 @end
-id NativeMetal540CreateInitializedDevice(Native540Device *backend,uint32_t service,NSError **error){
+static id createInitializedBackend(id ownedBackend,uint32_t service,bool desktop,NSError **error){
+    Native540Device *backend=(Native540Device*)ownedBackend;
     if(error)*error=nil;
     auto fail=[&](NSString *why)->id{if(error)*error=[NSError errorWithDomain:@"Native540DeviceAdapter" code:-5500 userInfo:@{NSLocalizedDescriptionKey:why}];return nil;};
     if(!backend||!service)return fail(@"Missing owned native backend or accelerator");
@@ -245,7 +262,7 @@ id NativeMetal540CreateInitializedDevice(Native540Device *backend,uint32_t servi
             objc_registerClassPair(cls);adapterClass=cls;
         }
     }
-    auto c=[Native540AdapterContext new];c->backend=backend;
+    auto c=[Native540AdapterContext new];c->backend=backend;c->desktop=desktop;
     if(IOObjectRetain(service)!=KERN_SUCCESS)return fail(@"Accelerator retain failed");c->service=service;
     if(IORegistryEntryGetRegistryEntryID(service,&c->registryID)!=KERN_SUCCESS||!c->registryID)return fail(@"Accelerator registry identity failed");
     id allocated=[adapterClass alloc];if(!allocated)return fail(@"Metal subclass allocation failed");
@@ -253,6 +270,15 @@ id NativeMetal540CreateInitializedDevice(Native540Device *backend,uint32_t servi
     id device=[allocated init];if(!device)return fail(@"Metal superclass initialization failed");
     @try {[(Native540AdapterMethods*)device initLimits];[(Native540AdapterMethods*)device initFeatureQueries];}
     @catch(NSException *e){return fail([NSString stringWithFormat:@"Metal device initialization exception: %@",e.reason]);}
-    [backend setPublicDeviceIdentity:device];
+    if([backend respondsToSelector:@selector(setPublicDeviceIdentity:)])[backend setPublicDeviceIdentity:device];
     return device;
+}
+id NativeMetal540CreateInitializedDevice(Native540Device *backend,uint32_t service,NSError **error){
+    return createInitializedBackend(backend,service,false,error);
+}
+id NativeMetal540CreateInitializedDesktopDevice(id backend,uint32_t service,NSError **error){
+    if(![backend respondsToSelector:@selector(newCommandQueueWithMaxCommandBufferCount:)]){
+        if(error)*error=[NSError errorWithDomain:@"Native540DeviceAdapter" code:-5503 userInfo:@{NSLocalizedDescriptionKey:@"Concrete desktop backend required"}];return nil;
+    }
+    return createInitializedBackend(backend,service,true,error);
 }

@@ -38,7 +38,7 @@ def main():
     sdk=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True,env=env).strip()
     clang=subprocess.check_output(['xcrun','--find','clang++'],text=True,env=env).strip()
     a.output.mkdir();shutil.copy2(compiler,a.output/compiler.name)
-    sources=[R/'package/Userland'/name for name in ('NativeMetal540DesktopObjects.mm','NativeMetal540DesktopTransport.mm','NativeMetal540DesktopLibrary.cpp',
+    sources=[R/'package/Userland'/name for name in ('NativeMetal540DesktopObjects.mm','NativeMetal540DesktopConstants.mm','NativeMetal540DesktopTransport.mm','NativeMetal540DesktopLibrary.cpp',
         'NativeMetal540DesktopDraw.cpp','NativeMetal540DesktopSession.cpp','NativeMetal540Client.cpp')]
     binary=a.output/'NativeMetal540Desktop.dylib'
     command=[clang,'-std=c++17','-target','arm64-apple-ios17.7','-isysroot',sdk,'-O2','-fobjc-arc','-fblocks',

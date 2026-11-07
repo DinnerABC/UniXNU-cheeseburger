@@ -26,6 +26,8 @@ CBMetalDevice * _Nullable CBMetalCreateNativeDevice(uint32_t service,NSError **e
 - (nullable CBMetalQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)count;
 - (nullable CBMetalQueue *)newCommandQueue;
 - (NSUInteger)currentAllocatedSize;
+- (void)setPublicDeviceIdentity:(id)device;
+- (id)publicDeviceIdentity;
 @end
 @interface CBMetalBuffer : NSObject
 @property(readonly) id device;
@@ -57,6 +59,8 @@ CBMetalDevice * _Nullable CBMetalCreateNativeDevice(uint32_t service,NSError **e
 @property(readonly,copy) NSArray<NSString *> *functionNames;
 @property(nullable,copy) NSString *label;
 - (nullable CBMetalFunction *)newFunctionWithName:(NSString *)name;
+- (nullable CBMetalFunction *)newFunctionWithName:(NSString *)name constantValues:(MTLFunctionConstantValues * _Nullable)values error:(NSError **)error;
+- (void)newFunctionWithName:(NSString *)name constantValues:(MTLFunctionConstantValues * _Nullable)values completionHandler:(void (^)(CBMetalFunction * _Nullable,NSError * _Nullable))handler;
 @end
 @interface CBMetalFunction : NSObject
 @property(readonly) id device;

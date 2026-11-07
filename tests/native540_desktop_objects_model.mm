@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #import "NativeMetal540DesktopObjects.h"
+#include "NativeMetal540DesktopConstants.h"
 #include <cassert>
 #include <map>
 #include <vector>
@@ -25,9 +26,18 @@ static CBMetalDevice *device(ModelOwner *owner){Model &m=owner->value;NativeMeta
     t.unmapView=[](void *,uint32_t,void *,size_t){return 0;};t.flush=[](void *,void *,size_t,bool){return 0;};NSError *error=nil;
     auto d=[[CBMetalDevice alloc] initWithTransport:t connectionOwner:owner compiler:qgpu_compile_air_nir error:&error];assert(d&&!error);return d;}
 int main(int argc,char **argv){@autoreleasepool {assert(argc==2);
-    for(unsigned mode=0;mode<2;++mode){auto owner=[ModelOwner new];auto &m=owner->value;m.failWait=mode==1;auto d=device(owner);NSError *error=nil;
+    auto constants=[MTLFunctionConstantValues new];float vector[3]={1,2,3};bool flag=true;
+    [constants setConstantValue:vector type:MTLDataTypeFloat3 atIndex:7];[constants setConstantValue:&flag type:MTLDataTypeBool atIndex:2];
+    std::vector<GPU::Compiler::FunctionConstantValue> values;NSError *constantError=nil;assert(CBMetalSnapshotConstants(constants,values,&constantError)&&!constantError&&values.size()==2);
+    assert(values[0].index==2&&values[0].bytes[0]==1&&values[1].index==7&&!memcmp(values[1].bytes.data(),vector,12));
+    [constants reset];assert(values[1].index==7&&!memcmp(values[1].bytes.data(),vector,12));
+    [constants setConstantValue:&flag type:MTLDataTypeBool withName:@"named"];
+    // reset cleared both indexed entries, so only the named one remains.
+    assert(CBMetalSnapshotConstants(constants,values,&constantError)&&values.size()==1&&values[0].name=="named"&&values[0].bytes[0]==1);
+    [constants reset];values.clear();    for(unsigned mode=0;mode<2;++mode){auto owner=[ModelOwner new];auto &m=owner->value;m.failWait=mode==1;auto d=device(owner);NSError *error=nil;
+        id identity=[NSObject new];[d setPublicDeviceIdentity:identity];
         auto library=[d newLibraryWithURL:[NSURL fileURLWithPath:@(argv[1])] error:&error];assert(library&&!error&&library.functionNames.count>100);
-        auto vs=[library newFunctionWithName:@"image_rect_blit_vert_lpf"],fs=[library newFunctionWithName:@"image_rect_blit_frag_lpf"];assert(vs&&fs&&vs.device==d&&fs.functionType==MTLFunctionTypeFragment);
+        auto vs=[library newFunctionWithName:@"image_rect_blit_vert_lpf"],fs=[library newFunctionWithName:@"image_rect_blit_frag_lpf"];assert(vs&&fs&&vs.device==identity&&fs.functionType==MTLFunctionTypeFragment);
         auto descriptor=[MTLRenderPipelineDescriptor new];descriptor.vertexFunction=(id<MTLFunction>)(id)vs;descriptor.fragmentFunction=(id<MTLFunction>)(id)fs;
         for(unsigned i=0;i<2;++i){auto a=descriptor.colorAttachments[i];a.pixelFormat=MTLPixelFormatBGRA8Unorm;a.blendingEnabled=YES;a.sourceRGBBlendFactor=a.sourceAlphaBlendFactor=MTLBlendFactorOne;a.destinationRGBBlendFactor=a.destinationAlphaBlendFactor=MTLBlendFactorOneMinusSourceAlpha;}
         auto pipeline=[d newRenderPipelineStateWithDescriptor:descriptor error:&error];assert(pipeline&&!error);

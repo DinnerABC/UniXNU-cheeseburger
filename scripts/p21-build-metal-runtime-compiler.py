@@ -20,6 +20,7 @@ def main():
     p.add_argument('--llvm-audit',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--meson',type=Path,required=True)
+    p.add_argument('--host-test',action='store_true',help='Build the same inspector/adapter on macOS for actual AIR contract tests')
     a=p.parse_args()
     root=Path('/Users/dinnerabc/unixnu-p21').resolve()
     if not a.output.resolve().is_relative_to(root) or a.output.exists():
@@ -37,6 +38,12 @@ def main():
     a.output.mkdir()
     mesa=a.output/'mesa'
     shutil.copytree(a.mesa,mesa,symlinks=True,ignore=shutil.ignore_patterns('.git','__pycache__'))
+    adapted=mesa/'src/freedreno'
+    repo=Path(__file__).resolve().parents[1]
+    for name in ('NativeMetal540ConstantReflection.h','NativeMetal540ConstantReflection.inc'):
+        shutil.copy2(repo/'package/Userland'/name,adapted/name)
+    source=adapted/'QcomAIRNIR.cpp'
+    source.write_text(source.read_text()+'\n#include "NativeMetal540ConstantReflection.inc"\n')
     recipe=mesa/'src/freedreno/meson.build'
     text=recipe.read_text()
     start=text.index('qcom_llvm = ')
@@ -46,6 +53,12 @@ def main():
                       "link_args: ['-Wl,-install_name,@loader_path/QcomGPUCompiler.dylib'],")
     if '-rpath,/opt/homebrew' in text:
         p.error('Host LLVM cannot be linked into target compiler')
+    if a.host_test:
+        llvm=Path('/opt/homebrew/opt/llvm')
+        text=text.replace("qcom_llvm = declare_dependency(link_args: ['"+str(a.llvm_audit/'libLLVM.tbd')+"'])",
+            "qcom_llvm = cpp.find_library('LLVM', dirs: ['"+str(llvm/'lib')+"'])")
+        text=text.replace("link_args: ['-Wl,-install_name,@loader_path/QcomGPUCompiler.dylib'],",
+            "link_args: ['-Wl,-rpath,"+str(llvm/'lib')+"'],")
     recipe.write_text(text)
     target=[clang,'--target=arm64-apple-ios17.7','-isysroot',sdk]
     cross=a.output/'ios.ini'
@@ -58,14 +71,16 @@ def main():
         '-Dglvnd=disabled','-Dgallium-va=disabled','-Dgallium-vdpau=disabled','-Dgallium-xa=disabled',
         '-Dbuild-tests=false','-Dlibunwind=disabled','-Dshader-cache=disabled','-Dvalgrind=disabled','-Dzstd=disabled','-Dexpat=disabled'],
         ['/opt/homebrew/bin/ninja','-C',str(build),'-j','4','src/freedreno/QcomGPUCompiler.dylib'] ]
+    if a.host_test:
+        command=commands[0];at=command.index('--cross-file');del command[at:at+2]
     for command in commands:
         print('+',' '.join(command),flush=True)
         subprocess.run(command,env=env,check=True)
     binary=build/'src/freedreno/QcomGPUCompiler.dylib'
     linkage=subprocess.check_output(['/usr/bin/otool','-L',str(binary)],text=True)
-    if '/usr/lib/libLLVM.dylib' not in linkage or '/opt/homebrew' in linkage:
+    if not a.host_test and ('/usr/lib/libLLVM.dylib' not in linkage or '/opt/homebrew' in linkage):
         p.error('Target compiler must link the actual iOS LLVM only')
-    record=dict(result='TARGET_A540_COMPILER_BUILD_PASS',target='arm64-apple-ios17.7',mesa=revision,
+    record=dict(result='HOST_A540_COMPILER_BUILD_PASS' if a.host_test else 'TARGET_A540_COMPILER_BUILD_PASS',target='macOS-test' if a.host_test else 'arm64-apple-ios17.7',mesa=revision,
         shader_runtime_semantics_verified=False,device_loaded=False,binary_sha256=sha(binary),
         llvm_image_uuid=audit['image_uuid'],llvm_audit_sha256=sha(a.llvm_audit/'report.json'),
         declaration_sha256=sha(a.llvm_audit/'libLLVM.tbd'),recipe_sha256=sha(recipe),linkage=linkage,
