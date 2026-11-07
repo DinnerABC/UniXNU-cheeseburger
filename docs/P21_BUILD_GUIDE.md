@@ -1,5 +1,7 @@
 # P21 iPadOS 构建与临时启动指南
 
+> Historical guide: candidate paths below describe the earlier phone-ui-d2 workflow. For current local-build and NAS synchronization rules, follow [AGENTS.md](../AGENTS.md), the latest [HANDOFF.md](../HANDOFF.md), and [GPU build handoff](P21_GPU_DEVELOPMENT_HANDOFF_20261103.md). Historical duplicate boot-image paths and their retained copies are listed in [image cleanup](P21_IMAGE_CLEANUP_20261107.md).
+
 本指南记录本机已使用的 P21 构建链。项目根目录为 `/Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger`，分支 `ipados-17.7.11`。先读根目录 `AGENTS.md`、`HANDOFF.md` 和 `docs/P21_OFFICIAL_WORKFLOW_AUDIT.md`；保留其他 agent 的改动及历史镜像。构建与设备操作遵循用户当次授权。
 
 ## 已知可启动基线
