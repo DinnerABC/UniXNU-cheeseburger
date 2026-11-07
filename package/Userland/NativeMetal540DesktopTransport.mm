@@ -4,6 +4,8 @@
 #include <mach/mach.h>
 #include <atomic>
 
+static io_connect_t gLastDesktopConnection = 0;
+io_connect_t CBMetalLastDesktopConnection(void) {return gLastDesktopConnection;}
 @interface CBMetalConnection : NSObject { @public io_connect_t port;io_service_t service; }
 @end
 @implementation CBMetalConnection
