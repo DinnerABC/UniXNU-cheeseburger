@@ -56,11 +56,14 @@ int main(int argc,char **argv){@autoreleasepool {assert(argc==2);
         auto sampledDescriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:64 height:64 mipmapped:NO];sampledDescriptor.storageMode=MTLStorageModeShared;sampledDescriptor.usage=MTLTextureUsageShaderRead;
         auto sampled=[d newTextureWithDescriptor:sampledDescriptor];uint32_t pixels[4096]{};[sampled replaceRegion:MTLRegionMake2D(0,0,64,64) mipmapLevel:0 withBytes:pixels bytesPerRow:256];
         auto buffer=[d newBufferWithLength:4096 options:0];auto samplerDescriptor=[MTLSamplerDescriptor new];samplerDescriptor.minFilter=samplerDescriptor.magFilter=MTLSamplerMinMagFilterLinear;auto sampler=[d newSamplerStateWithDescriptor:samplerDescriptor];assert(sampler);
+        auto dsDescriptor=[MTLDepthStencilDescriptor new];dsDescriptor.depthCompareFunction=MTLCompareFunctionAlways;dsDescriptor.depthWriteEnabled=NO;
+        auto ds=[d newDepthStencilStateWithDescriptor:dsDescriptor];assert(ds&&ds.device==identity&&ds.depthCompareFunction==MTLCompareFunctionAlways&&!ds.depthWriteEnabled);
+        dsDescriptor.depthCompareFunction=MTLCompareFunction(99);assert(![d newDepthStencilStateWithDescriptor:dsDescriptor]);
         auto q=[d newCommandQueueWithMaxCommandBufferCount:1];auto commands=[q commandBuffer];assert(commands&&![q commandBuffer]);
         auto pass=[MTLRenderPassDescriptor renderPassDescriptor];for(unsigned i=0;i<2;++i){pass.colorAttachments[i].texture=(id<MTLTexture>)(id)(i?other:target);pass.colorAttachments[i].loadAction=MTLLoadActionClear;pass.colorAttachments[i].storeAction=MTLStoreActionStore;pass.colorAttachments[i].clearColor=MTLClearColorMake(0,0,0,1);}
         auto encoder=[commands renderCommandEncoderWithDescriptor:pass];assert(encoder);[encoder setRenderPipelineState:pipeline];
         for(unsigned i:{1u,2u,5u})[encoder setVertexBuffer:buffer offset:0 atIndex:i];[encoder setFragmentBuffer:buffer offset:0 atIndex:1];[encoder setFragmentTexture:sampled atIndex:3];[encoder setFragmentSamplerState:sampler atIndex:0];
-        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];[encoder endEncoding];
+        [encoder setDepthStencilState:ds];[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];[encoder endEncoding];
         __block unsigned completions=0;[commands addCompletedHandler:^(CBMetalCommands *b){++completions;[b waitUntilCompleted];[b addCompletedHandler:^(CBMetalCommands *){++completions;}];
             if(!mode){auto nestedQueue=[d newCommandQueue];auto nested=[nestedQueue commandBuffer];[nested commit];[nested waitUntilCompleted];assert(nested.status==MTLCommandBufferStatusCompleted);}
         }];

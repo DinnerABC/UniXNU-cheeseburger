@@ -3,17 +3,19 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <IOSurface/IOSurfaceRef.h>
+#import <IOKit/IOKitLib.h>
 #include "NativeMetal540DesktopSession.h"
 #include "NativeMetal540DesktopLibrary.h"
 
 // Concrete native selector implementation, not a full protocol claim. The
 // system adapter may only publish after its21H461 semantic gate is complete.
 @class CBMetalDevice,CBMetalBuffer,CBMetalTexture,CBMetalLibrary,CBMetalFunction;
-@class CBMetalPipeline,CBMetalSampler,CBMetalQueue,CBMetalCommands,CBMetalRender;
+@class CBMetalPipeline,CBMetalSampler,CBMetalQueue,CBMetalCommands,CBMetalRender,CBMetalDepthStencil;
 NS_ASSUME_NONNULL_BEGIN
 CBMetalDevice * _Nullable CBMetalCreateNativeDevice(uint32_t service,NSError **error);
 extern "C" void cbRecordUnknown(SEL selector);
 unsigned CBMetalUnknownSelectorCount(void);
+io_connect_t CBMetalLastDesktopConnection(void);
 NSArray *CBMetalUnknownSelectors(void);
 @interface CBMetalDevice : NSObject
 - (nullable instancetype)initWithTransport:(NativeMetal540DesktopSession::Transport)transport
@@ -26,6 +28,7 @@ NSArray *CBMetalUnknownSelectors(void);
 - (nullable CBMetalLibrary *)newLibraryWithURL:(NSURL *)url error:(NSError **)error;
 - (nullable CBMetalPipeline *)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)descriptor error:(NSError **)error;
 - (nullable CBMetalSampler *)newSamplerStateWithDescriptor:(MTLSamplerDescriptor *)descriptor;
+- (nullable CBMetalDepthStencil *)newDepthStencilStateWithDescriptor:(MTLDepthStencilDescriptor *)descriptor;
 - (nullable CBMetalQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)count;
 - (nullable CBMetalQueue *)newCommandQueue;
 - (NSUInteger)currentAllocatedSize;
@@ -70,6 +73,12 @@ NSArray *CBMetalUnknownSelectors(void);
 @property(readonly,copy) NSString *name;
 @property(readonly) MTLFunctionType functionType;
 @end
+@interface CBMetalDepthStencil : NSObject
+@property(readonly) id device;
+@property(readonly) MTLCompareFunction depthCompareFunction;
+@property(readonly) BOOL depthWriteEnabled;
+@property(nullable,copy) NSString *label;
+@end
 @interface CBMetalPipeline : NSObject
 @property(readonly) id device;
 @property(readonly,copy,nullable) NSString *label;
@@ -94,6 +103,7 @@ NSArray *CBMetalUnknownSelectors(void);
 @end
 @interface CBMetalRender : NSObject
 - (void)setRenderPipelineState:(CBMetalPipeline *)pipeline;
+- (void)setDepthStencilState:(CBMetalDepthStencil *)state;
 - (void)setVertexBuffer:(CBMetalBuffer *)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index;
 - (void)setFragmentBuffer:(CBMetalBuffer *)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index;
 - (void)setVertexBytes:(const void *)bytes length:(NSUInteger)length atIndex:(NSUInteger)index;

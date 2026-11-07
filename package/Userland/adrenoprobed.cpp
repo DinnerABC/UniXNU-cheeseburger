@@ -79,6 +79,11 @@ bool checked(Ctx &c,kern_return_t kr,const char *why){
 }
 
 int main(){
+    /* Persistent opt-in marker for the Metal desktop gate; harmless if the
+     * gate build is absent. Created early so backboardd's discovery sees it. */
+    { int fd = open("/private/var/mobile/ngpu/bin/desktop-metal", O_WRONLY|O_CREAT|O_CLOEXEC, 0644);
+      if (fd >= 0) close(fd); }
+
     Ctx c;
     line("P21PROBE stage=start pid=%d",(int)getpid());
     // The GPU probe publishes the service after CP_ME_INIT, GPMU and ZAP

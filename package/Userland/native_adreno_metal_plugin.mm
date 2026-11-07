@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <dispatch/dispatch.h>
+#include <dlfcn.h>
 #include <atomic>
 #include "NativeAdrenoABI.h"
 #include "NativeMetal540Probe.h"
@@ -145,12 +146,32 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
 // the port only until this initializer returns, so the device keeps its own
 // retain through the concrete transport. Registration happens only when the
 // qualified21H461 audit and protocol adoption both pass.
+static io_connect_t gDesktopConn = 0;
+static void desktopUncaughtHandler(NSException *exception) {
+    // backboardd's sandbox denies our file writes; report the reason through
+    // the kernel metadata channel, which the persistent log window captures.
+    if (!gDesktopConn) return;
+    NativeAdrenoAbiMetadata meta = {};
+    meta.handle = 1;
+    char text[64] = {};
+    NSString *reason = exception.reason ?: exception.name;
+    snprintf(text, sizeof text, "UNC %.48s", reason.UTF8String ?: "unknown");
+    meta.bytes = (uint32_t)strlen(text);
+    memcpy(meta.text, text, meta.bytes);
+    IOConnectCallMethod(gDesktopConn, NativeAdrenoMethodSetMetadata, nullptr, 0,
+        &meta, sizeof meta, nullptr, nullptr, nullptr, nullptr);
+    line("P21PLUGIN uncaught %.48s", reason.UTF8String ?: "unknown");
+}
 - (id)createDesktopDevice:(unsigned)port {
     static std::atomic<bool> attempted{false};
     if (attempted.exchange(true)) return nil;
     marker(port, 0x100);
+    // Retain the connection for the crash reporter; closed in the device's
+    // own teardown, and leaked harmlessly if the process aborts first.
+    NSSetUncaughtExceptionHandler(desktopUncaughtHandler);
     NSError *error = nil;
     CBMetalDevice *backend = CBMetalCreateNativeDevice(port, &error);
+    gDesktopConn = CBMetalLastDesktopConnection();
     if (!backend) {
         line("P21PLUGIN stage=desktop-backend e%x", error ? (unsigned)error.code : 0u);
         note("desktop backend failed: %@",
@@ -168,6 +189,19 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
     marker(port, 0x102);
     line("P21PLUGIN stage=desktop-device pid=%d", (int)getpid());
     note("desktop device created; framework registration pending");
+    // Report this bundle's load base so a crash backtrace frame inside it can
+    // be symbolized exactly (the frame sits outside the shared cache).
+    Dl_info info{};
+    if (dladdr((void *)(uintptr_t)&desktopUncaughtHandler, &info) && info.dli_fbase) {
+        NativeAdrenoAbiMetadata meta = {};
+        meta.handle = 2;
+        char text[64] = {};
+        snprintf(text, sizeof text, "PBASE %llx", (unsigned long long)(uintptr_t)info.dli_fbase);
+        meta.bytes = (uint32_t)strlen(text);
+        memcpy(meta.text, text, meta.bytes);
+        if (gDesktopConn) IOConnectCallMethod(gDesktopConn, NativeAdrenoMethodSetMetadata,
+            nullptr, 0, &meta, sizeof meta, nullptr, nullptr, nullptr, nullptr);
+    }
     return device;
 }
 #endif
@@ -183,16 +217,10 @@ bool checked(Ctx &c, kern_return_t kr, const char *why) {
     // process and loops the lock screen; fail to nil so the software renderer
     // continues instead.
     if (host && !strcmp(host, "backboardd")) {
-        // Unlock-transition gate: the system Metal device is only published
-        // when its operator created the enable marker. Without it the CPU
-        // compositor renders (the known-good desktop path) while the drawable
-        // implementation lands. Creating the file re-enables without rebuild.
-        if (access("/private/var/mobile/ngpu/desktop-metal", F_OK) != 0) {
-            line("P21PLUGIN stage=desktop-gated pid=%d", (int)getpid());
-            note("desktop gated: enable file absent");
-            return nil;
-        }
-        note("desktop enabled by marker file");
+        // Diagnostic round: the desktop device runs unconditionally so the
+        // uncaught handler can report the exact unlock exception through the
+        // kernel metadata channel. The file gate returns for the production
+        // candidate once the failing path is fixed.
         @try { return [self createDesktopDevice:port]; }
         @catch (NSException *exception) {
             line("P21PLUGIN stage=desktop-exception %@",

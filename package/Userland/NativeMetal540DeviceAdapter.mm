@@ -218,7 +218,10 @@ static Native540AdapterContext *context(id self){return objc_getAssociatedObject
 - (id)newIndirectCommandBufferWithDescriptor:(id)d maxCount:(NSUInteger)n options:(NSUInteger)o{(void)d;(void)n;(void)o;return nil;}
 - (id)newFence{return nil;}
 - (id)newBufferWithBytesNoCopy:(void*)p length:(NSUInteger)n options:(NSUInteger)o deallocator:(void (^)(void*,NSUInteger))deallocator{(void)p;(void)n;(void)o;(void)deallocator;return nil;}
-- (id)newDepthStencilStateWithDescriptor:(id)d{(void)d;return nil;}
+- (id)newDepthStencilStateWithDescriptor:(id)d {
+    auto c=context(self);if(!c||!c->desktop||![c->backend respondsToSelector:_cmd])return nil;
+    return ((id(*)(id,SEL,id))[c->backend methodForSelector:_cmd])(c->backend,_cmd,d);
+}
 - (id)newSamplerStateWithDescriptor:(id)d {
     auto c=context(self);if(!c||!c->desktop||![c->backend respondsToSelector:_cmd])return nil;
     return ((id(*)(id,SEL,id))[c->backend methodForSelector:_cmd])(c->backend,_cmd,d);

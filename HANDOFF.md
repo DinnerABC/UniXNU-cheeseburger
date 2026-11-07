@@ -1,3 +1,13 @@
+## 2026-11-07：解锁诊断轮+depth/stencil 状态对象；单次 abort 仍未消，已装 PBASE 符号化breadcrumb
+
+- **用户确认门控镜像 `1bd080a4…`（boot `0x3dfb1ce4`）滑动解锁进入桌面、系统可用**——已归档到该轮 device-result 与冻结 manifest。CPU 合成器路径完全可用。
+- **解锁诊断轮** boot `0x3e2ad8d4`（无条件启用桌面设备+NSSetUncaughtExceptionHandler 经内核 metadata 上报）：**UNC 未触发**——abort 不是 NSException 逃逸；14次sig6同型（栈穿 Metal.framework→QuartzCore）。结论：**Apple Metal 内部校验直接 abort**（C++ terminate 或内部 assert），不由我们的 ObjC raise 触发。
+- **depth/stencil 假设轮** boot `0x3df32458`（350s）：实现 `CBMetalDepthStencil` 真实状态对象（validate via GPU::Shader::validDepthStencilState，adapter desktop 转发，encoder `setDepthStencilState:` 进 draw）——CA 必需品且诚实（无深度附件，仅寄存器状态）；结果 **1次sig6 同型 + 4帧渲染 + 全 probe 回归通过**：depth/stencil 不是根因。冻 **`out/p21/gpu-cp/rounds/20261107T085834Z-sagit-desktop-ds-state-single-abort-persists`**。中间编译错误（声明缺失/StencilFace无write字段）日志保留修正。
+- **abort 精确画像**：kernel abort ← libc ← **bundle 帧 0x188f1ef5 unslid（slide 1358000）= 我们插件 bundle 内代码**，栈底在共享缓存外。非 NSException、非 UNC 可捕获。剩余嫌疑：①C++ 异常穿越 `-fno-exceptions` 插件帧（compiler dylib 某未防护路径）；②插件内直接 abort（std::terminate 等）。
+- **已装 PBASE breadcrumb**：`createDesktopDevice` 成功后经 metadata handle=2 发送 `PBASE <bundle加载基址>`（dladdr），持久日志可据此精确符号化 bundle 帧。下轮 boot 后直接算 offset。
+- 门控候选（`1bd080a4…`）仍为**当前可用版本**；enable 文件由守护进程创建（`/private/var/mobile/ngpu/bin/desktop-metal`）。本轮诊断候选构建：`out/p21/p21-sagit-desktop-unlock-diag-350s-20261107T0842Z`（14crash，UNC未触发）与 `out/p21/p21-sagit-desktop-ds-350s-20261107T0902Z`（1crash，DS对象），镜像/冻结/日志各自独立保留。
+- 下轮顺序：①boot PBASE 候选→读 PBASE+sig6 帧算 offset→符号化出确切函数；②按结果修（若为 compiler 异常路径则补防护；若为 Metal 校验则按 sagit 对应 selector 补实现）；③重复至零崩溃后按 600s 教训评估 GPU 合成（GPSVC sub 计数归属）。104 回归全过；未push/未刷分区/seed/power未动。
+
 ## 2026-11-07：锁屏卡死根因定位（CA→drawable 缺口）；门控候选零崩溃+17帧+全probe通过
 
 - 用户报告 350s boot（`0x3df95f84`）**锁屏可滑动但不能进入主屏**。排查链：

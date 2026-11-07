@@ -48,6 +48,8 @@ NSArray *CBMetalUnknownSelectors(void) {
 @end
 @interface CBMetalSampler () { @public CBMetalDevice *_device;id _identity;GPU::Shader::Sampler _state; }
 @end
+@interface CBMetalDepthStencil () { @public CBMetalDevice *_device;id _identity;GPU::Shader::DepthStencilState _state;NSString *_label; }
+@end
 @interface CBMetalQueue () { @public CBMetalDevice *_device;id _identity;NSUInteger _capacity;std::atomic<unsigned> _live;NSString *_label; }
 @end
 @interface CBMetalOperation : NSObject { @public NativeMetal540Desktop::Draw draw;CBMetalPipeline *pipeline;NSArray *owners;bool clear;uint32_t color; }
@@ -63,7 +65,7 @@ NSArray *CBMetalUnknownSelectors(void) {
 - (void)fail:(NSString *)text;
 - (void)execute;
 @end
-@interface CBMetalRender () { @public CBMetalCommands *_commands;CBMetalPipeline *_pipeline;CBMetalTexture *_targets[8];CBMetalBuffer *_buffers[2][8];NSUInteger _offsets[2][8];CBMetalTexture *_textures[2][8];CBMetalSampler *_samplers[2][16];MTLViewport _viewport;MTLScissorRect _scissor;bool _ended; }
+@interface CBMetalRender () { @public CBMetalCommands *_commands;CBMetalPipeline *_pipeline;CBMetalTexture *_targets[8];CBMetalBuffer *_buffers[2][8];NSUInteger _offsets[2][8];CBMetalTexture *_textures[2][8];CBMetalSampler *_samplers[2][16];CBMetalDepthStencil *_depthStencil;MTLViewport _viewport;MTLScissorRect _scissor;bool _ended; }
 @end
 static bool cbOptions(MTLResourceOptions options){return options==0||options==MTLResourceHazardTrackingModeTracked;}
 static bool cbLinked(MTLLinkedFunctions *f){return !f||(!f.functions.count&&!f.binaryFunctions.count&&!f.groups.count&&!f.privateFunctions.count);}
@@ -157,6 +159,22 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
     uint32_t bindings=0;if(!GPU::Shader::vertexLayout(vs,layout,bindings)){if(error)*error=cbFailure(@"Invalid vertex layout");return nil;}
     for(unsigned i=0;i<8;++i)if(d.colorAttachments[i].pixelFormat&&!cbFormat(d.colorAttachments[i].pixelFormat)){if(error)*error=cbFailure(@"Unsupported render color format");return nil;}
     auto p=[CBMetalPipeline new];p->_vertex=v;p->_fragment=f;p->_descriptor=[d copy];return p;
+}
+- (CBMetalDepthStencil *)newDepthStencilStateWithDescriptor:(MTLDepthStencilDescriptor *)d {
+    if(![d isKindOfClass:MTLDepthStencilDescriptor.class])return nil;
+    auto state=GPU::Shader::defaultDepthStencilState();
+    state.compare=uint32_t(d.depthCompareFunction);state.write=d.depthWriteEnabled?1:0;
+    auto face=[&](MTLStencilDescriptor *f,GPU::Shader::StencilFace &out)->bool {
+        if(!f){out={};out.compare=uint32_t(MTLCompareFunctionAlways);return true;}
+        if(f.depthStencilPassOperation>MTLStencilOperationDecrementWrap||f.depthFailureOperation>MTLStencilOperationDecrementWrap||
+           f.stencilFailureOperation>MTLStencilOperationDecrementWrap||f.stencilCompareFunction>MTLCompareFunctionAlways)return false;
+        out.compare=uint32_t(f.stencilCompareFunction);
+        out.fail=uint32_t(f.stencilFailureOperation);out.depthFail=uint32_t(f.depthFailureOperation);out.pass=uint32_t(f.depthStencilPassOperation);
+        out.readMask=f.readMask&255;out.writeMask=f.writeMask&255;return true;
+    };
+    if(state.compare>uint32_t(MTLCompareFunctionAlways)||!face(d.frontFaceStencil,state.front)||!face(d.backFaceStencil,state.back)||
+       !GPU::Shader::validDepthStencilState(state))return nil;
+    auto out=[CBMetalDepthStencil new];out->_device=self;out->_identity=[self publicDeviceIdentity];out->_state=state;return out;
 }
 - (CBMetalQueue *)newCommandQueue {return [self newCommandQueueWithMaxCommandBufferCount:16];}
 - (CBMetalQueue *)newCommandQueueWithMaxCommandBufferCount:(NSUInteger)n {if(!n||n>64)return nil;auto q=[CBMetalQueue new];q->_device=self;q->_identity=[self publicDeviceIdentity];q->_capacity=n;q->_live=0;return q;}
@@ -253,6 +271,18 @@ static CBMetalBuffer *cbBuffer(CBMetalDevice *d,NSUInteger n,void *imported=null
 - (id)device {return _library.device;}
 - (NSString *)name {return _name;}
 - (MTLFunctionType)functionType {return _image->info.stage==GPU::Shader::Vertex?MTLFunctionTypeVertex:_image->info.stage==GPU::Shader::Fragment?MTLFunctionTypeFragment:MTLFunctionTypeKernel;}
+@end
+@implementation CBMetalDepthStencil
+- (id)device {return _identity;}
+- (MTLCompareFunction)depthCompareFunction {return (MTLCompareFunction)_state.compare;}
+- (BOOL)depthWriteEnabled {return _state.write!=0;}
+- (NSString *)label {return _label;}
+- (void)setLabel:(NSString *)s {_label=[s copy];}
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    if(NSMethodSignature *signature=[super methodSignatureForSelector:selector])return signature;
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation {CBMetalRecordUnknownSelectorName(sel_getName(invocation.selector));}
 @end
 @implementation CBMetalPipeline
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
@@ -384,6 +414,7 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
 - (void)bindSampler:(CBMetalSampler *)s index:(NSUInteger)i stage:(unsigned)stage {[self check];if(i>=QGPU_STAGE_SAMPLER_COUNT||![s isKindOfClass:CBMetalSampler.class]||s.device!=_commands.device){[_commands fail:@"Invalid sampler"];return;}_samplers[stage][i]=s;}
 - (void)setVertexSamplerState:(CBMetalSampler *)s atIndex:(NSUInteger)i {[self bindSampler:s index:i stage:0];}
 - (void)setFragmentSamplerState:(CBMetalSampler *)s atIndex:(NSUInteger)i {[self bindSampler:s index:i stage:1];}
+- (void)setDepthStencilState:(CBMetalDepthStencil *)state {if(![self check])return;if(state&&(![state isKindOfClass:CBMetalDepthStencil.class]||state.device!=_commands.device)){[_commands fail:@"Foreign depth/stencil state"];return;}_depthStencil=state;}
 - (void)setViewport:(MTLViewport)v {if(![self check])return;if(!std::isfinite(v.originX)||!std::isfinite(v.originY)||!std::isfinite(v.width)||!std::isfinite(v.height)||v.width<=0||v.height<=0||v.width>16384||v.height>16384||v.znear!=0||v.zfar!=1){[_commands fail:@"Unsupported viewport"];return;}_viewport=v;}
 - (void)setScissorRect:(MTLScissorRect)r {if(![self check])return;if(r.x>_targets[0].width||r.width>_targets[0].width-r.x||r.y>_targets[0].height||r.height>_targets[0].height-r.y){[_commands fail:@"Scissor outside native target"];return;}_scissor=r;}
 - (void)drawPrimitives:(MTLPrimitiveType)primitive vertexStart:(NSUInteger)start vertexCount:(NSUInteger)count {
@@ -391,7 +422,7 @@ static GPU::Shader::Texture cbPlane(CBMetalTexture *texture,uint32_t id){return 
         (primitive!=MTLPrimitiveTypeTriangle&&primitive!=MTLPrimitiveTypeTriangleStrip&&primitive!=MTLPrimitiveTypeLine)){[_commands fail:@"Invalid native draw"];return;}
     auto op=[CBMetalOperation new];op->pipeline=_pipeline;NSMutableArray *owners=[NSMutableArray arrayWithObject:_pipeline];auto &d=op->draw;auto &state=d.state;
     state.version=GPU::Shader::Version;state.registry=_pipeline->_vertex->_image->registry;state.primitive=uint32_t(primitive);state.start=uint32_t(start);state.count=uint32_t(count);state.instances=1;
-    state.depthStencil=GPU::Shader::defaultDepthStencilState();state.state=GPU::Shader::defaultRenderState(uint32_t(_targets[0].width),uint32_t(_targets[0].height));
+    state.depthStencil=_depthStencil?_depthStencil->_state:GPU::Shader::defaultDepthStencilState();state.state=GPU::Shader::defaultRenderState(uint32_t(_targets[0].width),uint32_t(_targets[0].height));
     float view[]={float(_viewport.originX+_viewport.width/2),float(_viewport.width/2),float(_viewport.originY+_viewport.height/2),float(-_viewport.height/2)};memcpy(state.state.viewport,view,sizeof view);
     state.scissor[0]=uint32_t(_scissor.x);state.scissor[1]=uint32_t(_scissor.y);state.scissor[2]=uint32_t(_scissor.width);state.scissor[3]=uint32_t(_scissor.height);
     for(unsigned i=0;i<8;++i){auto a=_pipeline->_descriptor.colorAttachments[i];if(!_targets[i]){if(a.pixelFormat){[_commands fail:@"Missing pipeline attachment"];return;}continue;}
