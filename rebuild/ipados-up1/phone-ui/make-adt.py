@@ -5,7 +5,7 @@ import hashlib,json,sys
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'tools/adt'))
 from adt import decode,encode
 source=R/'out/p21/touch-window2g/adt/kernel.macho.adt'
-donor=R/'out/p23/ios-16.7.16-20H392/adt/kernel.macho.adt'
+donor=R/'out/p21/shared-inputs/phone-ui/identity-donor.adt'
 out=R/'out/p21/phone-ui/adt/kernel.macho.adt'
 if out.exists():raise SystemExit('Output exists; preserve previous candidate')
 n=decode(source.read_bytes());d=decode(donor.read_bytes())

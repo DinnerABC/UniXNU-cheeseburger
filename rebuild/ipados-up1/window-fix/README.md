@@ -4,4 +4,4 @@ Reuse the P23 Stage C local DarwinBoot range patch and `WindowRange.h`; this is 
 
 `darwinboot-window-range.patch` includes an additional bounds and kernel/physical block-offset alignment check on the P23 AllocateAnyPages fallback. Apply from `DarwinBootPkg/Driver` with `patch -p1`, then place `WindowRange.h` there. The build retains the verified iPadOS kernel, touch and 8-CPU settings. `window-test.c` checks range, alignment, insufficient capacity and overflow on the host; it does not establish a real firmware allocation or RAM mapping.
 
-Reference: `docs/P4_ADT_BRINGUP.md`, local P23 `out/p23/ios-16.7.16-20H392/adt/kernel.macho.adt` and Stage C firmware overlay. Preserve the original pinned upstream source and all earlier candidate artifacts.
+Reference: `docs/P4_ADT_BRINGUP.md` and the retained phone-identity donor at `out/p21/shared-inputs/phone-ui/identity-donor.adt` (SHA-256 `5e81274961dda429754ee5a84ffeb9ba04e07bd419d8f94bb52e5331e983e4eb`). The former P23 iOS 16 tree was removed during cleanup. Preserve the pinned iPadOS inputs and firmware overlay.
