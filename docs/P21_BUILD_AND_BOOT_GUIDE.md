@@ -81,3 +81,18 @@
 - 内核编译 `db6e18f4…`（156 s）→ unstripped 预链接 `d440a90c…` → panic-screen 后 `9efd466e…`；
 - payload `571e414a…`；独立 overlay 全量固件 FD `9d2fce81…`，三项 pins 通过；
 - 镜像 `out/p21/touch-drive/uefi/boot-p21-up1.img` `55c694fb…`（82,595,840 bytes），门禁 PASS（644 字节参数）。
+## 长期封存后的恢复（2026-11-13）
+
+`/Users/dinnerabc/unixnu-p21/` 与 `/Users/dinnerabc/p21-build/` 已从本机清理；NAS 保留经过逐文件 SHA-256 对照、检查符号链接与目录覆盖的压缩归档：
+
+```sh
+cd /Volumes/NAS-MacData/Project/IOS/UniXNU-cheeseburger
+tar -C /Users/dinnerabc -xzf backups/ipados17-recovery-20261107/build-cache/unixnu-p21.tar.gz
+tar -C /Users/dinnerabc -xzf backups/ipados17-recovery-20261107/build-cache/p21-build.tar.gz
+```
+
+先确认目标路径不存在，避免覆盖以后创建的工作；本机写入如需授权，按当时的工具权限处理。归档不包含此前已清理的编译输出，恢复后需要在本机重新构建。归档校验结果在同一目录的 `verification.json` 和 `p21-build-verification.json`。恢复后核对 `tree/kits/cheeseburger` 链接、源码同步、当前补丁与候选路径，再按本指南构建。此次清理后**尚未重新执行完整编译/实机启动**。
+
+p2 虚拟机和所有固件 overlay 保留；此前三套已导出固件对应的 `build/` 已清除。启动虚拟机后运行候选自己的 `guest-overlay.sh`，让它重新建立 build 目录、挂载及编译。不能删除 `.l/p2` 或各 overlay 并假定仅凭 boot 镜像能恢复当前固件源码。
+
+Apple 公开输入 iPad Pro 17.7.11 / 21H461 IPSW 原始地址：`https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw`。已清除从中提取的两个 DMG 和 range-cache 二进制块；成员名、大小和 SHA-256 保留于 `out/p12/reference/ipsw/21H461/*.json`、`out/p12/reference/remote-index.json` 和 range-cache JSON。若重建流程缺少它们，可从上述地址重新获取并按记录校验。当前系统根卷镜像和已验证恢复包保留，预链接还依赖 `out/p12/inputs/A/kernelcache.macho`，请勿删除。

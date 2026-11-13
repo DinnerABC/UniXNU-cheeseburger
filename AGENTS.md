@@ -343,3 +343,7 @@ Images, private logs and signing material stay out of Git.
   marker 用 0x4147xxxx 的 open（低半非零）即可在无连接时记录进度。boot 日志/快照可能提前
   停止而心跳与 400 s 自动复位继续，是否执行以 marker、`GPSVC`、`GOPEN`、插件标记文件和
   Data 重建为准。
+
+## 恢复封存的本地构建树
+
+2026-11-13 清理后，本机 `/Users/dinnerabc/unixnu-p21/` 默认不存在。按 `docs/P21_BUILD_AND_BOOT_GUIDE.md` 的“长期封存后的恢复”节，从 NAS 上已校验的归档还原；先确保目标目录不会覆盖现有工作，再执行本机增量同步和编译。已清理的 Apple DMG/range-cache 可按该节固定版本与哈希重新获取；p2 虚拟机及 overlay 是固件构建输入，需保留。
