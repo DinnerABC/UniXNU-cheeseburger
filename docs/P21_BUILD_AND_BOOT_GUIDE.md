@@ -91,7 +91,7 @@ tar -C /Users/dinnerabc -xzf backups/ipados17-recovery-20261107/build-cache/unix
 tar -C /Users/dinnerabc -xzf backups/ipados17-recovery-20261107/build-cache/p21-build.tar.gz
 ```
 
-先确认目标路径不存在，避免覆盖以后创建的工作；本机写入如需授权，按当时的工具权限处理。归档不包含此前已清理的编译输出，恢复后需要在本机重新构建。归档校验结果在同一目录的 `verification.json` 和 `p21-build-verification.json`。恢复后核对 `tree/kits/cheeseburger` 链接、源码同步、当前补丁与候选路径，再按本指南构建。此次清理后**尚未重新执行完整编译/实机启动**。
+先确认目标路径不存在，避免覆盖以后创建的工作；本机写入如需授权，按当时的工具权限处理。归档不包含此前已清理的编译输出，恢复后需要在本机重新构建。归档校验结果在同一目录的 `verification.json` 和 `p21-build-verification.json`。恢复后核对 `tree/kits/cheeseburger` 链接、源码同步、当前补丁与候选路径，再按本指南构建。2026-11-13 已在临时目录还原归档，重新完成 XNU、预链接、payload、UEFI、离线打包与 preboot 门禁；尚未实机启动这次重建结果。验证日志位于 `out/repro-check-20261113/`，验证产物与临时构建树已清理。
 
 p2 虚拟机和所有固件 overlay 保留；此前三套已导出固件对应的 `build/` 已清除。启动虚拟机后运行候选自己的 `guest-overlay.sh`，让它重新建立 build 目录、挂载及编译。不能删除 `.l/p2` 或各 overlay 并假定仅凭 boot 镜像能恢复当前固件源码。
 
